@@ -198,19 +198,23 @@ int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer, bool bIgnoreCost)
 	}
 
 	bool bNeedToFinish = false;
-	for (int iBranchLoop2 = 0; iBranchLoop2 < GC.getNumPolicyBranchInfos(); iBranchLoop2++)
-	{
-		const PolicyBranchTypes ePolicyBranch2 = static_cast<PolicyBranchTypes>(iBranchLoop2);
-		CvPolicyBranchEntry* pkPolicyBranchInfo2 = GC.getPolicyBranchInfo(ePolicyBranch2);
-		// Do we already have a different policy branch unlocked?
-		if (pkPolicyBranchInfo2 && m_pCurrentPolicies->IsPolicyBranchUnlocked(ePolicyBranch2))
+	// If we ignored the cost already, let's ignore uncompleted branches as well
+	// Actually as a human player, sometimes I don't finish a branch before jumping into another..
+	if (!bIgnoreCost) {
+		for (int iBranchLoop2 = 0; iBranchLoop2 < GC.getNumPolicyBranchInfos(); iBranchLoop2++)
 		{
-			// Have we not finished it yet? If we can finish it, let's not open a new one.
-			PolicyTypes eFinisher = (PolicyTypes)pkPolicyBranchInfo2->GetFreeFinishingPolicy();
-			if (eFinisher != NO_POLICY && !m_pCurrentPolicies->HasPolicy(eFinisher) && CanContinuePolicyBranch(ePolicyBranch2))
+			const PolicyBranchTypes ePolicyBranch2 = static_cast<PolicyBranchTypes>(iBranchLoop2);
+			CvPolicyBranchEntry* pkPolicyBranchInfo2 = GC.getPolicyBranchInfo(ePolicyBranch2);
+			// Do we already have a different policy branch unlocked?
+			if (pkPolicyBranchInfo2 && m_pCurrentPolicies->IsPolicyBranchUnlocked(ePolicyBranch2))
 			{
-				bNeedToFinish = true;
-				break;
+				// Have we not finished it yet? If we can finish it, let's not open a new one.
+				PolicyTypes eFinisher = (PolicyTypes)pkPolicyBranchInfo2->GetFreeFinishingPolicy();
+				if (eFinisher != NO_POLICY && !m_pCurrentPolicies->HasPolicy(eFinisher) && CanContinuePolicyBranch(ePolicyBranch2))
+				{
+					bNeedToFinish = true;
+					break;
+				}
 			}
 		}
 	}
