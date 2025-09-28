@@ -96,6 +96,10 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(ChooseTech);
 	Method(GetPossibleTechs); // Vox Deorum: Get possible tech choices
 	Method(GetPossiblePolicies); // Vox Deorum: Get possible policy choices
+	Method(SetNextResearch); // Vox Deorum: Force next tech selection
+	Method(GetNextResearch); // Vox Deorum: Get forced next tech
+	Method(SetNextPolicy); // Vox Deorum: Force next policy selection
+	Method(GetNextPolicy); // Vox Deorum: Get forced next policy
 	Method(GetPossibleEconomicStrategies); // Vox Deorum: Get possible economic strategies
 	Method(GetPossibleMilitaryStrategies); // Vox Deorum: Get possible military strategies
 
@@ -2143,94 +2147,6 @@ int CvLuaPlayer::lChooseTech(lua_State* L)
 
 	pkPlayer->chooseTech(iDiscover, strText, iTechJustDiscovered);
 	return 1;
-}
-//------------------------------------------------------------------------------
-// Vox Deorum: Get possible techs by calling ChooseNextTech and returning m_ResearchableTechs
-int CvLuaPlayer::lGetPossibleTechs(lua_State* L)
-{
-	CvPlayerAI* pkPlayer = GetInstance(L);
-
-	// Vox Deorum: Get optional bPredictNext parameter (defaults to false)
-	// If true, passes the currently researching tech to RecommendNextTech
-	bool bPredictNext = false;
-	if(lua_gettop(L) >= 2)
-	{
-		bPredictNext = lua_toboolean(L, 2);
-	}
-
-	// Call ChooseNextTech to update m_ResearchableTechs
-	CvTechAI* pTechAI = pkPlayer->GetPlayerTechs()->GetTechAI();
-
-	// If bPredictNext is true, get the currently researching tech and pass it as bAssumingTech
-	TechTypes eAssumingTech = NO_TECH;
-	if(bPredictNext)
-	{
-		eAssumingTech = pkPlayer->GetPlayerTechs()->GetCurrentResearch();
-	}
-
-	pTechAI->RecommendNextTech(pkPlayer, NO_TECH, eAssumingTech);
-
-	// Get the researchable techs after the call
-	const CvWeightedVector<int>& researchableTechs = pTechAI->GetResearchableTechs();
-
-	// Push the tech list to Lua as a table
-	lua_createtable(L, researchableTechs.size(), 0);
-	for(int i = 0; i < researchableTechs.size(); i++)
-	{
-		lua_pushinteger(L, researchableTechs.GetElement(i)); // Push the tech ID
-		lua_rawseti(L, -2, i + 1); // Lua arrays are 1-indexed
-	}
-
-	return 1;
-}
-//------------------------------------------------------------------------------
-// Vox Deorum: Get possible policies by calling ChooseNextPolicy and returning m_AdoptablePolicies
-// Returns two tables: policies and policy branches
-int CvLuaPlayer::lGetPossiblePolicies(lua_State* L)
-{
-	CvPlayerAI* pkPlayer = GetInstance(L);
-
-	// Get optional bIgnoreCost parameter (defaults to false)
-	bool bIgnoreCost = false;
-	if(lua_gettop(L) >= 2)
-	{
-		bIgnoreCost = lua_toboolean(L, 2);
-	}
-
-	// Call ChooseNextPolicy to update m_AdoptablePolicies
-	CvPolicyAI* pPolicyAI = pkPlayer->GetPlayerPolicies()->GetPolicyAI();
-	pPolicyAI->ChooseNextPolicy(pkPlayer, bIgnoreCost);
-
-	// Get the adoptable policies after the call
-	const CvWeightedVector<int>& adoptablePolicies = pPolicyAI->GetAdoptablePolicies();
-
-	// Create two separate lists: one for policies, one for branches
-	lua_createtable(L, 0, 0); // First table for policies
-	lua_createtable(L, 0, 0); // Second table for branches
-
-	int policyIndex = 1;
-	int branchIndex = 1;
-
-	for(int i = 0; i < adoptablePolicies.size(); i++)
-	{
-		// Note: Policies are stored with branch IDs first, then actual policy IDs offset by NUM_POLICY_BRANCH_TYPES
-		// We need to check if this is a branch or a policy
-		int iElement = adoptablePolicies.GetElement(i);
-		if(iElement >= GC.getNumPolicyBranchInfos())
-		{
-			// This is a policy, adjust the ID and add to the policies table
-			lua_pushinteger(L, iElement - GC.getNumPolicyBranchInfos());
-			lua_rawseti(L, -3, policyIndex++); // -3 because we have two tables on the stack
-		}
-		else
-		{
-			// This is a branch, add to the branches table
-			lua_pushinteger(L, iElement);
-			lua_rawseti(L, -2, branchIndex++); // -2 for the second table
-		}
-	}
-
-	return 2; // Return two tables
 }
 //------------------------------------------------------------------------------
 //bool isHuman();
@@ -19249,6 +19165,200 @@ int CvLuaPlayer::lSetGrandStrategy(lua_State* L)
 		}
 	}
 	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get possible techs by calling RecommendNextTech and returning m_ResearchableTechs
+int CvLuaPlayer::lGetPossibleTechs(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+
+	// Vox Deorum: Get optional bPredictNext parameter (defaults to false)
+	// If true, passes the currently researching tech to RecommendNextTech
+	bool bPredictNext = false;
+	if(lua_gettop(L) >= 2)
+	{
+		bPredictNext = lua_toboolean(L, 2);
+	}
+
+	// Call RecommendNextTech to update m_ResearchableTechs
+	CvTechAI* pTechAI = pkPlayer->GetPlayerTechs()->GetTechAI();
+
+	// If bPredictNext is true, get the currently researching tech and pass it as bAssumingTech
+	TechTypes eAssumingTech = NO_TECH;
+	if(bPredictNext)
+	{
+		eAssumingTech = pkPlayer->GetPlayerTechs()->GetCurrentResearch();
+	}
+
+	pTechAI->RecommendNextTech(pkPlayer, NO_TECH, eAssumingTech);
+
+	// Get the researchable techs after the call
+	const CvWeightedVector<int>& researchableTechs = pTechAI->GetResearchableTechs();
+
+	// Push the tech list to Lua as a table
+	lua_createtable(L, researchableTechs.size(), 0);
+	for(int i = 0; i < researchableTechs.size(); i++)
+	{
+		lua_pushinteger(L, researchableTechs.GetElement(i)); // Push the tech ID
+		lua_rawseti(L, -2, i + 1); // Lua arrays are 1-indexed
+	}
+
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get possible policies by calling ChooseNextPolicy and returning m_AdoptablePolicies
+// Returns two tables: policies and policy branches
+int CvLuaPlayer::lGetPossiblePolicies(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+
+	// Get optional bIgnoreCost parameter (defaults to false)
+	bool bIgnoreCost = false;
+	if(lua_gettop(L) >= 2)
+	{
+		bIgnoreCost = lua_toboolean(L, 2);
+	}
+
+	// Call ChooseNextPolicy to update m_AdoptablePolicies
+	CvPolicyAI* pPolicyAI = pkPlayer->GetPlayerPolicies()->GetPolicyAI();
+	pPolicyAI->ChooseNextPolicy(pkPlayer, bIgnoreCost);
+
+	// Get the adoptable policies after the call
+	const CvWeightedVector<int>& adoptablePolicies = pPolicyAI->GetAdoptablePolicies();
+
+	// Create two separate lists: one for policies, one for branches
+	lua_createtable(L, 0, 0); // First table for policies
+	lua_createtable(L, 0, 0); // Second table for branches
+
+	int policyIndex = 1;
+	int branchIndex = 1;
+
+	for(int i = 0; i < adoptablePolicies.size(); i++)
+	{
+		// Note: Policies are stored with branch IDs first, then actual policy IDs offset by NUM_POLICY_BRANCH_TYPES
+		// We need to check if this is a branch or a policy
+		int iElement = adoptablePolicies.GetElement(i);
+		if(iElement >= GC.getNumPolicyBranchInfos())
+		{
+			// This is a policy, adjust the ID and add to the policies table
+			lua_pushinteger(L, iElement - GC.getNumPolicyBranchInfos());
+			lua_rawseti(L, -3, policyIndex++); // -3 because we have two tables on the stack
+		}
+		else
+		{
+			// This is a branch, add to the branches table
+			lua_pushinteger(L, iElement);
+			lua_rawseti(L, -2, branchIndex++); // -2 for the second table
+		}
+	}
+
+	return 2; // Return two tables
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Set the next research to force selection
+int CvLuaPlayer::lSetNextResearch(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iTech = lua_tointeger(L, 2);
+
+	if (pkPlayer && pkPlayer->GetPlayerTechs())
+	{
+		CvTechAI* pTechAI = pkPlayer->GetPlayerTechs()->GetTechAI();
+		pTechAI->SetNextResearch((TechTypes)iTech);
+	}
+
+	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get the forced next research selection
+int CvLuaPlayer::lGetNextResearch(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+
+	if (pkPlayer && pkPlayer->GetPlayerTechs())
+	{
+		CvTechAI* pTechAI = pkPlayer->GetPlayerTechs()->GetTechAI();
+		lua_pushinteger(L, pTechAI->GetNextResearch());
+		return 1;
+	}
+
+	lua_pushinteger(L, NO_TECH);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Set the next policy to force selection
+// Takes two parameters: policy ID and branch ID (-1 means ignore)
+int CvLuaPlayer::lSetNextPolicy(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iPolicy = lua_tointeger(L, 2);
+	const int iBranch = lua_tointeger(L, 3);
+
+	if (pkPlayer && pkPlayer->GetPlayerPolicies())
+	{
+		CvPolicyAI* pPolicyAI = pkPlayer->GetPlayerPolicies()->GetPolicyAI();
+
+		// Determine what to set based on the parameters
+		// -1 means ignore that parameter
+		int iNextPolicy = -1;
+
+		if (iBranch >= 0)
+		{
+			// Branch is specified, use it directly
+			iNextPolicy = iBranch;
+		}
+		else if (iPolicy >= 0)
+		{
+			// Policy is specified, offset it by the number of branches
+			iNextPolicy = iPolicy + GC.getNumPolicyBranchInfos();
+		}
+
+		pPolicyAI->SetNextPolicy(iNextPolicy);
+	}
+
+	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get the forced next policy selection
+// Returns two values: policy ID and branch ID (-1 if not set)
+int CvLuaPlayer::lGetNextPolicy(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+
+	if (pkPlayer && pkPlayer->GetPlayerPolicies())
+	{
+		CvPolicyAI* pPolicyAI = pkPlayer->GetPlayerPolicies()->GetPolicyAI();
+		int iNextPolicy = pPolicyAI->GetNextPolicy();
+
+		// Split the stored value into policy and branch
+		if (iNextPolicy >= 0)
+		{
+			if (iNextPolicy >= GC.getNumPolicyBranchInfos())
+			{
+				// This is a policy, return it adjusted and branch as -1
+				lua_pushinteger(L, iNextPolicy - GC.getNumPolicyBranchInfos());
+				lua_pushinteger(L, -1);
+				return 2;
+			}
+			else
+			{
+				// This is a branch, return policy as -1 and the branch ID
+				lua_pushinteger(L, -1);
+				lua_pushinteger(L, iNextPolicy);
+				return 2;
+			}
+		}
+	}
+
+	lua_pushinteger(L, -1);
+	lua_pushinteger(L, -1);
+	return 2;
 }
 
 //------------------------------------------------------------------------------

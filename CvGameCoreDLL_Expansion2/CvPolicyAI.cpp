@@ -18,7 +18,8 @@
 
 /// Constructor
 CvPolicyAI::CvPolicyAI(CvPlayerPolicies* currentPolicies):
-	m_pCurrentPolicies(currentPolicies)
+	m_pCurrentPolicies(currentPolicies),
+	m_iNextPolicy(-1)  // Vox Deorum: Initialize forced next policy selection
 {
 }
 
@@ -33,6 +34,7 @@ void CvPolicyAI::Reset()
 	m_PolicyAIWeights.clear();
 	m_iPolicyWeightPropagationLevels = /*2*/ GD_INT_GET(POLICY_WEIGHT_PROPAGATION_LEVELS);
 	m_iPolicyWeightPercentDropNewBranch = /*90*/ max(GD_INT_GET(POLICY_WEIGHT_PERCENT_DROP_NEW_BRANCH), 0);
+	m_iNextPolicy = -1;  // Vox Deorum: Reset forced next policy selection
 
 	ASSERT(m_pCurrentPolicies != NULL, "Policy AI init failure: player policy data is NULL");
 	if(m_pCurrentPolicies != NULL)
@@ -56,6 +58,7 @@ template<typename PolicyAI, typename Visitor>
 void CvPolicyAI::Serialize(PolicyAI& policyAI, Visitor& visitor)
 {
 	visitor(policyAI.m_PolicyAIWeights);
+	visitor(policyAI.m_iNextPolicy);  // Vox Deorum: Serialize forced next policy selection
 }
 
 /// Serialization read
@@ -123,6 +126,33 @@ int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer, bool bIgnoreCost)
 {
 	if (!pPlayer->isMajorCiv())
 		return 0;
+
+	// Vox Deorum: Check if we have a forced next policy selection
+	if (!bIgnoreCost && m_iNextPolicy != NO_POLICY)
+	{
+		int iForcedPolicy = m_iNextPolicy;
+		m_iNextPolicy = (int)NO_POLICY;  // Clear the forced selection after using it
+
+		// Verify that the forced policy is still valid
+		if (iForcedPolicy >= GC.getNumPolicyBranchInfos())
+		{
+			// It's a policy (not a branch)
+			PolicyTypes ePolicy = (PolicyTypes)(iForcedPolicy - GC.getNumPolicyBranchInfos());
+			if (m_pCurrentPolicies->CanAdoptPolicy(ePolicy, bIgnoreCost))
+			{
+				return iForcedPolicy;
+			}
+		}
+		else
+		{
+			// It's a policy branch
+			PolicyBranchTypes eBranch = (PolicyBranchTypes)iForcedPolicy;
+			if (m_pCurrentPolicies->CanUnlockPolicyBranch(eBranch, bIgnoreCost) && !m_pCurrentPolicies->IsPolicyBranchUnlocked(eBranch))
+			{
+				return iForcedPolicy;
+			}
+		}
+	}
 
 	int iRtnValue = (int)NO_POLICY;
 	int iPolicyLoop = 0;

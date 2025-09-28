@@ -52,6 +52,10 @@ public:
 	// Vox Deorum: Get possible policies by calling ChooseNextPolicy and returning m_AdoptablePolicies
 	const CvWeightedVector<int>& GetAdoptablePolicies() const { return m_AdoptablePolicies; }
 
+	// Vox Deorum: Force next policy selection
+	void SetNextPolicy(int iPolicy) { m_iNextPolicy = iPolicy; }
+	int GetNextPolicy() const { return m_iNextPolicy; }
+
 private:
 	// Internal methods
 	void WeightPrereqs(const vector<int>& vTempWeights, int iPropagationPercent);
@@ -77,6 +81,9 @@ private:
 	// Locally cached GlobalAIDefines
 	int m_iPolicyWeightPropagationLevels;
 	int m_iPolicyWeightPercentDropNewBranch;
+
+	// Vox Deorum: Forced next policy selection
+	int m_iNextPolicy;
 };
 FDataStream& operator<<(FDataStream&, const CvPolicyAI&);
 FDataStream& operator>>(FDataStream&, CvPolicyAI&);

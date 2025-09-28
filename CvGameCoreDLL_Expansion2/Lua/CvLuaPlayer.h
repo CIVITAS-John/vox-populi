@@ -78,10 +78,6 @@ protected:
 	static int lAddFreeUnit(lua_State* L);
 
 	static int lChooseTech(lua_State* L);
-	static int lGetPossibleTechs(lua_State* L); // Vox Deorum: Get possible tech choices
-	static int lGetPossiblePolicies(lua_State* L); // Vox Deorum: Get possible policy choices
-	static int lGetPossibleEconomicStrategies(lua_State* L); // Vox Deorum: Get possible economic strategies
-	static int lGetPossibleMilitaryStrategies(lua_State* L); // Vox Deorum: Get possible military strategies
 
 	LUAAPIEXTN(GetSpecificUnitType, int, sUnitClass);
 	LUAAPIEXTN(GetSpecificBuildingType, int, sBuildingClass);
@@ -1549,6 +1545,15 @@ protected:
 
 	LUAAPIEXTN(GetCompetitiveSpawnUnitType, int, bIncludeRanged, bIncludeShips, bIncludeRecon, bIncludeUUs, bNoResource, bMinorCivGift, bRandom, tUnitCombatIDs);
 	
+	static int lGetPossibleTechs(lua_State* L);
+	static int lGetPossiblePolicies(lua_State* L);
+	static int lSetNextResearch(lua_State* L);  // Vox Deorum: Force next tech selection
+	static int lGetNextResearch(lua_State* L);  // Vox Deorum: Get forced next tech
+	static int lSetNextPolicy(lua_State* L);    // Vox Deorum: Force next policy selection
+	static int lGetNextPolicy(lua_State* L);    // Vox Deorum: Get forced next policy
+
+	static int lGetPossibleEconomicStrategies(lua_State* L);
+	static int lGetPossibleMilitaryStrategies(lua_State* L);
 	static int lGetGrandStrategy(lua_State* L);
 	static int lSetGrandStrategy(lua_State* L);
 	static int lGetEconomicStrategies(lua_State* L);

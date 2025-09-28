@@ -53,6 +53,10 @@ public:
 	// Vox Deorum: Get the researchable techs after ChooseNextTech is called
 	const CvWeightedVector<int>& GetResearchableTechs() const { return m_ResearchableTechs; }
 
+	// Vox Deorum: Force next tech selection
+	void SetNextResearch(TechTypes eTech) { m_iNextResearch = eTech; }
+	TechTypes GetNextResearch() const { return m_iNextResearch; }
+
 private:
 	// Internal methods
 	void PropagateWeights(int iTech, int iWeight, int iPropagationPercent, int iPropagationLevel);
@@ -69,6 +73,7 @@ private:
 	CvPlayerTechs* m_pCurrentTechs;
 	CvWeightedVector<int> m_TechAIWeights;
 	CvWeightedVector<int> m_ResearchableTechs;
+	TechTypes m_iNextResearch;  // Vox Deorum: Forced next research selection
 };
 
 FDataStream& operator<<(FDataStream&, const CvTechAI&);

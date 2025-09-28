@@ -16,7 +16,8 @@
 
 /// Constructor
 CvTechAI::CvTechAI(CvPlayerTechs* currentTechs):
-	m_pCurrentTechs(currentTechs)
+	m_pCurrentTechs(currentTechs),
+	m_iNextResearch(NO_TECH)  // Vox Deorum: Initialize forced next research
 {
 }
 
@@ -34,6 +35,7 @@ void CvTechAI::Reset()
 		ASSERT(m_pCurrentTechs->GetTechs() != NULL, "Tech AI init failure: no tech data");
 
 		m_TechAIWeights.clear();
+		m_iNextResearch = NO_TECH;  // Vox Deorum: Reset forced next research
 
 		// Loop through reading each one and add an entry with 0 weight to our vector
 		for(int i = 0; i < m_pCurrentTechs->GetTechs()->GetNumTechs(); i++)
@@ -48,6 +50,7 @@ template<typename TechAI, typename Visitor>
 void CvTechAI::Serialize(TechAI& techAI, Visitor& visitor)
 {
 	visitor(techAI.m_TechAIWeights);
+	visitor(techAI.m_iNextResearch);  // Vox Deorum: Serialize forced next research
 }
 
 /// Serialization read
@@ -129,6 +132,21 @@ TechTypes CvTechAI::ChooseNextTech(CvPlayer *pPlayer, bool bFreeTech)
 {
 	if (!pPlayer->isMajorCiv())
 		return NO_TECH;
+
+	// Check if we have a forced next research selection
+	if (m_iNextResearch != NO_TECH)
+	{
+		TechTypes forcedTech = m_iNextResearch;
+		m_iNextResearch = NO_TECH;
+		// Verify that the forced tech is still researchable
+		if (m_pCurrentTechs->CanResearch(forcedTech))
+		{
+			if (!bFreeTech || m_pCurrentTechs->CanResearchForFree(forcedTech))
+			{
+				return forcedTech;
+			}
+		}
+	}
 
 	TechTypes rtnValue = NO_TECH;
 
