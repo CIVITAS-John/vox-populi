@@ -288,6 +288,8 @@ public:
 	}
 #endif
 
+	bool IsStrategyAllowed(MilitaryAIStrategyTypes eStrategy, CvMilitaryAIStrategyXMLEntry* pStrategy);
+
 private:
 
 	// Functions to process a turn

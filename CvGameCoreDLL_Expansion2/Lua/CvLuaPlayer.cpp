@@ -96,6 +96,8 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(ChooseTech);
 	Method(GetPossibleTechs); // Vox Deorum: Get possible tech choices
 	Method(GetPossiblePolicies); // Vox Deorum: Get possible policy choices
+	Method(GetPossibleEconomicStrategies); // Vox Deorum: Get possible economic strategies
+	Method(GetPossibleMilitaryStrategies); // Vox Deorum: Get possible military strategies
 
 	Method(GetSpecificUnitType);
 	Method(GetSpecificBuildingType);
@@ -19187,6 +19189,9 @@ int CvLuaPlayer::lSetGrandStrategy(lua_State* L)
 			// If we have a valid new primary pursuit
 			if (eNewPrimaryPursuit != NO_VICTORY_PURSUIT)
 			{
+				// Suggested by Recursive: also set the current victory pursuit.
+				pDiploAI->SetCurrentVictoryPursuit(eNewPrimaryPursuit);
+
 				// Get current primary and secondary pursuits
 				VictoryPursuitTypes eCurrentPrimary = pDiploAI->GetPrimaryVictoryPursuit();
 				VictoryPursuitTypes eCurrentSecondary = pDiploAI->GetSecondaryVictoryPursuit();
@@ -19207,6 +19212,56 @@ int CvLuaPlayer::lSetGrandStrategy(lua_State* L)
 		}
 	}
 	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Get possible economic strategies (returns only allowed strategy IDs)
+int CvLuaPlayer::lGetPossibleEconomicStrategies(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	CvEconomicAI* pEconomicAI = pkPlayer->GetEconomicAI();
+	int iNumStrategies = pEconomicAI->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
+
+	// Push only allowed strategy IDs to Lua as a table
+	lua_createtable(L, iNumStrategies, 0);
+	int iIndex = 1; // Lua arrays are 1-indexed
+	for (int i = 0; i < iNumStrategies; i++)
+	{
+		EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
+		CvEconomicAIStrategyXMLEntry* pStrategy = pEconomicAI->GetEconomicAIStrategies()->GetEntry(i);
+		if (pStrategy && pEconomicAI->IsStrategyAllowed(eStrategy, pStrategy))
+		{
+			lua_pushinteger(L, i);  // Push the strategy ID
+			lua_rawseti(L, -2, iIndex++);
+		}
+	}
+
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Get possible military strategies (returns only allowed strategy IDs)
+int CvLuaPlayer::lGetPossibleMilitaryStrategies(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	CvMilitaryAI* pMilitaryAI = pkPlayer->GetMilitaryAI();
+	int iNumStrategies = pMilitaryAI->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
+
+	// Push only allowed strategy IDs to Lua as a table
+	lua_createtable(L, iNumStrategies, 0);
+	int iIndex = 1; // Lua arrays are 1-indexed
+	for (int i = 0; i < iNumStrategies; i++)
+	{
+		MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)i;
+		CvMilitaryAIStrategyXMLEntry* pStrategy = pMilitaryAI->GetMilitaryAIStrategies()->GetEntry(i);
+		if (pStrategy && pMilitaryAI->IsStrategyAllowed(eStrategy, pStrategy))
+		{
+			lua_pushinteger(L, i);  // Push the strategy ID
+			lua_rawseti(L, -2, iIndex++);
+		}
+	}
+
+	return 1;
 }
 
 //------------------------------------------------------------------------------
