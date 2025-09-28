@@ -42,7 +42,7 @@ public:
 
 	// Choose a player's next tech to research
 	TechTypes ChooseNextTech(CvPlayer *pPlayer, bool bFreeTech = false);
-	TechTypes RecommendNextTech(CvPlayer *pPlayer, TechTypes eIgnoreTech = NO_TECH);
+	TechTypes RecommendNextTech(CvPlayer *pPlayer, TechTypes eIgnoreTech = NO_TECH, TechTypes eAssumingTech = NO_TECH);
 
 	int GetWeight(TechTypes eTech);
 

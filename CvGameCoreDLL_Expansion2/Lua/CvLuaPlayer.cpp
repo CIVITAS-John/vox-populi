@@ -2150,9 +2150,25 @@ int CvLuaPlayer::lGetPossibleTechs(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
 
+	// Vox Deorum: Get optional bPredictNext parameter (defaults to false)
+	// If true, passes the currently researching tech to RecommendNextTech
+	bool bPredictNext = false;
+	if(lua_gettop(L) >= 2)
+	{
+		bPredictNext = lua_toboolean(L, 2);
+	}
+
 	// Call ChooseNextTech to update m_ResearchableTechs
 	CvTechAI* pTechAI = pkPlayer->GetPlayerTechs()->GetTechAI();
-	pTechAI->RecommendNextTech(pkPlayer, NO_TECH);
+
+	// If bPredictNext is true, get the currently researching tech and pass it as bAssumingTech
+	TechTypes eAssumingTech = NO_TECH;
+	if(bPredictNext)
+	{
+		eAssumingTech = pkPlayer->GetPlayerTechs()->GetCurrentResearch();
+	}
+
+	pTechAI->RecommendNextTech(pkPlayer, NO_TECH, eAssumingTech);
 
 	// Get the researchable techs after the call
 	const CvWeightedVector<int>& researchableTechs = pTechAI->GetResearchableTechs();
@@ -2169,19 +2185,32 @@ int CvLuaPlayer::lGetPossibleTechs(lua_State* L)
 }
 //------------------------------------------------------------------------------
 // Vox Deorum: Get possible policies by calling ChooseNextPolicy and returning m_AdoptablePolicies
+// Returns two tables: policies and policy branches
 int CvLuaPlayer::lGetPossiblePolicies(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
 
+	// Get optional bIgnoreCost parameter (defaults to false)
+	bool bIgnoreCost = false;
+	if(lua_gettop(L) >= 2)
+	{
+		bIgnoreCost = lua_toboolean(L, 2);
+	}
+
 	// Call ChooseNextPolicy to update m_AdoptablePolicies
 	CvPolicyAI* pPolicyAI = pkPlayer->GetPlayerPolicies()->GetPolicyAI();
-	pPolicyAI->ChooseNextPolicy(pkPlayer);
+	pPolicyAI->ChooseNextPolicy(pkPlayer, bIgnoreCost);
 
 	// Get the adoptable policies after the call
 	const CvWeightedVector<int>& adoptablePolicies = pPolicyAI->GetAdoptablePolicies();
 
-	// Push the policy list to Lua as a table
-	lua_createtable(L, adoptablePolicies.size(), 0);
+	// Create two separate lists: one for policies, one for branches
+	lua_createtable(L, 0, 0); // First table for policies
+	lua_createtable(L, 0, 0); // Second table for branches
+
+	int policyIndex = 1;
+	int branchIndex = 1;
+
 	for(int i = 0; i < adoptablePolicies.size(); i++)
 	{
 		// Note: Policies are stored with branch IDs first, then actual policy IDs offset by NUM_POLICY_BRANCH_TYPES
@@ -2189,18 +2218,19 @@ int CvLuaPlayer::lGetPossiblePolicies(lua_State* L)
 		int iElement = adoptablePolicies.GetElement(i);
 		if(iElement >= GC.getNumPolicyBranchInfos())
 		{
-			// This is a policy, adjust the ID
+			// This is a policy, adjust the ID and add to the policies table
 			lua_pushinteger(L, iElement - GC.getNumPolicyBranchInfos());
+			lua_rawseti(L, -3, policyIndex++); // -3 because we have two tables on the stack
 		}
 		else
 		{
-			// This is a branch, return negative to distinguish from policies
-			lua_pushinteger(L, -iElement - 1);
+			// This is a branch, add to the branches table
+			lua_pushinteger(L, iElement);
+			lua_rawseti(L, -2, branchIndex++); // -2 for the second table
 		}
-		lua_rawseti(L, -2, i + 1); // Lua arrays are 1-indexed
 	}
 
-	return 1;
+	return 2; // Return two tables
 }
 //------------------------------------------------------------------------------
 //bool isHuman();
@@ -7413,14 +7443,21 @@ int CvLuaPlayer::lDoAdoptPolicy(lua_State* L)
 
 
 //------------------------------------------------------------------------------
-//bool CanUnlockPolicyBranch(PolicyBranchTypes  iIndex);
+//bool CanUnlockPolicyBranch(PolicyBranchTypes  iIndex, bool bIgnoreCost = false);
 int CvLuaPlayer::lCanUnlockPolicyBranch(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
 	const PolicyBranchTypes iIndex = (PolicyBranchTypes)lua_tointeger(L, 2);
 
+	// Get optional bIgnoreCost parameter (defaults to false)
+	bool bIgnoreCost = false;
+	if(lua_gettop(L) >= 3)
+	{
+		bIgnoreCost = lua_toboolean(L, 3);
+	}
+
 	const bool bResult
-	    = pkPlayer->GetPlayerPolicies()->CanUnlockPolicyBranch(iIndex);
+	    = pkPlayer->GetPlayerPolicies()->CanUnlockPolicyBranch(iIndex, bIgnoreCost);
 	lua_pushboolean(L, bResult);
 	return 1;
 }

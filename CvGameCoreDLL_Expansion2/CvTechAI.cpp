@@ -172,7 +172,8 @@ TechTypes CvTechAI::ChooseNextTech(CvPlayer *pPlayer, bool bFreeTech)
 }
 
 /// Choose a player's next tech research project
-TechTypes CvTechAI::RecommendNextTech(CvPlayer *pPlayer, TechTypes eIgnoreTech /* = NO_TECH */)
+// Vox Deorum: Added eAssumingTech parameter to check researchability assuming a specific tech is already researched
+TechTypes CvTechAI::RecommendNextTech(CvPlayer *pPlayer, TechTypes eIgnoreTech /* = NO_TECH */, TechTypes eAssumingTech /* = NO_TECH */)
 {
 	TechTypes rtnValue = NO_TECH;
 
@@ -182,7 +183,7 @@ TechTypes CvTechAI::RecommendNextTech(CvPlayer *pPlayer, TechTypes eIgnoreTech /
 	// Loop through adding the researchable techs
 	for(int iTechLoop = 0; iTechLoop < m_pCurrentTechs->GetTechs()->GetNumTechs(); iTechLoop++)
 	{
-		if(m_pCurrentTechs->CanResearch((TechTypes) iTechLoop) && iTechLoop != eIgnoreTech)
+		if(m_pCurrentTechs->CanResearch((TechTypes) iTechLoop, false, eAssumingTech) && iTechLoop != eIgnoreTech)
 		{
 			m_ResearchableTechs.push_back(iTechLoop, m_TechAIWeights.GetWeight(iTechLoop));
 		}

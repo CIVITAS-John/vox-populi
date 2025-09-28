@@ -37,7 +37,7 @@ public:
 	void AddFlavorWeights(FlavorTypes eFlavor, int iWeight, int iPropagationPercent);
 
 	// Choose a player's next policy purchase
-	int ChooseNextPolicy(CvPlayer* pPlayer);
+	int ChooseNextPolicy(CvPlayer* pPlayer, bool bIgnoreCost = false);
 	bool CanContinuePolicyBranch(PolicyBranchTypes ePolicyBranch);
 
 	// Ideology

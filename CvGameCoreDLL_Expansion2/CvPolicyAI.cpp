@@ -119,7 +119,7 @@ void CvPolicyAI::AddFlavorWeights(FlavorTypes eFlavor, int iWeight, int iPropaga
 }
 
 /// Choose a player's next policy purchase (could be opening a branch)
-int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer)
+int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer, bool bIgnoreCost)
 {
 	if (!pPlayer->isMajorCiv())
 		return 0;
@@ -136,7 +136,7 @@ int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer)
 	// Loop through adding the adoptable policies
 	for(iPolicyLoop = 0; iPolicyLoop < m_pCurrentPolicies->GetPolicies()->GetNumPolicies(); iPolicyLoop++)
 	{
-		if(m_pCurrentPolicies->CanAdoptPolicy((PolicyTypes) iPolicyLoop) && (!bMustChooseTenet || m_pCurrentPolicies->GetPolicies()->GetPolicyEntry(iPolicyLoop)->GetLevel() > 0))
+		if(m_pCurrentPolicies->CanAdoptPolicy((PolicyTypes) iPolicyLoop, bIgnoreCost) && (!bMustChooseTenet || m_pCurrentPolicies->GetPolicies()->GetPolicyEntry(iPolicyLoop)->GetLevel() > 0))
 		{
 			int iWeight = WeighPolicy(pPlayer, (PolicyTypes)iPolicyLoop);
 
@@ -199,7 +199,7 @@ int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer)
 					continue;
 				}
 
-				if(m_pCurrentPolicies->CanUnlockPolicyBranch(ePolicyBranch) && !m_pCurrentPolicies->IsPolicyBranchUnlocked(ePolicyBranch))
+				if(m_pCurrentPolicies->CanUnlockPolicyBranch(ePolicyBranch, bIgnoreCost) && !m_pCurrentPolicies->IsPolicyBranchUnlocked(ePolicyBranch))
 				{
 					int iBranchWeight = 0;
 
