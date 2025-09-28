@@ -31,6 +31,8 @@
 #include "../CvEconomicAI.h"
 #include "../CvMilitaryAI.h"
 #include "../CvCitySpecializationAI.h"
+#include "../CvTechAI.h"
+#include "../CvPolicyAI.h"
 #include "ICvDLLUserInterface.h"
 #include "CvDllInterfaces.h"
 #include "CvDllNetMessageExt.h"
@@ -92,6 +94,8 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(AddFreeUnit);
 
 	Method(ChooseTech);
+	Method(GetPossibleTechs); // Vox Deorum: Get possible tech choices
+	Method(GetPossiblePolicies); // Vox Deorum: Get possible policy choices
 
 	Method(GetSpecificUnitType);
 	Method(GetSpecificBuildingType);
@@ -2136,6 +2140,64 @@ int CvLuaPlayer::lChooseTech(lua_State* L)
 	TechTypes iTechJustDiscovered = (TechTypes)lua_tointeger(L, 4);
 
 	pkPlayer->chooseTech(iDiscover, strText, iTechJustDiscovered);
+	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: Get possible techs by calling ChooseNextTech and returning m_ResearchableTechs
+int CvLuaPlayer::lGetPossibleTechs(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+
+	// Call ChooseNextTech to update m_ResearchableTechs
+	CvTechAI* pTechAI = pkPlayer->GetPlayerTechs()->GetTechAI();
+	pTechAI->RecommendNextTech(pkPlayer, NO_TECH);
+
+	// Get the researchable techs after the call
+	const CvWeightedVector<int>& researchableTechs = pTechAI->GetResearchableTechs();
+
+	// Push the tech list to Lua as a table
+	lua_createtable(L, researchableTechs.size(), 0);
+	for(int i = 0; i < researchableTechs.size(); i++)
+	{
+		lua_pushinteger(L, researchableTechs.GetElement(i)); // Push the tech ID
+		lua_rawseti(L, -2, i + 1); // Lua arrays are 1-indexed
+	}
+
+	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: Get possible policies by calling ChooseNextPolicy and returning m_AdoptablePolicies
+int CvLuaPlayer::lGetPossiblePolicies(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+
+	// Call ChooseNextPolicy to update m_AdoptablePolicies
+	CvPolicyAI* pPolicyAI = pkPlayer->GetPlayerPolicies()->GetPolicyAI();
+	pPolicyAI->ChooseNextPolicy(pkPlayer);
+
+	// Get the adoptable policies after the call
+	const CvWeightedVector<int>& adoptablePolicies = pPolicyAI->GetAdoptablePolicies();
+
+	// Push the policy list to Lua as a table
+	lua_createtable(L, adoptablePolicies.size(), 0);
+	for(int i = 0; i < adoptablePolicies.size(); i++)
+	{
+		// Note: Policies are stored with branch IDs first, then actual policy IDs offset by NUM_POLICY_BRANCH_TYPES
+		// We need to check if this is a branch or a policy
+		int iElement = adoptablePolicies.GetElement(i);
+		if(iElement >= GC.getNumPolicyBranchInfos())
+		{
+			// This is a policy, adjust the ID
+			lua_pushinteger(L, iElement - GC.getNumPolicyBranchInfos());
+		}
+		else
+		{
+			// This is a branch, return negative to distinguish from policies
+			lua_pushinteger(L, -iElement - 1);
+		}
+		lua_rawseti(L, -2, i + 1); // Lua arrays are 1-indexed
+	}
+
 	return 1;
 }
 //------------------------------------------------------------------------------

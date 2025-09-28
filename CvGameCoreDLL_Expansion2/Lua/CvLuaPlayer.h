@@ -78,6 +78,8 @@ protected:
 	static int lAddFreeUnit(lua_State* L);
 
 	static int lChooseTech(lua_State* L);
+	static int lGetPossibleTechs(lua_State* L); // Vox Deorum: Get possible tech choices
+	static int lGetPossiblePolicies(lua_State* L); // Vox Deorum: Get possible policy choices
 
 	LUAAPIEXTN(GetSpecificUnitType, int, sUnitClass);
 	LUAAPIEXTN(GetSpecificBuildingType, int, sBuildingClass);

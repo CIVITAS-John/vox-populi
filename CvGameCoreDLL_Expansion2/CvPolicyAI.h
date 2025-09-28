@@ -49,6 +49,9 @@ public:
 	int WeighBranch(CvPlayer* pPlayer, PolicyBranchTypes eBranch);
 	int WeighPolicy(CvPlayer* pPlayer, PolicyTypes ePolicy);
 
+	// Vox Deorum: Get possible policies by calling ChooseNextPolicy and returning m_AdoptablePolicies
+	const CvWeightedVector<int>& GetAdoptablePolicies() const { return m_AdoptablePolicies; }
+
 private:
 	// Internal methods
 	void WeightPrereqs(const vector<int>& vTempWeights, int iPropagationPercent);

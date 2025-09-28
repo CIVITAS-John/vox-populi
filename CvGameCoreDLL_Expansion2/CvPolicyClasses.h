@@ -1077,6 +1077,8 @@ public:
 	void FlavorUpdate();
 
 	CvPlayer* GetPlayer();
+	// Vox Deorum: Get PolicyAI for accessing adoptable policies
+	CvPolicyAI* GetPolicyAI() const { return m_pPolicyAI; }
 
 	// Accessor functions
 	bool HasPolicy(PolicyTypes eIndex) const;

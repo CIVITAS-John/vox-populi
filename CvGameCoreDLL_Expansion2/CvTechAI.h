@@ -50,6 +50,9 @@ public:
 
 	void LogResearchCompleted(TechTypes eTech);
 
+	// Vox Deorum: Get the researchable techs after ChooseNextTech is called
+	const CvWeightedVector<int>& GetResearchableTechs() const { return m_ResearchableTechs; }
+
 private:
 	// Internal methods
 	void PropagateWeights(int iTech, int iWeight, int iPropagationPercent, int iPropagationLevel);
