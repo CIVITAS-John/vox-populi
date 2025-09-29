@@ -35,7 +35,6 @@ void CvTechAI::Reset()
 		ASSERT(m_pCurrentTechs->GetTechs() != NULL, "Tech AI init failure: no tech data");
 
 		m_TechAIWeights.clear();
-		m_iNextResearch = NO_TECH;  // Vox Deorum: Reset forced next research
 
 		// Loop through reading each one and add an entry with 0 weight to our vector
 		for(int i = 0; i < m_pCurrentTechs->GetTechs()->GetNumTechs(); i++)

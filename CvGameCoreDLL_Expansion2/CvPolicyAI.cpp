@@ -34,7 +34,6 @@ void CvPolicyAI::Reset()
 	m_PolicyAIWeights.clear();
 	m_iPolicyWeightPropagationLevels = /*2*/ GD_INT_GET(POLICY_WEIGHT_PROPAGATION_LEVELS);
 	m_iPolicyWeightPercentDropNewBranch = /*90*/ max(GD_INT_GET(POLICY_WEIGHT_PERCENT_DROP_NEW_BRANCH), 0);
-	m_iNextPolicy = -1;  // Vox Deorum: Reset forced next policy selection
 
 	ASSERT(m_pCurrentPolicies != NULL, "Policy AI init failure: player policy data is NULL");
 	if(m_pCurrentPolicies != NULL)
