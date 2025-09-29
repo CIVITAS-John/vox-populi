@@ -11,6 +11,7 @@
 #include <queue>
 #include <vector>
 #include <map>
+#include <set>
 #include "../../ThirdPartyLibs/ArduinoJSON.hpp"
 
 // Use ArduinoJson
@@ -90,6 +91,11 @@ public:
 	// Convert JSON to Lua value (made public for use in Lua callbacks)
 	void ConvertJsonToLuaValue(lua_State* L, const JsonVariant& value);
 
+	// Manage paused players
+	void AddPausedPlayer(int iPlayerID);
+	void RemovePausedPlayer(int iPlayerID);
+	void ClearPausedPlayers();
+
 private:
 	// Private constructor for singleton
 	CvConnectionService();
@@ -152,13 +158,16 @@ private:
 	bool m_bInitialized;
 	lua_State* m_pLuaState;
 	ICvEngineScriptSystem1* m_pkScriptSystem;  // Cached script system instance
-	
+
 	// Named Pipe server state
 	HANDLE m_hPipe;
 	HANDLE m_hThread;
 	DWORD m_dwThreadId;
 	volatile bool m_bClientConnected;
 	volatile bool m_bShutdownRequested;
+
+	// Vox Deorum: List of paused players
+	std::set<int> m_pausedPlayers;
 	
 	// Thread-safe message queues (store serialized JSON strings)
 	std::queue<std::string> m_incomingQueue;  // Bridge -> Game (stores stripped JSON)
@@ -169,6 +178,7 @@ private:
 	CRITICAL_SECTION m_csOutgoing;
 	CRITICAL_SECTION m_csFunctions;
 	CRITICAL_SECTION m_csExternalFunctions;
+	CRITICAL_SECTION m_csPausedPlayers;  // Vox Deorum: For thread-safe access to paused players list
 	
 	// Map of function name to function info
 	std::map<std::string, LuaFunctionInfo> m_registeredFunctions;
@@ -219,9 +229,12 @@ private:
 	
 	// Shared post-processing function for external call results
 	void ProcessExternalCallResult(lua_State* L, const ExternalCallResult& result);
-	
+
 	// Static callback handler for external function calls
 	static void HandleExternalCallCallback(const ExternalCallResult& result, void* userData);
+
+	// Check if the core thread should be paused
+	bool ShouldPauseGameCore();
 };
 
 #endif // CIV5_CONNECTION_SERVICE_H

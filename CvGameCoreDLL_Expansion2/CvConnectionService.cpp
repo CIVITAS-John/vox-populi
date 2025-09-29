@@ -7,6 +7,7 @@ Opens an IPC channel that exposes the game's internal state to external services
 #include "CvConnectionSchema.h"
 #include "CvGlobals.h"
 #include "CvGame.h"
+#include "CvPlayer.h"
 #include "CustomMods.h"
 #include "FireWorks/FILogFile.h"
 #include "ICvDLLScriptSystem.h"
@@ -75,6 +76,7 @@ bool CvConnectionService::Setup()
 	InitializeCriticalSection(&m_csFunctions);
 	InitializeCriticalSection(&m_csExternalFunctions);
 	InitializeCriticalSection(&m_csPendingCalls);
+	InitializeCriticalSection(&m_csPausedPlayers);  // Vox Deorum: For thread-safe access to paused players list
 
 	// Reset shutdown flag
 	m_bShutdownRequested = false;
@@ -216,6 +218,7 @@ void CvConnectionService::Shutdown()
 	DeleteCriticalSection(&m_csFunctions);
 	DeleteCriticalSection(&m_csExternalFunctions);
 	DeleteCriticalSection(&m_csPendingCalls);
+	DeleteCriticalSection(&m_csPausedPlayers);  // Vox Deorum: Clean up paused players critical section
 
 	// Free the JSON buffers
 	if (m_pMainThreadReadBuffer)
@@ -399,6 +402,11 @@ DWORD WINAPI CvConnectionService::NamedPipeServerThread(LPVOID lpParam)
 		// Client disconnected
 		pService->m_bClientConnected = false;
 		pService->Log(LOG_INFO, "NamedPipeServerThread - Bridge Service disconnected");
+
+		// Vox Deorum: Clear paused players list when pipe disconnects
+		EnterCriticalSection(&pService->m_csPausedPlayers);
+		pService->m_pausedPlayers.clear();
+		LeaveCriticalSection(&pService->m_csPausedPlayers);
 		
 		// Cleanup
 		if (pService->m_hPipe != INVALID_HANDLE_VALUE) {
@@ -662,92 +670,93 @@ void CvConnectionService::ProcessMessages()
 	{
 		return;
 	}
-	
-	try {
-		// Lock the incoming queue critical section
-		EnterCriticalSection(&m_csIncoming);
-		
-		// Process all queued messages
-		int processedCount = 0;
-		while (!m_incomingQueue.empty())
-		{
-			// Get the message from the front of the queue
-			std::string msgJson = m_incomingQueue.front();
-			m_incomingQueue.pop();
-			
-			// Temporarily release the lock to process the message
-			LeaveCriticalSection(&m_csIncoming);
-			
-			// Route the message to the appropriate handler
-			RouteMessage(msgJson);
-			
-			processedCount++;
-			
-			// Re-acquire the lock for the next iteration
-			EnterCriticalSection(&m_csIncoming);
-		}
-		
-		// Release the critical section
-		LeaveCriticalSection(&m_csIncoming);
 
-		// Check memory usage every 60 seconds (debug)
-		if (processedCount > 0 && m_pLuaState)
-		{
-			DWORD currentTime = GetTickCount();
-			DWORD timeSinceLastGC = (currentTime >= m_dwLastGCTime) ?
-				(currentTime - m_dwLastGCTime) :
-				(UINT_MAX - m_dwLastGCTime + currentTime + 1); // Handle tick count wrap-around
+	int processedCount = 0;
 
-			if (timeSinceLastGC >= 60000) // 60 seconds
-			{
-				// Handle thread locks for safe Lua GC
-				bool bHadLock = gDLL->HasGameCoreLock();
-				if (bHadLock)
-				{
-					gDLL->ReleaseGameCoreLock();
-				}
-
-				// ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
-				// pkScriptSystem->CallCFunction(m_pLuaState, pLuaGC, pkScriptSystem);
-				int result = lua_gc(m_pLuaState, LUA_GCCOUNT, 0);
-
-				// Restore game core lock if we had it
-				if (bHadLock)
-				{
-					gDLL->GetGameCoreLock();
-				}
-
-				// Get process memory statistics after GC
-				PROCESS_MEMORY_COUNTERS_EX pmc;
-				pmc.cb = sizeof(pmc);
-				GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
-
-				std::stringstream ss;
-				ss << "GarbageCollection - Lua Memory: " << result << "KB"
-				   << " | Process Memory: "
-				   << "Private Bytes: " << (pmc.PrivateUsage / (1024 * 1024)) << "MB, "
-				   << "Virtual Bytes: " << (pmc.PagefileUsage / (1024 * 1024)) << "MB, "
-				   << "Working Set: " << (pmc.WorkingSetSize / (1024 * 1024)) << "MB, "
-				   << "Peak Working Set: " << (pmc.PeakWorkingSetSize / (1024 * 1024)) << "MB";
-				Log(LOG_DEBUG, ss.str().c_str());
-
-				m_dwLastGCTime = currentTime;
-			}
-		}
-	}
-	catch (...)
+	// Loop and wait while a pause is imposed externally
+	while (true)
 	{
-		std::stringstream ss;
-		ss << "ProcessMessages - Unknown exception processing messages";
-		Log(LOG_ERROR, ss.str().c_str());
+		try {
+			// Lock the incoming queue critical section
+			EnterCriticalSection(&m_csIncoming);
+			
+			// Process all queued messages
+			while (!m_incomingQueue.empty())
+			{
+				// Get the message from the front of the queue
+				std::string msgJson = m_incomingQueue.front();
+				m_incomingQueue.pop();
+				
+				// Temporarily release the lock to process the message
+				LeaveCriticalSection(&m_csIncoming);
+				
+				// Route the message to the appropriate handler
+				RouteMessage(msgJson);
+				
+				processedCount++;
+				
+				// Re-acquire the lock for the next iteration
+				EnterCriticalSection(&m_csIncoming);
+			}
+			
+			// Release the critical section
+			LeaveCriticalSection(&m_csIncoming);
+		}
+		catch (...)
+		{
+			std::stringstream ss;
+			ss << "ProcessMessages - Unknown exception processing messages";
+			Log(LOG_ERROR, ss.str().c_str());
+		}
+		
+		// If we are pausing, sleep for 20ms before checking again
+		if (!ShouldPauseGameCore()) break;
+		Sleep(20);
+	}
+
+	// Check memory usage every 60 seconds (debug)
+	if (processedCount > 0 && m_pLuaState)
+	{
+		DWORD currentTime = GetTickCount();
+		DWORD timeSinceLastGC = (currentTime >= m_dwLastGCTime) ?
+			(currentTime - m_dwLastGCTime) :
+			(UINT_MAX - m_dwLastGCTime + currentTime + 1); // Handle tick count wrap-around
+
+		if (timeSinceLastGC >= 60000) // 60 seconds
+		{
+			// Handle thread locks for safe Lua GC
+			bool bHadLock = gDLL->HasGameCoreLock();
+			if (bHadLock)
+			{
+				gDLL->ReleaseGameCoreLock();
+			}
+
+			int result = lua_gc(m_pLuaState, LUA_GCCOUNT, 0);
+
+			// Restore game core lock if we had it
+			if (bHadLock)
+			{
+				gDLL->GetGameCoreLock();
+			}
+
+			// Get process memory statistics after GC
+			PROCESS_MEMORY_COUNTERS_EX pmc;
+			pmc.cb = sizeof(pmc);
+			GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+
+			std::stringstream ss;
+			ss << "GarbageCollection - Lua Memory: " << result << "KB"
+				<< " | Process Memory: "
+				<< "Private Bytes: " << (pmc.PrivateUsage / (1024 * 1024)) << "MB, "
+				<< "Virtual Bytes: " << (pmc.PagefileUsage / (1024 * 1024)) << "MB, "
+				<< "Working Set: " << (pmc.WorkingSetSize / (1024 * 1024)) << "MB, "
+				<< "Peak Working Set: " << (pmc.PeakWorkingSetSize / (1024 * 1024)) << "MB";
+			Log(LOG_DEBUG, ss.str().c_str());
+
+			m_dwLastGCTime = currentTime;
+		}
 	}
 }
-
-// Run LuaGC (wrapped in the engine function)
-// int CvConnectionService::pLuaGC(lua_State* L)
-// {
-	
-// }
 
 // Send a message to the Bridge Service (called from game code)
 // Returns the length of the outgoing queue after adding the message
@@ -827,14 +836,14 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 		// Extract parameters for external call response
 		const char* callId = (*m_pMainThreadReadBuffer)["id"];
 		bool bSuccess = (*m_pMainThreadReadBuffer)["success"];
-		
+
 		// Parse error code from error object if present
 		const char* error = (char*)0;
 		if (m_pMainThreadReadBuffer->containsKey("error") && (*m_pMainThreadReadBuffer)["error"].containsKey("code"))
 		{
 			error = (*m_pMainThreadReadBuffer)["error"]["code"];
 		}
-		
+
 		// Convert result to string if present (protocol uses "result" field)
 		const char* data = (char*)0;
 		std::string dataStr;
@@ -843,9 +852,26 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 			serializeJson((*m_pMainThreadReadBuffer)["result"], dataStr);
 			data = dataStr.c_str();
 		}
-		
+
 		// Handle the response
 		if (callId) HandleExternalCallResponse(callId, bSuccess, error, data);
+	}
+	else if (strcmp(messageType, "pause_player") == 0)
+	{
+		// Vox Deorum: Handle player pause request
+		int iPlayerID = (*m_pMainThreadReadBuffer)["playerID"];
+		AddPausedPlayer(iPlayerID);
+	}
+	else if (strcmp(messageType, "unpause_player") == 0)
+	{
+		// Vox Deorum: Handle player unpause request
+		int iPlayerID = (*m_pMainThreadReadBuffer)["playerID"];
+		RemovePausedPlayer(iPlayerID);
+	}
+	else if (strcmp(messageType, "clear_paused_players") == 0)
+	{
+		// Vox Deorum: Handle clear all paused players request
+		ClearPausedPlayers();
 	}
 	else
 	{
@@ -2550,5 +2576,72 @@ void CvConnectionService::ProcessExternalCallResult(lua_State* L, const External
 		lua_pushnil(L);
 		lua_pushstring(L, result.strError.c_str());
 	}
+}
+
+// Vox Deorum: Add a player to the paused players list
+void CvConnectionService::AddPausedPlayer(int iPlayerID)
+{
+	EnterCriticalSection(&m_csPausedPlayers);
+	m_pausedPlayers.insert(iPlayerID);
+	LeaveCriticalSection(&m_csPausedPlayers);
+
+	std::stringstream ss;
+	ss << "AddPausedPlayer - Player " << iPlayerID << " added to paused list";
+	Log(LOG_DEBUG, ss.str().c_str());
+}
+
+// Vox Deorum: Remove a player from the paused players list
+void CvConnectionService::RemovePausedPlayer(int iPlayerID)
+{
+	EnterCriticalSection(&m_csPausedPlayers);
+	m_pausedPlayers.erase(iPlayerID);
+	LeaveCriticalSection(&m_csPausedPlayers);
+
+	std::stringstream ss;
+	ss << "RemovePausedPlayer - Player " << iPlayerID << " removed from paused list";
+	Log(LOG_DEBUG, ss.str().c_str());
+}
+
+// Vox Deorum: Clear all paused players
+void CvConnectionService::ClearPausedPlayers()
+{
+	EnterCriticalSection(&m_csPausedPlayers);
+	m_pausedPlayers.clear();
+	LeaveCriticalSection(&m_csPausedPlayers);
+
+	Log(LOG_DEBUG, "ClearPausedPlayers - All players removed from paused list");
+}
+
+// Check if game core should be paused
+bool CvConnectionService::ShouldPauseGameCore()
+{
+	// Double-check we're still initialized and connected
+	if (!m_bInitialized || !m_bClientConnected) return false;
+	
+	// First check if there are any paused players
+	EnterCriticalSection(const_cast<CRITICAL_SECTION*>(&m_csPausedPlayers));
+	if (m_pausedPlayers.empty())
+	{
+		LeaveCriticalSection(const_cast<CRITICAL_SECTION*>(&m_csPausedPlayers));
+		return false;
+	}
+
+	// Check all players who are currently active (handles both regular and simultaneous turns)
+	for (int iPlayer = 0; iPlayer < MAX_MAJOR_CIVS; iPlayer++)
+	{
+		CvPlayer& player = GET_PLAYER((PlayerTypes)iPlayer);
+		if (player.isAlive() && player.isTurnActive())
+		{
+			// Check if this active player is in the paused players list
+			if (m_pausedPlayers.find(iPlayer) != m_pausedPlayers.end())
+			{
+				LeaveCriticalSection(const_cast<CRITICAL_SECTION*>(&m_csPausedPlayers));
+				return true;  // Should pause
+			}
+		}
+	}
+
+	LeaveCriticalSection(const_cast<CRITICAL_SECTION*>(&m_csPausedPlayers));
+	return false;  // No need to pause
 }
 
