@@ -610,8 +610,8 @@ void CvConnectionService::HandleClientConnection(HANDLE hPipe)
 			messageBuffer.reserve(262144); // Re-reserve standard capacity
 		}
 		
-		// Small delay only if we didn't process any messages
-		if (messagesProcessed == 0 && !hasIncomingData && !hasOutgoingMessages)
+		// Small delay only if we didn't process many messages / we need to handle incoming messages.
+		if (messagesProcessed < 3 && !hasIncomingData)
 		{
 			Sleep(20); // Small delay to avoid busy waiting when idle
 		}
