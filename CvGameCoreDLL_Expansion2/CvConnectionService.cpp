@@ -292,8 +292,16 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 			break;
 		}
 		
-		// Add the actual message
-		ss << message;
+		// Add the actual message with truncation at 1024 bytes
+		std::string msgStr(message);
+		const size_t maxBytes = 1024;
+		if (msgStr.length() > maxBytes) {
+			size_t truncatedLen = msgStr.length() - maxBytes;
+			msgStr = msgStr.substr(0, maxBytes);
+			ss << msgStr << "[..." << truncatedLen << " characters truncated]";
+		} else {
+			ss << msgStr;
+		}
 		
 		// Write to log file
 		pLog->Msg(ss.str().c_str());
