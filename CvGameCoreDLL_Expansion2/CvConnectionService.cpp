@@ -1625,8 +1625,9 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 	{
 		// TileRevealed parameters: (iPlotX, iPlotY, iTeam, iFromTeam, bFirst, iUnitOwner, iUnit)
 		// The 6th parameter (index 5) is the unit owner (player ID)
+		// Also ignore if no unit involved (iUnitOwner == -1)
 		int iUnitOwner = -1;
-		if (args->GetInt(5, iUnitOwner) && iUnitOwner >= MAX_MAJOR_CIVS)
+		if (args->GetInt(5, iUnitOwner) && (iUnitOwner == -1 || iUnitOwner >= MAX_MAJOR_CIVS))
 		{
 			// Skip TileRevealed events from non-major civs
 			return;
