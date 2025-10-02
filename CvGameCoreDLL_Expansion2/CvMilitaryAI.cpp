@@ -315,6 +315,7 @@ void CvMilitaryAI::Reset()
 	m_iRecDefensiveLandUnits = 0;
 	m_iRecOffensiveLandUnits = 0;
 	m_iRecOffensiveNavalUnits = 0;
+	m_iRecExplorerUnits = 0;
 	m_eLandDefenseState = NO_DEFENSE_STATE;
 	m_eNavalDefenseState = NO_DEFENSE_STATE;
 	m_iNumberOfTimesOpsBuildSkippedOver = 0;
@@ -585,6 +586,10 @@ CvUnit* CvMilitaryAI::BuyEmergencyUnit(UnitAITypes eUnitType, CvCity* pCity)
 			}
 		}
 	}
+
+	// AI unit promotions have already been processed, so we need to do it explicitly here
+	if (pUnit)
+		pUnit->AI_promote();
 
 	if (pUnit)
 	{
@@ -1571,7 +1576,7 @@ void CvMilitaryAI::LogDeficitScrapUnit(CvUnit* pUnit, bool bGifted)
 
 		if(pUnit->getDomainType() == DOMAIN_LAND)
 		{
-			strTemp.Format("Num Land Units: %d, In Armies %d, Rec Size: %d, ", m_iNumLandUnits, m_iNumLandUnitsInArmies, m_iRecOffensiveLandUnits + m_iRecDefensiveLandUnits);
+			strTemp.Format("Num Land Units: %d, In Armies %d, Rec Size: %d, ", m_iNumLandUnits, m_iNumLandUnitsInArmies, m_iRecOffensiveLandUnits + m_iRecDefensiveLandUnits + m_iRecExplorerUnits);
 		}
 		else
 		{
@@ -1779,7 +1784,11 @@ void CvMilitaryAI::SetRecommendedArmyNavySize()
 
 	int iTotalWeight = iTotalOffenseWeight + iLandDefenseWeight + iNavalDefenseWeight;
 
-	iMaxPossibleUnits -= m_pPlayer->GetEconomicAI()->GetExplorersNeeded();
+	// Limit explorers to 1/4 of total supply
+	int iExplorersNeeded = min(iMaxPossibleUnits / 4, m_pPlayer->GetEconomicAI()->GetExplorersNeeded());
+	m_iRecExplorerUnits = iExplorersNeeded;
+
+	iMaxPossibleUnits -= iExplorersNeeded;
 
 	// We don't want to max out our supply cap
 	//if (iMaxPossibleUnits * 10 > iTotalWeight)
