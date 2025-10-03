@@ -9540,10 +9540,7 @@ void CvMinorCivAI::SetRouteConnectionEstablished(PlayerTypes eMajor, bool bValue
 	PRECONDITION(eMajor < MAX_MAJOR_CIVS, "eMajor is expected to be within maximum bounds (invalid Index)");
 	if(eMajor < 0 || eMajor >= MAX_MAJOR_CIVS) return;
 
-	if(m_abRouteConnectionEstablished[eMajor] != bValue)
-	{
-		m_abRouteConnectionEstablished[eMajor] = bValue;
-	}
+	m_abRouteConnectionEstablished[eMajor] = bValue;
 }
 
 /// Any Camps near us?
@@ -9932,10 +9929,7 @@ bool CvMinorCivAI::IsRebellionActive() const
 
 void CvMinorCivAI::SetRebellionActive(bool bValue)
 {
-	if(m_bIsRebellionActive != bValue)
-	{
-		m_bIsRebellionActive = bValue;
-	}
+	m_bIsRebellionActive = bValue;
 }
 
 bool CvMinorCivAI::IsHordeActive() const
@@ -9945,10 +9939,7 @@ bool CvMinorCivAI::IsHordeActive() const
 
 void CvMinorCivAI::SetHordeActive(bool bValue)
 {
-	if(m_bIsHordeActive != bValue)
-	{
-		m_bIsHordeActive = bValue;
-	}
+	m_bIsHordeActive = bValue;
 }
 
 //Cooldown
@@ -17191,7 +17182,7 @@ void CvMinorCivAI::DoElection()
 					strSummary << pCapital->getNameKey();
 					Localization::String strNotification = Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_RIG_ELECTION_SUCCESS");
 					strNotification << GET_PLAYER(ePlayer).GetEspionage()->GetSpyRankName(apSpy[ui]->m_eRank);
-					strNotification << apSpy[ui]->GetSpyName(&GET_PLAYER(ePlayer));
+					strNotification << apSpy[ui]->GetSpyName();
 					strNotification << pCapital->getNameKey();
 					strNotification << iValue;
 					pNotifications->Add(NOTIFICATION_SPY_RIG_ELECTION_SUCCESS, strNotification.toUTF8(), strSummary.toUTF8(), pCapital->getX(), pCapital->getY(), -1);
@@ -17285,7 +17276,7 @@ void CvMinorCivAI::DoElection()
 						strSummary << pCapital->getNameKey();
 						Localization::String strNotification = Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_RIG_ELECTION_FAILURE");
 						strNotification << GET_PLAYER(ePlayer).GetEspionage()->GetSpyRankName(apSpy[ui]->m_eRank);
-						strNotification << apSpy[ui]->GetSpyName(&GET_PLAYER(ePlayer));
+						strNotification << apSpy[ui]->GetSpyName();
 						strNotification << pCapital->getNameKey();
 						strNotification << GET_PLAYER(eElectionWinner).getCivilizationShortDescriptionKey();
 						strNotification << (iDiminishAmount / 100);
@@ -18941,10 +18932,7 @@ bool CvMinorCivAI::IsDisableNotifications() const
 /// Disable notifications for minor civs for now
 void CvMinorCivAI::SetDisableNotifications(bool bDisableNotifications)
 {
-	if (m_bDisableNotifications != bDisableNotifications)
-	{
-		m_bDisableNotifications = bDisableNotifications;
-	}
+	m_bDisableNotifications = bDisableNotifications;
 }
 
 //======================================================================================================

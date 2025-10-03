@@ -671,7 +671,7 @@ void CvPlot::verifyUnitValidPlot(PlayerTypes eForSpecificPlayer, bool bWakeUp)
 		CvUnit* pLoopUnit = GetPlayerUnit(oldUnitList[iVectorLoop]);
 		if(pLoopUnit != NULL)
 		{
-			if (eForSpecificPlayer == NO_PLAYER || (eForSpecificPlayer != NO_PLAYER && pLoopUnit->getOwner() == eForSpecificPlayer))
+			if (eForSpecificPlayer == NO_PLAYER || pLoopUnit->getOwner() == eForSpecificPlayer)
 			{
 				if (!pLoopUnit->isDelayedDeath())
 				{
@@ -6604,10 +6604,7 @@ void CvPlot::setOwner(PlayerTypes eNewValue, int iAcquiringCityID, bool bCheckUn
 				if (eImprovement != NO_IMPROVEMENT)
 				{
 					GET_PLAYER(eOldOwner).changeImprovementCount(eImprovement, -1, eOldOwner == eBuilder);
-					if (pOldOwningCity->GetID() != iAcquiringCityID)
-					{
-						pOldOwningCity->ChangeImprovementCount(eImprovement, -1);
-					}
+					// Note: City improvement count is handled in setOwningCity()
 
 					// Remove siphoned resources
 					CvImprovementEntry* pImprovementInfo = GC.getImprovementInfo(eImprovement);
@@ -6775,12 +6772,7 @@ void CvPlot::setOwner(PlayerTypes eNewValue, int iAcquiringCityID, bool bCheckUn
 				if(eImprovement != NO_IMPROVEMENT)
 				{
 					GET_PLAYER(eNewValue).changeImprovementCount(eImprovement, 1, getOwner() == eBuilder);
-					// city owner changes hands later or maybe earlier? ugh
-					if (!pOldOwningCity || pOldOwningCity->GetID() != iAcquiringCityID)
-					{
-						CvCity* pNewOwningCity = ::GetPlayerCity(IDInfo(eNewValue, iAcquiringCityID));
-						pNewOwningCity->ChangeImprovementCount(eImprovement, 1);
-					}
+					// Note: City improvement count is handled in setOwningCity()
 
 					// Add siphoned resources
 					CvImprovementEntry* pImprovementInfo = GC.getImprovementInfo(eImprovement);
@@ -9178,7 +9170,7 @@ void CvPlot::setRouteType(RouteTypes eNewValue, PlayerTypes eBuilder)
 	if (eNewValue < NO_ROUTE) return;
 	if (eNewValue > NO_ROUTE && GC.getRouteInfo(eNewValue) == NULL) return;
 
-	if(eOldRoute != eNewValue || (eOldRoute == eNewValue && IsRoutePillaged()))
+	if(eOldRoute != eNewValue || IsRoutePillaged())
 	{
 		// Remove old effects
 		if(eOldRoute != NO_ROUTE && !isCity())
@@ -11104,7 +11096,7 @@ int CvPlot::calculateYield(YieldTypes eYield, bool bDisplay, const CvCity* pOwni
 				BeliefTypes ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(pOwningCity->getOwner());
 				if (pPantheon != NULL && ePantheonBelief != NO_BELIEF && ePantheonBelief != eSecondaryPantheon)
 				{
-					if (pReligion == NULL || (pReligion != NULL && !pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eMajority, pOwningCity->getOwner()))) // check that the our religion does not have our belief, to prevent double counting
+					if (pReligion == NULL || !pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eMajority, pOwningCity->getOwner())) // check that the our religion does not have our belief, to prevent double counting
 					{
 						return calculateYieldFast(eYield, bDisplay, pOwningCity, pReligion, pBelief, pPantheon);
 					}

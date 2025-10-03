@@ -1257,6 +1257,11 @@ public:
 	int eventTestAny(const char* szName, CvLuaArgsHandle &args);
 	int eventAccumulator(int& iValue, const char* szName, CvLuaArgsHandle &args);
 
+private:
+	// Helper function to parse variable arguments into CvLuaArgsHandle
+	void parseVariableArgs(CvLuaArgsHandle &args, const char* p, va_list vl);
+
+public:
 	void prefetchCache();
 	void preloadCache();
 	void reloadCache();
