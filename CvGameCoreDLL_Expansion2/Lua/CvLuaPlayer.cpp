@@ -19361,13 +19361,52 @@ int CvLuaPlayer::lGetNextPolicy(lua_State* L)
 	return 2;
 }
 
+// Vox Deorum: Helper function to check if an economic strategy is blacklisted
+// Blacklisted strategies have immediate effects or are not suitable for LLM decision-making
+static bool IsEconomicStrategyBlacklisted(int iStrategyID)
+{
+	static std::set<int> blacklistedStrategies;
+	static bool initialized = false;
+
+	if (!initialized)
+	{
+		// TradeWithCityState - immediate effect: triggers trade routes with city-states
+		int iTradeWithCityState = GC.getInfoTypeForString("ECONOMICAISTRATEGY_TRADE_WITH_CITY_STATE");
+		if (iTradeWithCityState != -1) blacklistedStrategies.insert(iTradeWithCityState);
+
+		// FoundCity - immediate effect: triggers city founding operations
+		int iFoundCity = GC.getInfoTypeForString("ECONOMICAISTRATEGY_FOUND_CITY");
+		if (iFoundCity != -1) blacklistedStrategies.insert(iFoundCity);
+
+		// InfluenceCityState - immediate effect: asks diplomat to influence city-state
+		int iInfluenceCityState = GC.getInfoTypeForString("ECONOMICAISTRATEGY_INFLUENCE_CITY_STATE");
+		if (iInfluenceCityState != -1) blacklistedStrategies.insert(iInfluenceCityState);
+
+		// ConcertTour - immediate effect: triggers great musician concert tour
+		int iConcertTour = GC.getInfoTypeForString("ECONOMICAISTRATEGY_CONCERT_TOUR");
+		if (iConcertTour != -1) blacklistedStrategies.insert(iConcertTour);
+
+		initialized = true;
+	}
+
+	return blacklistedStrategies.find(iStrategyID) != blacklistedStrategies.end();
+}
+
 //------------------------------------------------------------------------------
 // Get possible economic strategies (returns only allowed strategy IDs)
+// Optional parameter: includeBlacklisted (default false) - if true, returns blacklisted strategies too
 int CvLuaPlayer::lGetPossibleEconomicStrategies(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
 	CvEconomicAI* pEconomicAI = pkPlayer->GetEconomicAI();
 	int iNumStrategies = pEconomicAI->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
+
+	// Check if includeBlacklisted parameter is provided (optional, defaults to false)
+	bool bIncludeBlacklisted = false;
+	if (lua_gettop(L) >= 2 && lua_isboolean(L, 2))
+	{
+		bIncludeBlacklisted = lua_toboolean(L, 2);
+	}
 
 	// Push only allowed strategy IDs to Lua as a table
 	lua_createtable(L, iNumStrategies, 0);
@@ -19378,6 +19417,12 @@ int CvLuaPlayer::lGetPossibleEconomicStrategies(lua_State* L)
 		CvEconomicAIStrategyXMLEntry* pStrategy = pEconomicAI->GetEconomicAIStrategies()->GetEntry(i);
 		if (pStrategy && pEconomicAI->IsStrategyAllowed(eStrategy, pStrategy))
 		{
+			// Skip blacklisted strategies unless explicitly requested
+			if (!bIncludeBlacklisted && IsEconomicStrategyBlacklisted(i))
+			{
+				continue;
+			}
+
 			lua_pushinteger(L, i);  // Push the strategy ID
 			lua_rawseti(L, -2, iIndex++);
 		}
@@ -19414,33 +19459,47 @@ int CvLuaPlayer::lGetPossibleMilitaryStrategies(lua_State* L)
 //------------------------------------------------------------------------------
 //array, array GetEconomicStrategies();
 // Returns two arrays: first with strategy IDs, second with corresponding active turns
+// Optional parameter: includeBlacklisted (default false) - if true, returns blacklisted strategies too
 int CvLuaPlayer::lGetEconomicStrategies(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
 	lua_newtable(L); // Create the first array (strategy IDs)
 	lua_newtable(L); // Create the second array (active turns)
-	
+
+	// Check if includeBlacklisted parameter is provided (optional, defaults to false)
+	bool bIncludeBlacklisted = false;
+	if (lua_gettop(L) >= 2 && lua_isboolean(L, 2))
+	{
+		bIncludeBlacklisted = lua_toboolean(L, 2);
+	}
+
 	if (pkPlayer && pkPlayer->GetEconomicAI())
 	{
 		int iCurrentTurn = GC.getGame().getGameTurn();
 		int iNumStrategies = pkPlayer->GetEconomicAI()->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
 		int iActiveCount = 0;
-		
+
 		for (int i = 0; i < iNumStrategies; i++)
 		{
 			EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
 			if (pkPlayer->GetEconomicAI()->IsUsingStrategy(eStrategy))
 			{
+				// Skip blacklisted strategies unless explicitly requested
+				if (!bIncludeBlacklisted && IsEconomicStrategyBlacklisted(i))
+				{
+					continue;
+				}
+
 				int iTurnAdopted = pkPlayer->GetEconomicAI()->GetTurnStrategyAdopted(eStrategy);
 				int iActiveTurns = (iTurnAdopted != -1) ? (iCurrentTurn - iTurnAdopted) : 0;
-				
+
 				iActiveCount++;
-				
+
 				// Add to strategy IDs array
 				lua_pushinteger(L, iActiveCount);
 				lua_pushinteger(L, i);
 				lua_settable(L, -4);
-				
+
 				// Add to active turns array
 				lua_pushinteger(L, iActiveCount);
 				lua_pushinteger(L, iActiveTurns);
@@ -19448,33 +19507,45 @@ int CvLuaPlayer::lGetEconomicStrategies(lua_State* L)
 			}
 		}
 	}
-	
+
 	return 2;
 }
 
 //------------------------------------------------------------------------------
 //void SetEconomicStrategies(array enabledStrategies);
 // Takes an array of strategy IDs to enable, all others will be disabled
+// Optional parameter: includeBlacklisted (default false) - if true, allows setting blacklisted strategies too
 int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
 	if (pkPlayer && pkPlayer->GetEconomicAI())
 	{
 		int iNumStrategies = pkPlayer->GetEconomicAI()->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
-		
-		// First, disable all strategies
+
+		// Check if includeBlacklisted parameter is provided (optional, defaults to false)
+		bool bIncludeBlacklisted = false;
+		if (lua_gettop(L) >= 3 && lua_isboolean(L, 3))
+		{
+			bIncludeBlacklisted = lua_toboolean(L, 3);
+		}
+
+		// First, disable all non-blacklisted strategies (or all strategies if includeBlacklisted is true)
 		for (int i = 0; i < iNumStrategies; i++)
 		{
 			EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
-			pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, false);
+			// Only disable if not blacklisted, or if we're allowed to modify blacklisted strategies
+			if (bIncludeBlacklisted || !IsEconomicStrategyBlacklisted(i))
+			{
+				pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, false);
+			}
 		}
-		
+
 		// Check if argument is a table (array)
 		if (lua_istable(L, 2))
 		{
 			// Get array length
 			int iLen = lua_objlen(L, 2);
-			
+
 			// Enable strategies specified in the array
 			for (int i = 1; i <= iLen; i++)
 			{
@@ -19482,10 +19553,17 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 				if (lua_isnumber(L, -1))
 				{
 					const int iStrategy = lua_tointeger(L, -1);
-					
+
 					// Validate strategy ID
 					if (iStrategy >= 0 && iStrategy < iNumStrategies)
 					{
+						// Skip blacklisted strategies unless explicitly allowed
+						if (!bIncludeBlacklisted && IsEconomicStrategyBlacklisted(iStrategy))
+						{
+							lua_pop(L, 1);
+							continue;
+						}
+
 						EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)iStrategy;
 						pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, true);
 					}
