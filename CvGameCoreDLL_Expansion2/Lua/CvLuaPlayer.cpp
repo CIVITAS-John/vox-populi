@@ -19386,6 +19386,26 @@ static bool IsEconomicStrategyBlacklisted(int iStrategyID)
 		int iConcertTour = GC.getInfoTypeForString("ECONOMICAISTRATEGY_CONCERT_TOUR");
 		if (iConcertTour != -1) blacklistedStrategies.insert(iConcertTour);
 
+		// NeedArchaeologists - checked with a formula, not suitable for LLM
+		int iNeedArchaeologists = GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_ARCHAEOLOGISTS");
+		if (iNeedArchaeologists != -1) blacklistedStrategies.insert(iNeedArchaeologists);
+
+		// EnoughArchaeologists - checked with a formula, not suitable for LLM
+		int iEnoughArchaeologists = GC.getInfoTypeForString("ECONOMICAISTRATEGY_ENOUGH_ARCHAEOLOGISTS");
+		if (iEnoughArchaeologists != -1) blacklistedStrategies.insert(iEnoughArchaeologists);
+
+		// NeedGuilds - checked with a formula, not suitable for LLM
+		int iNeedGuilds = GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_GUILDS");
+		if (iNeedGuilds != -1) blacklistedStrategies.insert(iNeedGuilds);
+
+		// NeedMuseums - checked with a formula, not suitable for LLM
+		int iNeedMuseums = GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_MUSEUMS");
+		if (iNeedMuseums != -1) blacklistedStrategies.insert(iNeedMuseums);
+
+		// OneOrFewerCoastalCities - checked with a formula, not suitable for LLM
+		int iOneOrFewerCoastalCities = GC.getInfoTypeForString("ECONOMICAISTRATEGY_ONE_OR_FEWER_COASTAL_CITIES");
+		if (iOneOrFewerCoastalCities != -1) blacklistedStrategies.insert(iOneOrFewerCoastalCities);
+
 		initialized = true;
 	}
 
