@@ -2653,4 +2653,3 @@ bool CvConnectionService::ShouldPauseGameCore()
 	LeaveCriticalSection(const_cast<CRITICAL_SECTION*>(&m_csPausedPlayers));
 	return false;  // No need to pause
 }
-
