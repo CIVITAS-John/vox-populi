@@ -16,6 +16,7 @@
 #include "CvLuaUnit.h"
 #include "../CvMinorCivAI.h"
 #include "../CvUnitCombat.h"
+#include "../CvTacticalAnalysisMap.h"
 
 #pragma warning(disable:4800 ) //forcing value to bool 'true' or 'false'
 
@@ -638,6 +639,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetAIOperationInfo);
 	Method(GetMissionInfo);
 	Method(GetDanger);
+	Method(GetTacticalZoneID);
 #endif
 
 	Method(AddMessage);
@@ -6739,6 +6741,24 @@ int CvLuaUnit::lGetDanger(lua_State* L)
 	int iDanger = pUnit->GetDanger();
 
 	lua_pushinteger(L, iDanger);
+	return 1;
+}
+
+// Vox Deorum: Returns the tactical zone ID for this unit's current position
+int CvLuaUnit::lGetTacticalZoneID(lua_State* L)
+{
+	CvUnit* pUnit = GetInstance(L);
+	CvTacticalDominanceZone* pZone = GET_PLAYER(pUnit->getOwner()).GetTacticalAI()->GetTacticalAnalysisMap()->GetZoneByPlot(pUnit->plot());
+
+	if (pZone)
+	{
+		lua_pushinteger(L, pZone->GetZoneID());
+	}
+	else
+	{
+		lua_pushinteger(L, -1);
+	}
+
 	return 1;
 }
 

@@ -1560,6 +1560,10 @@ protected:
 	static int lSetEconomicStrategies(lua_State* L);
 	static int lGetMilitaryStrategies(lua_State* L);
 	static int lSetMilitaryStrategies(lua_State* L);
+
+	// Vox Deorum: Tactical zone APIs
+	static int lGetNumTacticalZones(lua_State* L);
+	static int lGetTacticalZone(lua_State* L);
 };
 
 namespace CvLuaArgs

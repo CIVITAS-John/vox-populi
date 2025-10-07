@@ -33,6 +33,7 @@
 #include "../CvCitySpecializationAI.h"
 #include "../CvTechAI.h"
 #include "../CvPolicyAI.h"
+#include "../CvTacticalAnalysisMap.h"
 #include "ICvDLLUserInterface.h"
 #include "CvDllInterfaces.h"
 #include "CvDllNetMessageExt.h"
@@ -1563,6 +1564,9 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(SetEconomicStrategies);
 	Method(GetMilitaryStrategies);
 	Method(SetMilitaryStrategies);
+
+	Method(GetNumTacticalZones); // Vox Deorum: Get number of tactical zones
+	Method(GetTacticalZone);     // Vox Deorum: Get tactical zone information
 }
 //------------------------------------------------------------------------------
 void CvLuaPlayer::HandleMissingInstance(lua_State* L)
@@ -19645,20 +19649,20 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 	if (pkPlayer && pkPlayer->GetMilitaryAI())
 	{
 		int iNumStrategies = pkPlayer->GetMilitaryAI()->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
-		
+
 		// First, disable all strategies
 		for (int i = 0; i < iNumStrategies; i++)
 		{
 			MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)i;
 			pkPlayer->GetMilitaryAI()->SetUsingStrategy(eStrategy, false);
 		}
-		
+
 		// Check if argument is a table (array)
 		if (lua_istable(L, 2))
 		{
 			// Get array length
 			int iLen = lua_objlen(L, 2);
-			
+
 			// Enable strategies specified in the array
 			for (int i = 1; i <= iLen; i++)
 			{
@@ -19666,7 +19670,7 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 				if (lua_isnumber(L, -1))
 				{
 					const int iStrategy = lua_tointeger(L, -1);
-					
+
 					// Validate strategy ID
 					if (iStrategy >= 0 && iStrategy < iNumStrategies)
 					{
@@ -19679,4 +19683,148 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 		}
 	}
 	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get the number of tactical zones
+//------------------------------------------------------------------------------
+int CvLuaPlayer::lGetNumTacticalZones(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	if (pkPlayer && pkPlayer->GetTacticalAI())
+	{
+		CvTacticalAnalysisMap* pTactMap = pkPlayer->GetTacticalAI()->GetTacticalAnalysisMap();
+		if (pTactMap)
+		{
+			lua_pushinteger(L, pTactMap->GetNumZones());
+			return 1;
+		}
+	}
+	lua_pushinteger(L, 0);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get tactical zone information by index
+// Returns a table with zone information
+//------------------------------------------------------------------------------
+int CvLuaPlayer::lGetTacticalZone(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iIndex = lua_tointeger(L, 2);
+
+	if (pkPlayer && pkPlayer->GetTacticalAI())
+	{
+		CvTacticalAnalysisMap* pTactMap = pkPlayer->GetTacticalAI()->GetTacticalAnalysisMap();
+		if (pTactMap)
+		{
+			CvTacticalDominanceZone* pZone = pTactMap->GetZoneByIndex(iIndex);
+			if (pZone)
+			{
+				// Create a Lua table to return zone information
+				lua_createtable(L, 0, 10);
+
+				// Zone ID
+				lua_pushinteger(L, pZone->GetZoneID());
+				lua_setfield(L, -2, "ZoneID");
+
+				// Territory type
+				const char* territoryType = "None";
+				switch (pZone->GetTerritoryType())
+				{
+					case TACTICAL_TERRITORY_FRIENDLY: territoryType = "Friendly"; break;
+					case TACTICAL_TERRITORY_ENEMY: territoryType = "Enemy"; break;
+					case TACTICAL_TERRITORY_NEUTRAL: territoryType = "Neutral"; break;
+				}
+				lua_pushstring(L, territoryType);
+				lua_setfield(L, -2, "Territory");
+
+				// Dominance flag
+				const char* dominance = "No Units";
+				switch (pZone->GetOverallDominanceFlag())
+				{
+					case TACTICAL_DOMINANCE_FRIENDLY: dominance = "Friendly"; break;
+					case TACTICAL_DOMINANCE_ENEMY: dominance = "Enemy"; break;
+					case TACTICAL_DOMINANCE_EVEN: dominance = "Even"; break;
+				}
+				lua_pushstring(L, dominance);
+				lua_setfield(L, -2, "Dominance");
+
+				// Domain
+				lua_pushstring(L, pZone->GetDomain() == DOMAIN_SEA ? "Sea" : "Land");
+				lua_setfield(L, -2, "Domain");
+
+				// Posture
+				const char* posture = "NONE";
+				switch (pZone->GetPosture())
+				{
+					case TACTICAL_POSTURE_WITHDRAW: posture = "Withdraw"; break;
+					case TACTICAL_POSTURE_ATTRITION: posture = "Attrition"; break;
+					case TACTICAL_POSTURE_EXPLOIT_FLANKS: posture = "Exploit Flanks"; break;
+					case TACTICAL_POSTURE_STEAMROLL: posture = "Steamroll"; break;
+					case TACTICAL_POSTURE_SURGICAL_CITY_STRIKE: posture = "Surgical City Strike"; break;
+					case TACTICAL_POSTURE_HEDGEHOG: posture = "Hedgehog"; break;
+					case TACTICAL_POSTURE_COUNTERATTACK: posture = "Counterattack"; break;
+				}
+				lua_pushstring(L, posture);
+				lua_setfield(L, -2, "Posture");
+
+				// Area ID
+				lua_pushinteger(L, pZone->GetAreaID());
+				lua_setfield(L, -2, "AreaID");
+
+				// Zone city (if any)
+				CvCity* pCity = pZone->GetZoneCity();
+				if (pCity)
+				{
+					lua_pushstring(L, pCity->getNameKey());
+				}
+				else
+				{
+					lua_pushnil(L);
+				}
+				lua_setfield(L, -2, "City");
+
+				// Center coordinates
+				lua_pushinteger(L, pZone->GetCenterX());
+				lua_setfield(L, -2, "CenterX");
+
+				lua_pushinteger(L, pZone->GetCenterY());
+				lua_setfield(L, -2, "CenterY");
+
+				// Number of plots in zone
+				lua_pushinteger(L, pZone->GetNumPlots());
+				lua_setfield(L, -2, "Plots");
+
+				// Dominance zone value (priority)
+				lua_pushinteger(L, pZone->GetDominanceZoneValue());
+				lua_setfield(L, -2, "Value");
+
+				// Strength information
+				lua_pushinteger(L, pZone->GetOverallFriendlyStrength());
+				lua_setfield(L, -2, "FriendlyStrength");
+
+				lua_pushinteger(L, pZone->GetOverallEnemyStrength());
+				lua_setfield(L, -2, "EnemyStrength");
+
+				lua_pushinteger(L, pZone->GetNeutralStrength());
+				lua_setfield(L, -2, "NeutralStrength");
+
+				// Neighboring zones
+				const std::vector<int>& neighbors = pZone->GetNeighboringZones();
+				lua_createtable(L, neighbors.size(), 0);
+				for (size_t i = 0; i < neighbors.size(); i++)
+				{
+					lua_pushinteger(L, neighbors[i]);
+					lua_rawseti(L, -2, i + 1);
+				}
+				lua_setfield(L, -2, "Neighbors");
+
+				return 1;
+			}
+		}
+	}
+
+	lua_pushnil(L);
+	return 1;
 }
