@@ -19777,7 +19777,7 @@ int CvLuaPlayer::lGetTacticalZone(lua_State* L)
 				CvCity* pCity = pZone->GetZoneCity();
 				if (pCity)
 				{
-					lua_pushstring(L, pCity->getNameKey());
+					lua_pushstring(L, pCity->getName());
 				}
 				else
 				{
