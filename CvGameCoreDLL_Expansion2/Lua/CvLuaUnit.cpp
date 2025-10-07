@@ -6745,10 +6745,19 @@ int CvLuaUnit::lGetDanger(lua_State* L)
 }
 
 // Vox Deorum: Returns the tactical zone ID for this unit's current position
+// Optional parameter: PlayerID to get zone from a different player's perspective
 int CvLuaUnit::lGetTacticalZoneID(lua_State* L)
 {
 	CvUnit* pUnit = GetInstance(L);
-	CvTacticalDominanceZone* pZone = GET_PLAYER(pUnit->getOwner()).GetTacticalAI()->GetTacticalAnalysisMap()->GetZoneByPlot(pUnit->plot());
+
+	// Check for optional PlayerID parameter
+	PlayerTypes ePlayer = pUnit->getOwner();
+	if (lua_gettop(L) >= 2)
+	{
+		ePlayer = (PlayerTypes)lua_tointeger(L, 2);
+	}
+
+	CvTacticalDominanceZone* pZone = GET_PLAYER(ePlayer).GetTacticalAI()->GetTacticalAnalysisMap()->GetZoneByPlot(pUnit->plot());
 
 	if (pZone)
 	{
