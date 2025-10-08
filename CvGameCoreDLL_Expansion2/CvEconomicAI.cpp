@@ -531,6 +531,13 @@ void CvEconomicAI::DoTurn()
 		bool bTestStrategyStart = !IsUsingStrategy(eStrategy);
 		if (bTestStrategyStart)
 			bTestStrategyStart = IsStrategyAllowed(eStrategy, pStrategy);
+		
+		// If we just disabled a strategy through Lua API, don't try to re-enable it for at least 10 turns
+		// Only the Lua API would set the turn to a non-negative value when disabling a strategy
+		if (bTestStrategyStart) {
+			int adopted = GetTurnStrategyAdopted(eStrategy);
+			bTestStrategyStart = adopted == -1 || GC.getGame().getGameTurn() >= adopted + 10;
+		}
 
 		bool bTestStrategyEnd = false;
 
