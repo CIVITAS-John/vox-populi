@@ -19636,6 +19636,8 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 
 						EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)iStrategy;
 						pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, true);
+						// Force reset the turn adopted to the current turn + 10 to disable the in-game AI from overriding it in 10 turns
+						pkPlayer->GetEconomicAI()->SetTurnStrategyAdopted(eStrategy, GC.getGame().getGameTurn() + 10);
 					}
 				}
 				lua_pop(L, 1);
@@ -19724,6 +19726,8 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 					{
 						MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)iStrategy;
 						pkPlayer->GetMilitaryAI()->SetUsingStrategy(eStrategy, true);
+						// Force reset the turn adopted to the current turn + 10 to disable the in-game AI from overriding it in 10 turns
+						pkPlayer->GetMilitaryAI()->SetTurnStrategyAdopted(eStrategy, GC.getGame().getGameTurn() + 10);
 					}
 				}
 				lua_pop(L, 1);
