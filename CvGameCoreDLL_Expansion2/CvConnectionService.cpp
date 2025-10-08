@@ -1604,6 +1604,7 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 		"TeamSetHasTech",
 		"CombatEnded",
 		"BarbariansSpawnedUnit",
+		"EspionageResult",
 		NULL  // Null terminator
 	};
 	
