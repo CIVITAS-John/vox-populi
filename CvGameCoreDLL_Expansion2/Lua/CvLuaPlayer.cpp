@@ -1488,6 +1488,11 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(SetPersona);
 	Method(GetDiplomacyEvaluation);
 	
+	// Vox Deorum: Scenario modifiers
+	Method(SetScenarioModifier1);
+	Method(SetScenarioModifier2);
+	Method(SetScenarioModifier3);
+	
 #if defined(MOD_IMPROVEMENTS_EXTENSIONS)
 	Method(GetResponsibleForRouteCount);
 	Method(GetResponsibleForImprovementCount);
@@ -16282,6 +16287,45 @@ int CvLuaPlayer::lGetDiplomacyEvaluation(lua_State* L)
 	lua_settable(L, -3);
 
 	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Set ScenarioModifier1
+int CvLuaPlayer::lSetScenarioModifier1(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iOtherPlayer = lua_tointeger(L, 2);
+	const int iValue = lua_tointeger(L, 3);
+	
+	pkPlayer->GetDiplomacyAI()->SetScenarioModifier1((PlayerTypes)iOtherPlayer, iValue);
+	
+	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Set ScenarioModifier2
+int CvLuaPlayer::lSetScenarioModifier2(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iOtherPlayer = lua_tointeger(L, 2);
+	const int iValue = lua_tointeger(L, 3);
+	
+	pkPlayer->GetDiplomacyAI()->SetScenarioModifier2((PlayerTypes)iOtherPlayer, iValue);
+	
+	return 0;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Set ScenarioModifier3
+int CvLuaPlayer::lSetScenarioModifier3(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iOtherPlayer = lua_tointeger(L, 2);
+	const int iValue = lua_tointeger(L, 3);
+	
+	pkPlayer->GetDiplomacyAI()->SetScenarioModifier3((PlayerTypes)iOtherPlayer, iValue);
+	
+	return 0;
 }
 
 //------------------------------------------------------------------------------

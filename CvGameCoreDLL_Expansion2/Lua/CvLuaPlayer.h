@@ -1475,6 +1475,11 @@ protected:
 	static int lSetPersona(lua_State* L);
 	static int lGetDiplomacyEvaluation(lua_State* L);
 	
+	// Vox Deorum: Scenario modifiers
+	static int lSetScenarioModifier1(lua_State* L);
+	static int lSetScenarioModifier2(lua_State* L);
+	static int lSetScenarioModifier3(lua_State* L);
+
 #if defined(MOD_IMPROVEMENTS_EXTENSIONS)
 	static int lGetResponsibleForRouteCount(lua_State* L);
 	static int lGetResponsibleForImprovementCount(lua_State* L);

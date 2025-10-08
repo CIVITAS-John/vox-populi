@@ -1726,7 +1726,10 @@ public:
 	int GetScenarioModifier1(PlayerTypes ePlayer);
 	int GetScenarioModifier2(PlayerTypes ePlayer);
 	int GetScenarioModifier3(PlayerTypes ePlayer);
-
+	void SetScenarioModifier1(PlayerTypes ePlayer, int iValue);
+	void SetScenarioModifier2(PlayerTypes ePlayer, int iValue);
+	void SetScenarioModifier3(PlayerTypes ePlayer, int iValue);
+	
 	/////////////////////////////////////////////////////////
 	// Miscellaneous
 	/////////////////////////////////////////////////////////
@@ -2131,6 +2134,11 @@ private:
 
 	float m_aTradePriority[MAX_MAJOR_CIVS]; // current ai to human trade priority
 
+	// Vox Deorum: Persistent scenario modifiers
+	int m_aiScenarioModifier1[MAX_MAJOR_CIVS];
+	int m_aiScenarioModifier2[MAX_MAJOR_CIVS];
+	int m_aiScenarioModifier3[MAX_MAJOR_CIVS];
+	
 	// Other
 	typedef std::vector<PlayerTypes> PlayerTypesArray;
 	PlayerTypesArray m_aGreetPlayers;

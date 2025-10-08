@@ -349,8 +349,10 @@ void CvDiplomacyAI::Init(CvPlayer* pPlayer)
 			m_abVassalTaxLowered[iI] = false;
 			m_aiVassalGoldPerTurnTaxedSinceVassalStarted[iI] = 0;
 			m_aiVassalGoldPerTurnCollectedSinceVassalStarted[iI] = 0;
-
 			m_aTradePriority[iI] = 0.0f;
+			m_aiScenarioModifier1[iI] = 0;
+			m_aiScenarioModifier2[iI] = 0;
+			m_aiScenarioModifier3[iI] = 0;
 		}
 
 		if (iI < MAX_CIV_PLAYERS)
@@ -685,6 +687,10 @@ void CvDiplomacyAI::Serialize(DiplomacyAI& diplomacyAI, Visitor& visitor)
 	visitor(diplomacyAI.m_abVassalTaxLowered);
 	visitor(diplomacyAI.m_aiVassalGoldPerTurnTaxedSinceVassalStarted);
 	visitor(diplomacyAI.m_aiVassalGoldPerTurnCollectedSinceVassalStarted);
+	// Vox Deorum: Persistent scenario modifiers
+	visitor(diplomacyAI.m_aiScenarioModifier1);
+	visitor(diplomacyAI.m_aiScenarioModifier2);
+	visitor(diplomacyAI.m_aiScenarioModifier3);
 }
 
 /// Serialization read
@@ -48868,11 +48874,14 @@ int CvDiplomacyAI::GetScenarioModifier1(PlayerTypes ePlayer)
 		int iValue = 0;
 		if (LuaSupport::CallAccumulator(pkScriptSystem, "GetScenarioDiploModifier1", args.get(), iValue))
 		{
+			// Vox Deorum: Lua hook returned a value, update storage and return it
+			m_aiScenarioModifier1[ePlayer] = iValue;
 			return iValue;
 		}
 	}
 
-	return 0;
+	// Vox Deorum: No Lua value, return cached modifier
+	return m_aiScenarioModifier1[ePlayer];
 }
 
 int CvDiplomacyAI::GetScenarioModifier2(PlayerTypes ePlayer)
@@ -48887,11 +48896,14 @@ int CvDiplomacyAI::GetScenarioModifier2(PlayerTypes ePlayer)
 		int iValue = 0;
 		if (LuaSupport::CallAccumulator(pkScriptSystem, "GetScenarioDiploModifier2", args.get(), iValue))
 		{
+			// Vox Deorum: Lua hook returned a value, update storage and return it
+			m_aiScenarioModifier2[ePlayer] = iValue;
 			return iValue;
 		}
 	}
 
-	return 0;
+	// Vox Deorum: No Lua value, return cached modifier
+	return m_aiScenarioModifier2[ePlayer];
 }
 
 int CvDiplomacyAI::GetScenarioModifier3(PlayerTypes ePlayer)
@@ -48906,12 +48918,35 @@ int CvDiplomacyAI::GetScenarioModifier3(PlayerTypes ePlayer)
 		int iValue = 0;
 		if (LuaSupport::CallAccumulator(pkScriptSystem, "GetScenarioDiploModifier3", args.get(), iValue))
 		{
+			// Vox Deorum: Lua hook returned a value, update storage and return it
+			m_aiScenarioModifier3[ePlayer] = iValue;
 			return iValue;
 		}
 	}
 
-	return 0;
+	// Vox Deorum: No Lua value, return cached modifier
+	return m_aiScenarioModifier3[ePlayer];
+}
 
+void CvDiplomacyAI::SetScenarioModifier1(PlayerTypes ePlayer, int iValue)
+{
+	if(ePlayer < 0 || ePlayer >= MAX_MAJOR_CIVS) return;
+	
+	m_aiScenarioModifier1[ePlayer] = iValue;
+}
+
+void CvDiplomacyAI::SetScenarioModifier2(PlayerTypes ePlayer, int iValue)
+{
+	if(ePlayer < 0 || ePlayer >= MAX_MAJOR_CIVS) return;
+	
+	m_aiScenarioModifier2[ePlayer] = iValue;
+}
+
+void CvDiplomacyAI::SetScenarioModifier3(PlayerTypes ePlayer, int iValue)
+{
+	if(ePlayer < 0 || ePlayer >= MAX_MAJOR_CIVS) return;
+	
+	m_aiScenarioModifier3[ePlayer] = iValue;
 }
 
 /////////////////////////////////////////////////////////
