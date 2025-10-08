@@ -1934,27 +1934,6 @@ void CvMilitaryAI::UpdateMilitaryStrategies()
 		if (bTestStrategyStart)
 			bTestStrategyStart = IsStrategyAllowed(eStrategy, pStrategy);
 
-		else
-		{
-			// Has the prereq Tech necessary?
-			if(pStrategy->GetTechPrereq() != NO_TECH && !GET_TEAM(GetPlayer()->getTeam()).GetTeamTechs()->HasTech((TechTypes) pStrategy->GetTechPrereq()))
-			{
-				bTestStrategyStart = false;
-			}
-
-			// Has the Tech which obsoletes this Strategy?
-			if(bTestStrategyStart && pStrategy->GetTechObsolete() != NO_TECH && GET_TEAM(GetPlayer()->getTeam()).GetTeamTechs()->HasTech((TechTypes) pStrategy->GetTechObsolete()))
-			{
-				bTestStrategyStart = false;
-			}
-
-			// Not time to check this yet?
-			if(GC.getGame().getGameTurn() < pStrategy->GetFirstTurnExecuted())
-			{
-				bTestStrategyStart = false;
-			}
-		}
-
 		bool bTestStrategyEnd = false;
 
 		// Strategy is active, check to see if we should even try to disable it
