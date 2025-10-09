@@ -1,7 +1,7 @@
 name: Build
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 on:
@@ -636,5 +636,52 @@ jobs:
         with:
           name: VP_MSVC_Release
           path: 'BuildOutput/Release'
+
+  create-release:
+    needs: build-msvc
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download MSVC Release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: VP_MSVC_Release
+          path: msvc-release
+
+      - name: Download MSVC Debug artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: VP_MSVC_Debug
+          path: msvc-debug
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          # Copy only DLL and PDB files from Release build
+          find msvc-release -type f \( -name "*.dll" -o -name "*.pdb" \) -exec cp {} release-files/ \;
+          # List files to verify
+          echo "Release files to be included:"
+          ls -lh release-files/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.sha }}
+          name: MSVC Build ${{ github.sha }}
+          body: |
+            Automated MSVC build artifacts
+
+            **Commit:** ${{ github.sha }}
+            **Branch:** ${{ github.ref_name }}
+            **Event:** ${{ github.event_name }}
+
+            This release contains:
+            - CvGameCore_Expansion2.dll (Release build)
+            - CvGameCore_Expansion2.pdb (Debug symbols)
+          files: release-files/*
+          draft: false
+          prerelease: false
 
 
