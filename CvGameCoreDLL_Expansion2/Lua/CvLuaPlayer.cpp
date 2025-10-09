@@ -6843,7 +6843,8 @@ int CvLuaPlayer::lGetTradeRoutesToYou(lua_State* L)
 		lua_pushinteger(L, iToDelta);
 		lua_setfield(L, t, "ToTourism");
 
-		lua_pushinteger(L, GC.getGame().getGameTurn() - pConnection->m_iTurnRouteComplete);
+		// Fixed this inconcistency
+		lua_pushinteger(L, pConnection->m_iTurnRouteComplete - GC.getGame().getGameTurn());
 		lua_setfield(L, t, "TurnsLeft");
 
 		lua_rawseti(L, -2, index++);
