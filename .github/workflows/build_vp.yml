@@ -659,8 +659,15 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          # Copy only DLL and PDB files from Release build
-          find msvc-release -type f \( -name "*.dll" -o -name "*.pdb" \) -exec cp {} release-files/ \;
+
+          # Copy and rename Release build DLL and PDB files
+          find msvc-release -type f -name "*.dll" -exec bash -c 'cp "$0" "release-files/$(basename "$0" .dll)-Release.dll"' {} \;
+          find msvc-release -type f -name "*.pdb" -exec bash -c 'cp "$0" "release-files/$(basename "$0" .pdb)-Release.pdb"' {} \;
+
+          # Copy and rename Debug build DLL and PDB files
+          find msvc-debug -type f -name "*.dll" -exec bash -c 'cp "$0" "release-files/$(basename "$0" .dll)-Debug.dll"' {} \;
+          find msvc-debug -type f -name "*.pdb" -exec bash -c 'cp "$0" "release-files/$(basename "$0" .pdb)-Debug.pdb"' {} \;
+
           # List files to verify
           echo "Release files to be included:"
           ls -lh release-files/
@@ -677,9 +684,11 @@ jobs:
             **Branch:** ${{ github.ref_name }}
             **Event:** ${{ github.event_name }}
 
-            This release contains:
-            - CvGameCore_Expansion2.dll (Release build)
-            - CvGameCore_Expansion2.pdb (Debug symbols)
+            This release contains both Debug and Release builds:
+            - CvGameCore_Expansion2-Release.dll (Release build)
+            - CvGameCore_Expansion2-Release.pdb (Release debug symbols)
+            - CvGameCore_Expansion2-Debug.dll (Debug build)
+            - CvGameCore_Expansion2-Debug.pdb (Debug symbols)
           files: release-files/*
           draft: false
           prerelease: false
