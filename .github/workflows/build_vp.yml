@@ -672,11 +672,19 @@ jobs:
           echo "Release files to be included:"
           ls -lh release-files/
 
+      - name: Generate release tag
+        id: release_tag
+        run: |
+          # Generate tag: YYYYMMDD-HHMMSS-SHORT_SHA
+          TAG="build-$(date +'%Y%m%d-%H%M%S')-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Generated tag: $TAG"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.sha }}
-          name: MSVC Build ${{ github.sha }}
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: MSVC Build ${{ steps.release_tag.outputs.tag }}
           body: |
             Automated MSVC build artifacts
 
