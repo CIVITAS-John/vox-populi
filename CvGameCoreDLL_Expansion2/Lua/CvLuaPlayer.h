@@ -1556,6 +1556,7 @@ protected:
 	static int lGetNextResearch(lua_State* L);  // Vox Deorum: Get forced next tech
 	static int lSetNextPolicy(lua_State* L);    // Vox Deorum: Force next policy selection
 	static int lGetNextPolicy(lua_State* L);    // Vox Deorum: Get forced next policy
+	static int lAddReplayMessage(lua_State* L); // Vox Deorum: Add replay message
 
 	static int lGetPossibleEconomicStrategies(lua_State* L);
 	static int lGetPossibleMilitaryStrategies(lua_State* L);

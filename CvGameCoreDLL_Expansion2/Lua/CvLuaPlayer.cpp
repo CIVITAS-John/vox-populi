@@ -101,6 +101,7 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(GetNextResearch); // Vox Deorum: Get forced next tech
 	Method(SetNextPolicy); // Vox Deorum: Force next policy selection
 	Method(GetNextPolicy); // Vox Deorum: Get forced next policy
+	Method(AddReplayMessage); // Vox Deorum: Add replay message
 	Method(GetPossibleEconomicStrategies); // Vox Deorum: Get possible economic strategies
 	Method(GetPossibleMilitaryStrategies); // Vox Deorum: Get possible military strategies
 
@@ -16463,7 +16464,10 @@ int CvLuaPlayer::lSetPersona(lua_State* L)
 			CvDiplomacyAI* pDiplo = pkPlayer->GetDiplomacyAI();
 
 			if (!pDiplo)
-							return 0;
+			{
+							lua_pushboolean(L, false);
+							return 1;
+			}
 
 			// Check if argument is a table
 			if (!lua_istable(L, 2))
@@ -16472,7 +16476,9 @@ int CvLuaPlayer::lSetPersona(lua_State* L)
 							return 0;
 			}
 
-			// Helper macro to get value from table
+			bool bChanged = false;
+
+			// Helper macro to get value from table and track changes
 #define GET_TABLE_VALUE(key, var) \
 			{ \
 							lua_pushstring(L, key); \
@@ -16482,7 +16488,7 @@ int CvLuaPlayer::lSetPersona(lua_State* L)
 											int value = lua_tointeger(L, -1); \
 											if (value < 1) value = 1; \
 											if (value > 10) value = 10; \
-											if (value >= 0) var = value; \
+											if (var != value) { var = value; bChanged = true; } \
 							} \
 							lua_pop(L, 1); \
 			}
@@ -16523,7 +16529,8 @@ int CvLuaPlayer::lSetPersona(lua_State* L)
 
 #undef GET_TABLE_VALUE
 
-			return 0;
+			lua_pushboolean(L, bChanged);
+			return 1;
 }
 
 //------------------------------------------------------------------------------
@@ -19158,11 +19165,17 @@ int CvLuaPlayer::lGetGrandStrategy(lua_State* L)
 int CvLuaPlayer::lSetGrandStrategy(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
+	bool bChanged = false;
+
 	if (pkPlayer && pkPlayer->GetGrandStrategyAI())
 	{
 		const int iGrandStrategy = lua_tointeger(L, 2);
 		AIGrandStrategyTypes eGrandStrategy = (AIGrandStrategyTypes)iGrandStrategy;
-		// Should we refactor?
+
+		// Check if grand strategy actually changed
+		AIGrandStrategyTypes eOldStrategy = pkPlayer->GetGrandStrategyAI()->GetActiveGrandStrategy();
+		if (eOldStrategy != eGrandStrategy) bChanged = true;
+
 		pkPlayer->GetGrandStrategyAI()->SetActiveGrandStrategy(eGrandStrategy);
 		pkPlayer->GetGrandStrategyAI()->SetNumTurnsSinceActiveSet(1);
 		pkPlayer->GetCitySpecializationAI()->SetSpecializationsDirty(SPECIALIZATION_UPDATE_NEW_GRAND_STRATEGY);
@@ -19213,7 +19226,9 @@ int CvLuaPlayer::lSetGrandStrategy(lua_State* L)
 			}
 		}
 	}
-	return 0;
+
+	lua_pushboolean(L, bChanged);
+	return 1;
 }
 
 //------------------------------------------------------------------------------
@@ -19410,6 +19425,26 @@ int CvLuaPlayer::lGetNextPolicy(lua_State* L)
 	return 2;
 }
 
+//------------------------------------------------------------------------------
+// Vox Deorum: Add a replay message for this player
+// Parameters: text (string), plotX (int, optional, default -1), plotY (int, optional, default -1)
+int CvLuaPlayer::lAddReplayMessage(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const char* szText = lua_tostring(L, 2);
+	const int iPlotX = luaL_optint(L, 3, -1);
+	const int iPlotY = luaL_optint(L, 4, -1);
+
+	if (pkPlayer && szText)
+	{
+		CvGame& kGame = GC.getGame();
+		// Use type 0 (REPLAY_MESSAGE_MAJOR_EVENT) and the player ID
+		kGame.addReplayMessage((ReplayMessageTypes)0, pkPlayer->GetID(), szText, iPlotX, iPlotY);
+	}
+
+	return 0;
+}
+
 // Vox Deorum: Helper function to check if an economic strategy is blacklisted
 // Blacklisted strategies have immediate effects or are not suitable for LLM decision-making
 static bool IsEconomicStrategyBlacklisted(int iStrategyID)
@@ -19587,6 +19622,8 @@ int CvLuaPlayer::lGetEconomicStrategies(lua_State* L)
 int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
+	bool bChanged = false;
+
 	if (pkPlayer && pkPlayer->GetEconomicAI())
 	{
 		int iNumStrategies = pkPlayer->GetEconomicAI()->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
@@ -19598,54 +19635,52 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 			bIncludeBlacklisted = lua_toboolean(L, 3);
 		}
 
-		// First, disable all non-blacklisted strategies (or all strategies if includeBlacklisted is true)
-		for (int i = 0; i < iNumStrategies; i++)
-		{
-			EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
-			// Only disable if not blacklisted, or if we're allowed to modify blacklisted strategies
-			if (bIncludeBlacklisted || !IsEconomicStrategyBlacklisted(i))
-			{
-				pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, false);
-				// Force reset the turn adopted to the current turn to disable the in-game AI from overriding it in 10 turns
-				pkPlayer->GetEconomicAI()->SetTurnStrategyAdopted(eStrategy, GC.getGame().getGameTurn());
-			}
-		}
-
-		// Check if argument is a table (array)
+		// Extract incoming strategies into a set for comparison
+		std::set<int> newStrategies;
 		if (lua_istable(L, 2))
 		{
-			// Get array length
 			int iLen = lua_objlen(L, 2);
-
-			// Enable strategies specified in the array
 			for (int i = 1; i <= iLen; i++)
 			{
 				lua_rawgeti(L, 2, i);
 				if (lua_isnumber(L, -1))
 				{
 					const int iStrategy = lua_tointeger(L, -1);
-
-					// Validate strategy ID
 					if (iStrategy >= 0 && iStrategy < iNumStrategies)
 					{
-						// Skip blacklisted strategies unless explicitly allowed
-						if (!bIncludeBlacklisted && IsEconomicStrategyBlacklisted(iStrategy))
+						if (bIncludeBlacklisted || !IsEconomicStrategyBlacklisted(iStrategy))
 						{
-							lua_pop(L, 1);
-							continue;
+							newStrategies.insert(iStrategy);
 						}
-
-						EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)iStrategy;
-						pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, true);
-						// Force reset the turn adopted to the current turn + 10 to disable the in-game AI from overriding it in 10 turns
-						pkPlayer->GetEconomicAI()->SetTurnStrategyAdopted(eStrategy, GC.getGame().getGameTurn() + 10);
 					}
 				}
 				lua_pop(L, 1);
 			}
 		}
+
+		// Compare current strategies with new strategies
+		for (int i = 0; i < iNumStrategies; i++)
+		{
+			if (bIncludeBlacklisted || !IsEconomicStrategyBlacklisted(i))
+			{
+				EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
+				bool bCurrentlyUsing = pkPlayer->GetEconomicAI()->IsUsingStrategy(eStrategy);
+				bool bShouldUse = newStrategies.count(i) > 0;
+
+				if (bCurrentlyUsing != bShouldUse)
+				{
+					bChanged = true;
+					pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, bShouldUse);
+				}
+				
+				// Force refresh the adopted turn to avoid in-game AI overriding
+				pkPlayer->GetEconomicAI()->SetTurnStrategyAdopted(eStrategy,
+					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());			}
+		}
 	}
-	return 0;
+
+	lua_pushboolean(L, bChanged);
+	return 1;
 }
 
 //------------------------------------------------------------------------------
@@ -19695,47 +19730,53 @@ int CvLuaPlayer::lGetMilitaryStrategies(lua_State* L)
 int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 {
 	CvPlayerAI* pkPlayer = GetInstance(L);
+	bool bChanged = false;
+
 	if (pkPlayer && pkPlayer->GetMilitaryAI())
 	{
 		int iNumStrategies = pkPlayer->GetMilitaryAI()->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
 
-		// First, disable all strategies
-		for (int i = 0; i < iNumStrategies; i++)
-		{
-			MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)i;
-			pkPlayer->GetMilitaryAI()->SetUsingStrategy(eStrategy, false);
-			// Force reset the turn adopted to the current turn to disable the in-game AI from overriding it in 10 turns
-			pkPlayer->GetMilitaryAI()->SetTurnStrategyAdopted(eStrategy, GC.getGame().getGameTurn());
-		}
-
-		// Check if argument is a table (array)
+		// Extract incoming strategies into a set for comparison
+		std::set<int> newStrategies;
 		if (lua_istable(L, 2))
 		{
-			// Get array length
 			int iLen = lua_objlen(L, 2);
-
-			// Enable strategies specified in the array
 			for (int i = 1; i <= iLen; i++)
 			{
 				lua_rawgeti(L, 2, i);
 				if (lua_isnumber(L, -1))
 				{
 					const int iStrategy = lua_tointeger(L, -1);
-
-					// Validate strategy ID
 					if (iStrategy >= 0 && iStrategy < iNumStrategies)
 					{
-						MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)iStrategy;
-						pkPlayer->GetMilitaryAI()->SetUsingStrategy(eStrategy, true);
-						// Force reset the turn adopted to the current turn + 10 to disable the in-game AI from overriding it in 10 turns
-						pkPlayer->GetMilitaryAI()->SetTurnStrategyAdopted(eStrategy, GC.getGame().getGameTurn() + 10);
+						newStrategies.insert(iStrategy);
 					}
 				}
 				lua_pop(L, 1);
 			}
 		}
+
+		// Compare current strategies with new strategies
+		for (int i = 0; i < iNumStrategies; i++)
+		{
+			MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)i;
+			bool bCurrentlyUsing = pkPlayer->GetMilitaryAI()->IsUsingStrategy(eStrategy);
+			bool bShouldUse = newStrategies.count(i) > 0;
+
+			if (bCurrentlyUsing != bShouldUse)
+			{
+				bChanged = true;
+				pkPlayer->GetMilitaryAI()->SetUsingStrategy(eStrategy, bShouldUse);
+			}
+			
+			// Force refresh the adopted turn to avoid in-game AI overriding
+			pkPlayer->GetMilitaryAI()->SetTurnStrategyAdopted(eStrategy,
+				bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
+		}
 	}
-	return 0;
+
+	lua_pushboolean(L, bChanged);
+	return 1;
 }
 
 //------------------------------------------------------------------------------
