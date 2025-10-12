@@ -82,7 +82,7 @@ bool LuaSupport::CallHook(ICvEngineScriptSystem1* pkScriptSystem, const char* sz
 		CvConnectionService::GetInstance().ForwardGameEvent(szName, args);
 	}
 
-	if (MOD_CORE_DISABLE_LUA_HOOKS)
+	if (MOD_API_DISABLE_LUA_HOOKS)
 		return false;
 
 	// Must release our lock so that if the main thread has the Lua lock and is waiting for the Game Core lock, we don't freeze
@@ -98,7 +98,7 @@ bool LuaSupport::CallHook(ICvEngineScriptSystem1* pkScriptSystem, const char* sz
 //------------------------------------------------------------------------------
 bool LuaSupport::CallTestAll(ICvEngineScriptSystem1* pkScriptSystem, const char* szName, ICvEngineScriptSystemArgs1* args, bool& value)
 {
-	if (MOD_CORE_DISABLE_LUA_HOOKS)
+	if (MOD_API_DISABLE_LUA_HOOKS)
 		return false;
 
 	// Must release our lock so that if the main thread has the Lua lock and is waiting for the Game Core lock, we don't freeze
@@ -114,7 +114,7 @@ bool LuaSupport::CallTestAll(ICvEngineScriptSystem1* pkScriptSystem, const char*
 //------------------------------------------------------------------------------
 bool LuaSupport::CallTestAny(ICvEngineScriptSystem1* pkScriptSystem, const char* szName, ICvEngineScriptSystemArgs1* args, bool& value)
 {
-	if (MOD_CORE_DISABLE_LUA_HOOKS)
+	if (MOD_API_DISABLE_LUA_HOOKS)
 		return false;
 
 	// Must release our lock so that if the main thread has the Lua lock and is waiting for the Game Core lock, we don't freeze
@@ -130,7 +130,7 @@ bool LuaSupport::CallTestAny(ICvEngineScriptSystem1* pkScriptSystem, const char*
 //------------------------------------------------------------------------------
 bool LuaSupport::CallAccumulator(_In_ ICvEngineScriptSystem1* pkScriptSystem, _In_z_ const char* szName, _In_opt_ ICvEngineScriptSystemArgs1* args, int& value)
 {
-	if (MOD_CORE_DISABLE_LUA_HOOKS)
+	if (MOD_API_DISABLE_LUA_HOOKS)
 		return false;
 
 	// Must release our lock so that if the main thread has the Lua lock and is waiting for the Game Core lock, we don't freeze
@@ -146,7 +146,7 @@ bool LuaSupport::CallAccumulator(_In_ ICvEngineScriptSystem1* pkScriptSystem, _I
 //------------------------------------------------------------------------------
 bool LuaSupport::CallAccumulator(_In_ ICvEngineScriptSystem1* pkScriptSystem, _In_z_ const char* szName, _In_opt_ ICvEngineScriptSystemArgs1* args, float& value)
 {
-	if (MOD_CORE_DISABLE_LUA_HOOKS)
+	if (MOD_API_DISABLE_LUA_HOOKS)
 		return false;
 
 	// Must release our lock so that if the main thread has the Lua lock and is waiting for the Game Core lock, we don't freeze

@@ -354,12 +354,37 @@ void CvMilitaryAI::Serialize(MilitaryAI& militaryAI, Visitor& visitor)
 	visitor(militaryAI.m_iNumberOfTimesOpsBuildSkippedOver);
 	visitor(militaryAI.m_iNumberOfTimesSettlerBuildSkippedOver);
 
-	visitor(militaryAI.m_iNumAntiAirUnits);
 	visitor(militaryAI.m_iNumLandUnits);
+	visitor(militaryAI.m_iNumRangedLandUnits);
+	visitor(militaryAI.m_iNumMobileLandUnits);
+	visitor(militaryAI.m_iNumMeleeLandUnits);
 	visitor(militaryAI.m_iNumNavalUnits);
-	visitor(militaryAI.m_iRecOffensiveLandUnits);
+	visitor(militaryAI.m_iNumLandUnitsInArmies);
+	visitor(militaryAI.m_iNumNavalUnitsInArmies);
 	visitor(militaryAI.m_iRecOffensiveNavalUnits);
+	visitor(militaryAI.m_iNumAirUnits);
+	visitor(militaryAI.m_iNumAntiAirUnits);
+	visitor(militaryAI.m_iBarbarianCampCount);
+	visitor(militaryAI.m_iVisibleBarbarianCount);
+	visitor(militaryAI.m_iRecOffensiveLandUnits);
+	visitor(militaryAI.m_iRecDefensiveLandUnits);
+	visitor(militaryAI.m_iRecExplorerUnits);
 	visitor(militaryAI.m_iNumFreeCarriers);
+	visitor(militaryAI.m_iNumArcherLandUnits);
+	visitor(militaryAI.m_iNumSiegeLandUnits);
+	visitor(militaryAI.m_iNumSkirmisherLandUnits);
+	visitor(militaryAI.m_iNumReconLandUnits);
+	visitor(militaryAI.m_iNumBomberAirUnits);
+	visitor(militaryAI.m_iNumFighterAirUnits);
+	visitor(militaryAI.m_iNumMeleeNavalUnits);
+	visitor(militaryAI.m_iNumRangedNavalUnits);
+	visitor(militaryAI.m_iNumSubmarineNavalUnits);
+	visitor(militaryAI.m_iNumCarrierNavalUnits);
+	visitor(militaryAI.m_iNumMissileUnits);
+	visitor(militaryAI.m_iNumActiveUniqueUnits);
+
+	visitor(militaryAI.m_eLandDefenseState);
+	visitor(militaryAI.m_eNavalDefenseState);
 	visitor(militaryAI.m_potentialAttackTargets);
 	visitor(militaryAI.m_exposedCities);
 
@@ -392,6 +417,21 @@ FDataStream& operator<<(FDataStream& stream, const CvMilitaryAI& militaryAI)
 {
 	militaryAI.Write(stream);
 	return stream;
+}
+
+FDataStream& operator<<(FDataStream& saveTo, const DefenseState& readFrom)
+{
+	int v = static_cast<int>(readFrom);
+	saveTo << v;
+	return saveTo;
+}
+
+FDataStream& operator>>(FDataStream& loadFrom, DefenseState& writeTo)
+{
+	int v = 0;
+	loadFrom >> v;
+	writeTo = static_cast<DefenseState>(v);
+	return loadFrom;
 }
 
 /// Returns the Player object the Strategies are associated with
@@ -485,10 +525,13 @@ void CvMilitaryAI::DoTurn()
 	//do this also for humans because AI relies on the data!
 	UpdateAttackTargets();
 
-	if(!m_pPlayer->isHuman())
+	if(!m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 	{
 		UpdateOperations();
-		MakeEmergencyPurchases();
+		if (!m_pPlayer->isHuman(ISHUMAN_AI_ECONOMY))
+		{
+			MakeEmergencyPurchases();
+		}
 		DisbandObsoleteUnits();
 	}
 
@@ -585,7 +628,7 @@ CvUnit* CvMilitaryAI::BuyEmergencyUnit(UnitAITypes eUnitType, CvCity* pCity)
 	}
 
 	// AI unit promotions have already been processed, so we need to do it explicitly here
-	if (pUnit)
+	if (pUnit && !pUnit->isHuman(ISHUMAN_AI_UNIT_PROMOTIONS))
 		pUnit->AI_promote();
 
 	if (pUnit)
@@ -1210,7 +1253,7 @@ int CvMilitaryAI::ScoreAttackTarget(const CvAttackTarget& target)
 		}
 	}
 
-	if (MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
+	if (MOD_BALANCE_RESOURCE_MONOPOLIES)
 	{
 		for(int iResourceLoop = 0; iResourceLoop < GC.getNumResourceInfos(); iResourceLoop++)
 		{
@@ -1723,7 +1766,7 @@ void CvMilitaryAI::SetRecommendedArmyNavySize()
 
 	// 1 Unit per City & 1 per Settler
 	iLandDefenseWeight += (int)(m_pPlayer->getNumCities() * 10 * /*1.0f*/ GD_FLOAT_GET(AI_STRATEGY_DEFEND_MY_LANDS_UNITS_PER_CITY));
-	iLandDefenseWeight += m_pPlayer->GetNumUnitsWithUnitAI(UNITAI_SETTLE, true) * 10;
+	iLandDefenseWeight += m_pPlayer->GetNumUnitsWithUnitAI(UNITAI_SETTLE, true, true) * 10;
 
 	iNavalDefenseWeight += (int)(iNumCoastalCities * 7 * /*1.0f*/ GD_FLOAT_GET(AI_STRATEGY_DEFEND_MY_LANDS_UNITS_PER_CITY));
 
@@ -2463,7 +2506,7 @@ void CvMilitaryAI::DisbandObsoleteUnits()
 	int iUnitLoop = 0;
 	for (CvUnit* pLoopUnit = m_pPlayer->firstUnit(&iUnitLoop); pLoopUnit != NULL; pLoopUnit = m_pPlayer->nextUnit(&iUnitLoop))
 	{
-		if (pLoopUnit->IsCannotHeal() && !pLoopUnit->isDelayedDeath() && pLoopUnit->canScrap() && !pLoopUnit->HasPlague())
+		if (pLoopUnit->IsCannotHeal(/*bConsiderResourceShortage*/ false) && !pLoopUnit->isDelayedDeath() && pLoopUnit->canScrap() && !pLoopUnit->HasPlague())
 		{
 			if (pLoopUnit->GetCurrHitPoints() < 75 || (GetNumberCivsAtWarWith(m_pPlayer->isMinorCiv()) > 0 && pLoopUnit->GetCurrHitPoints() < 25))
 				pLoopUnit->scrap();

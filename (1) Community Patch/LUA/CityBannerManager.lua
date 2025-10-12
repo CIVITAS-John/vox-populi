@@ -353,10 +353,10 @@ function RefreshCityBanner(cityBanner, iActiveTeam, iActivePlayer)
 		if(controls.CityGrowth) then
 			local cityGrowth = city:GetFoodTurnsLeft();
 			
-			if (city:FoodDifferenceTimes100() == 0) then
+			if (city:GetYieldRateTimes100(YieldTypes.YIELD_FOOD) == 0) then
 				cityGrowth = "-";
 				controls.CityBannerRightBackground:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_CITY_STOPPED_GROWING_TT", localizedCityName, cityPopulation));
-			elseif city:FoodDifferenceTimes100() < 0 then
+			elseif city:GetYieldRateTimes100(YieldTypes.YIELD_FOOD) < 0 then
 				cityGrowth = "[COLOR_WARNING_TEXT]-[ENDCOLOR]";
 				controls.CityBannerRightBackground:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_CITY_STARVING_TT",localizedCityName ));
 			else
@@ -371,7 +371,7 @@ function RefreshCityBanner(cityBanner, iActiveTeam, iActivePlayer)
 			local buildGrowth = "-";
 			
 			if (city:IsProduction() and not city:IsProductionProcess()) then
-				if (city:GetCurrentProductionDifferenceTimes100(false, false) > 0) then
+				if (city:GetYieldRateTimes100(YieldTypes.YIELD_PRODUCTION) > 0) then
 					buildGrowth = city:GetProductionTurnsLeft();
 				end
 			end
@@ -402,12 +402,9 @@ function RefreshCityBanner(cityBanner, iActiveTeam, iActivePlayer)
 		-- Update Production Meter
 		if (controls.ProductionBar) then
 			
-			local iCurrentProduction = city:GetProduction();
+			local iCurrentProduction = city:GetProductionTimes100() / 100;
 			local iProductionNeeded = city:GetProductionNeeded();
-			local iProductionPerTurn = city:GetYieldRate(YieldTypes.YIELD_PRODUCTION);
-			if (city:IsFoodProduction()) then
-				iProductionPerTurn = iProductionPerTurn + city:GetYieldRate(YieldTypes.YIELD_FOOD) - city:FoodConsumption(true);
-			end
+			local iProductionPerTurn = city:GetYieldRateTimes100(YieldTypes.YIELD_PRODUCTION) / 100;
 			local iCurrentProductionPlusThisTurn = iCurrentProduction + iProductionPerTurn;
 			
 			local fProductionProgressPercent = iCurrentProduction / iProductionNeeded;
@@ -697,10 +694,13 @@ function CheckCityBannerRebuild( instance, iActiveTeam, iActivePlayer )
 		-- print("Rebuilding banner for player: " .. tostring(instance.playerID) .. " city: " .. tostring(instance.cityID) .. " from active = " .. tostring(instance.IsActiveType) .. " to active = " .. tostring(bWantActive));
 		
 		if (not bWantActive) then
-			-- If we don't want the 'active' style, then it must have been active.
 			-- Release the old one
 			if (instance.SubControls ~= nil) then
-				g_TeamIM:ReleaseInstance( instance.SubControls );
+				if instance.IsActiveType then
+					g_TeamIM:ReleaseInstance( instance.SubControls );
+				else
+					g_OtherIM:ReleaseInstance( instance.SubControls );
+				end
 			end
 			if (SVInstances[instance.playerID] ~= nil) then
 				local svInstance = SVInstances[instance.playerID][instance.cityID];
@@ -713,11 +713,15 @@ function CheckCityBannerRebuild( instance, iActiveTeam, iActivePlayer )
 			controlTable = g_OtherIM:GetInstance();
 			controlTable.BannerButton:RegisterCallback( Mouse.eLClick, OnBannerClick );
 			controlTable.BannerButton:SetVoid1( gridPosX );
-			controlTable.BannerButton:SetVoid2( gridPosY );			
+			controlTable.BannerButton:SetVoid2( gridPosY );
 		else
 			-- Release the old one
 			if (instance.SubControls ~= nil) then
-				g_OtherIM:ReleaseInstance( instance.SubControls );
+				if instance.IsActiveType then
+					g_TeamIM:ReleaseInstance( instance.SubControls );
+				else
+					g_OtherIM:ReleaseInstance( instance.SubControls );
+				end
 			end
 			
 			-- Create the new active banner
@@ -823,19 +827,13 @@ Events.SerialEventCityInfoDirty.Add(OnCityUpdate);
 -- On City Destroyed
 -------------------------------------------------
 function OnCityDestroyed(hexPos, playerID, cityID, newPlayerID)
-	
+
 	local playerTable = Instances[ playerID ];
 	local banner = playerTable[ cityID ];
-	
-	local active_team = Players[Game.GetActivePlayer()]:GetTeam();
-	local team = Players[playerID]:GetTeam();
-	
-	if(active_team ~= team) 
-	then
-	    g_OtherIM:ReleaseInstance( banner.SubControls );
-    else
+
+	if banner.IsActiveType then
 	    g_TeamIM:ReleaseInstance( banner.SubControls );
-	    
+
 	    if (SVInstances[playerID] ~= nil) then
 			local svInstance = SVInstances[playerID][cityID];
 			if svInstance ~= nil then
@@ -843,10 +841,12 @@ function OnCityDestroyed(hexPos, playerID, cityID, newPlayerID)
 				SVInstances[playerID][cityID] = nil;
 			end
 		end
+	else
+	    g_OtherIM:ReleaseInstance( banner.SubControls );
     end
-	
+
 	playerTable[cityID] = nil;
-	
+
 end
 Events.SerialEventCityDestroyed.Add(OnCityDestroyed);
 Events.SerialEventCityCaptured.Add(OnCityDestroyed);

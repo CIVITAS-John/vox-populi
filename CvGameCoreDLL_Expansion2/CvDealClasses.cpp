@@ -365,7 +365,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 	CvTeam* pToTeam = &GET_TEAM(eToTeam);
 
 	bool bPeaceDeal = pFromTeam->isAtWar(eToTeam);
-	bool bHumanToHuman = pFromPlayer->isHuman() && pToPlayer->isHuman();
+	bool bHumanToHuman = pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY);
 	bool bSameTeam = eFromTeam == eToTeam;
 	bool bOneSided = this->GetSurrenderingPlayer() != NO_PLAYER || this->GetDemandingPlayer() != NO_PLAYER || this->GetRequestingPlayer() != NO_PLAYER;
 
@@ -388,7 +388,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 			{
 				if (bOneSided && this->GetSurrenderingPlayer() != ePlayer)
 					return false;
-				else if (!bOneSided && !pFromPlayer->isHuman())
+				else if (!bOneSided && !pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY))
 					return false;
 			}
 		}
@@ -555,9 +555,9 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				return false;
 
 			// Resources can have a "AI will stop trading" era - if it's been passed, AI won't trade this
-			if (!pFromPlayer->isHuman() && pFromTeam->IsResourceObsolete(eResource))
+			if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && pFromTeam->IsResourceObsolete(eResource))
 				return false;
-			if (!pToPlayer->isHuman() && pToTeam->IsResourceObsolete(eResource))
+			if (!pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && pToTeam->IsResourceObsolete(eResource))
 				return false;
 
 			if (iData2 != -1)
@@ -617,11 +617,11 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				return false;
 			else if (GC.getGame().IsAICityTradingDisabled() && !bHumanToHuman)
 				return false;
-			else if (GC.getGame().IsAICityTradingHumanOnly() && !pFromPlayer->isHuman() && !pToPlayer->isHuman())
+			else if (GC.getGame().IsAICityTradingHumanOnly() && !pFromPlayer->isHuman(ISHUMAN_MECHANICS) && !pToPlayer->isHuman(ISHUMAN_MECHANICS))
 				return false;
 
 			// Can't trade a city to a human in an OCC game
-			if (GC.getGame().isOption(GAMEOPTION_ONE_CITY_CHALLENGE) && pToPlayer->isHuman())
+			if (GC.getGame().isOption(GAMEOPTION_ONE_CITY_CHALLENGE) && pToPlayer->isHuman(ISHUMAN_MECHANICS))
 				return false;
 
 			// Buyer needs an embassy in peacetime (except for deals between teammates)
@@ -789,11 +789,11 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 					return false;
 			}
 
-			bool bAITradingWithHuman = !bHumanToHuman && pToPlayer->isHuman();
+			bool bAITradingWithHuman = !bHumanToHuman && pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY);
 			int iMyLimit = pFromPlayer->CalculateDefensivePactLimit(bAITradingWithHuman);
 			int iMyDefensePacts = pFromPlayer->GetDiplomacyAI()->GetNumDefensePacts();
 
-			bAITradingWithHuman = !bHumanToHuman && pFromPlayer->isHuman();
+			bAITradingWithHuman = !bHumanToHuman && pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY);
 			int iTheirLimit = pToPlayer->CalculateDefensivePactLimit(bAITradingWithHuman);
 			int iTheirDefensePacts = pToPlayer->GetDiplomacyAI()->GetNumDefensePacts();
 
@@ -928,7 +928,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 							if (!GET_PLAYER(vFromTeam[j]).isAlive() || !GET_PLAYER(vFromTeam[j]).isMajorCiv())
 								continue;
 
-							if (!GET_PLAYER(vFromTeam[j]).isHuman() && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
+							if (!GET_PLAYER(vFromTeam[j]).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
 								return false;
 						}
 					}
@@ -946,7 +946,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 							if (!GET_PLAYER(vFromTeam[j]).isAlive() || !GET_PLAYER(vFromTeam[j]).isMajorCiv())
 								continue;
 
-							if (!GET_PLAYER(vFromTeam[j]).isHuman() && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
+							if (!GET_PLAYER(vFromTeam[j]).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
 								return false;
 						}
 					}
@@ -972,7 +972,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				{
 					return false;
 				}
-				if (GC.getGame().IsAIWarBribesDisabled() && !pFromPlayer->isHuman() && !pToPlayer->isHuman())
+				if (GC.getGame().IsAIWarBribesDisabled() && !pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && !pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY))
 				{
 					return false;
 				}
@@ -1132,7 +1132,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 			if (!bFinalizing && ContainsItemType(TRADE_ITEM_VOTE_COMMITMENT, ePlayer))
 				return false;
 
-			if (!pFromPlayer->isHuman())
+			if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY))
 			{
 				// Is this the World Leader vote?
 				if (pResolutionEffects->bDiplomaticVictory)
@@ -1157,13 +1157,13 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 						return false;
 				}
 			}
-			if (!pToPlayer->isHuman())
+			if (!pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY))
 			{
 				// Is this the World Leader vote?
 				if (pResolutionEffects->bDiplomaticVictory)
 				{
 					// Forbidden by game options
-					if (!pFromPlayer->isHuman() && GD_INT_GET(DIPLOAI_NO_OTHER_WORLD_LEADER_VOTES) > 1)
+					if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && GD_INT_GET(DIPLOAI_NO_OTHER_WORLD_LEADER_VOTES) > 1)
 						return false;
 
 					// AI cannot buy votes for itself if it has a different team leader
@@ -1176,7 +1176,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				if (pResolutionEffects->bChangeLeagueHost)
 				{
 					// Forbidden by game options
-					if (!pFromPlayer->isHuman() && GD_INT_GET(DIPLOAI_NO_OTHER_HOST_VOTES) > 0)
+					if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && GD_INT_GET(DIPLOAI_NO_OTHER_HOST_VOTES) > 0)
 						return false;
 
 					// AI cannot buy votes for itself if it has a different team leader
@@ -1391,8 +1391,8 @@ bool CvDeal::BlockTemporaryForPermanentTrade(TradeableItems eItemType, PlayerTyp
 	if (eItemType == TRADE_ITEM_THIRD_PARTY_PEACE && GET_PLAYER(eFromPlayer).IsAtWarWith(eToPlayer))
 		return false;
 
-	bool bFromHuman = GET_PLAYER(eFromPlayer).isHuman();
-	bool bToHuman = GET_PLAYER(eToPlayer).isHuman();
+	bool bFromHuman = GET_PLAYER(eFromPlayer).isHuman(ISHUMAN_AI_DIPLOMACY);
+	bool bToHuman = GET_PLAYER(eToPlayer).isHuman(ISHUMAN_AI_DIPLOMACY);
 	bool bNoHumans = !bFromHuman && !bToHuman;
 
 	// Humans can handle their own dealmaking
@@ -1536,8 +1536,8 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 	CvTeam* pToTeam = &GET_TEAM(eToTeam);
 
 	bool bPeaceDeal = pFromTeam->isAtWar(eToTeam);
-	bool bFromHuman = pFromPlayer->isHuman();
-	bool bToHuman = pToPlayer->isHuman();
+	bool bFromHuman = pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY);
+	bool bToHuman = pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY);
 	bool bSameTeam = eFromTeam == eToTeam;
 	bool bOneSided = this->GetSurrenderingPlayer() != NO_PLAYER;
 
@@ -2669,7 +2669,7 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 						if (!GET_PLAYER(vFromTeam[j]).isAlive() || !GET_PLAYER(vFromTeam[j]).isMajorCiv())
 							continue;
 
-						if (!GET_PLAYER(vFromTeam[j]).isHuman() && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
+						if (!GET_PLAYER(vFromTeam[j]).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
 						{
 							return GetLocalizedText("TXT_KEY_DIPLO_MINOR_THIS_GUY_WANTS_WAR");
 						}
@@ -2713,7 +2713,7 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 							if (!GET_PLAYER(vFromTeam[j]).isAlive() || !GET_PLAYER(vFromTeam[j]).isMajorCiv())
 								continue;
 
-							if (!GET_PLAYER(vFromTeam[j]).isHuman() && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
+							if (!GET_PLAYER(vFromTeam[j]).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
 							{
 								return GetLocalizedText("TXT_KEY_DIPLO_MINOR_THIS_GUY_WANTS_WAR");
 							}
@@ -2740,7 +2740,7 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 							if (!GET_PLAYER(vFromTeam[j]).isAlive() || !GET_PLAYER(vFromTeam[j]).isMajorCiv())
 								continue;
 
-							if (!GET_PLAYER(vFromTeam[j]).isHuman() && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
+							if (!GET_PLAYER(vFromTeam[j]).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(vFromTeam[j]).GetDiplomacyAI()->IsPeaceBlocked(vMembers[i]))
 							{
 								return GetLocalizedText("TXT_KEY_DIPLO_MINOR_THIS_GUY_WANTS_WAR");
 							}
@@ -4420,7 +4420,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 
 	// Set the surrendering player for a human v. human war (based on who puts what where).
 	bool bIsPeaceDeal = kDeal.IsPeaceTreatyTrade(eFromPlayer) || kDeal.IsPeaceTreatyTrade(eToPlayer);
-	bool bHumanToHuman = GET_PLAYER(eFromPlayer).isHuman() && GET_PLAYER(eToPlayer).isHuman();
+	bool bHumanToHuman = GET_PLAYER(eFromPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(eToPlayer).isHuman(ISHUMAN_AI_DIPLOMACY);
 	bool bShouldSetHumanSurrender = bHumanToHuman && bIsPeaceDeal;
 	bool bFromPlayerItem = false;
 	bool bToPlayerItem = false;
@@ -4535,7 +4535,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 			GET_PLAYER(eReceivingPlayer).changeResourceImportFromMajor(eResource, iResourceQuantity);
 
 			// Resource Trading Achievements
-			if (MOD_API_ACHIEVEMENTS && !GC.getGame().isGameMultiPlayer() && GET_PLAYER(eGivingPlayer).isHuman())
+			if (MOD_ENABLE_ACHIEVEMENTS && !GC.getGame().isGameMultiPlayer() && GET_PLAYER(eGivingPlayer).isHuman(ISHUMAN_ACHIEVEMENTS))
 			{
 				gDLL->IncrementSteamStatAndUnlock(ESTEAMSTAT_RESOURCESTRADED, 100, ACHIEVEMENT_100RESOURCES);
 
@@ -4761,7 +4761,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 				if (eTeam == eTargetTeam)
 				{
 					// If human was target, notify them.
-					if (GET_PLAYER(ePlayer).isHuman())
+					if (GET_PLAYER(ePlayer).isHuman(ISHUMAN_UI))
 					{
 						CvNotifications* pNotify = GET_PLAYER(ePlayer).GetNotifications();
 						if (pNotify)
@@ -4775,7 +4775,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 						}
 					}
 					// If AI was target, improve opinion of the peacemaker a bit and reevaluate them.
-					else
+					if (!GET_PLAYER(ePlayer).isHuman(ISHUMAN_AI_DIPLOMACY))
 					{
 						GET_PLAYER(ePlayer).GetDiplomacyAI()->ChangeRecentAssistValue(eReceivingPlayer, 300);
 						GET_PLAYER(ePlayer).GetDiplomacyAI()->DoReevaluatePlayer(eReceivingPlayer, false, false);
@@ -4784,7 +4784,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 				// Notify all other civs
 				else if (bObserver || eTeam == eGivingTeam || eTeam == eReceivingTeam || (GET_TEAM(eTeam).isHasMet(eTargetTeam) && GET_TEAM(eTeam).isHasMet(eGivingTeam)) || (GET_PLAYER(ePlayer).isHuman() && GC.getGame().IsDiploDebugModeEnabled() && !bHumanToHuman))
 				{
-					if (bObserver || GET_PLAYER(ePlayer).isHuman())
+					if (bObserver || GET_PLAYER(ePlayer).isHuman(ISHUMAN_AI_DIPLOMACY))
 					{
 						CvNotifications* pNotify = GET_PLAYER(ePlayer).GetNotifications();
 						if (pNotify)
@@ -4917,7 +4917,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 					continue;
 				}
 
-				if (GET_PLAYER(ePlayer).isHuman() && GC.getGame().IsDiploDebugModeEnabled() && !bHumanToHuman)
+				if (GET_PLAYER(ePlayer).isHuman(ISHUMAN_AI_DIPLOMACY) && GC.getGame().IsDiploDebugModeEnabled() && !bHumanToHuman)
 				{
 					vDebugModePlayers.push_back(ePlayer);
 				}
@@ -4944,7 +4944,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 			for (std::vector<PlayerTypes>::iterator iter = vPlayersWithSurveillance.begin(); iter != vPlayersWithSurveillance.end(); ++iter)
 			{
 				TeamTypes eTeam = GET_PLAYER(*iter).getTeam();
-				if (!GET_PLAYER(*iter).isHuman())
+				if (!GET_PLAYER(*iter).isHuman(ISHUMAN_AI_DIPLOMACY))
 				{
 					if (!bCityState)
 					{
@@ -5053,7 +5053,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 				vector<PlayerTypes> vAttackingTeam = GET_TEAM(eGivingTeam).getPlayers();
 				for (size_t i=0; i<vAttackingTeam.size(); i++)
 				{
-					if (!GET_PLAYER(vAttackingTeam[i]).isAlive() || !GET_PLAYER(vAttackingTeam[i]).isMajorCiv() || GET_PLAYER(vAttackingTeam[i]).isHuman() || GET_PLAYER(vAttackingTeam[i]).getNumCities() <= 0)
+					if (!GET_PLAYER(vAttackingTeam[i]).isAlive() || !GET_PLAYER(vAttackingTeam[i]).isMajorCiv() || GET_PLAYER(vAttackingTeam[i]).isHuman(ISHUMAN_AI_DIPLOMACY) || GET_PLAYER(vAttackingTeam[i]).getNumCities() <= 0)
 						continue;
 
 					for (size_t j=0; j<vTargetTeam.size(); j++)
@@ -5069,7 +5069,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 				// Notified players reevaluate the broker!
 				for (std::vector<PlayerTypes>::iterator iter = vNotifiedPlayers.begin(); iter != vNotifiedPlayers.end(); ++iter)
 				{
-					if (!GET_PLAYER(*iter).isHuman())
+					if (!GET_PLAYER(*iter).isHuman(ISHUMAN_AI_DIPLOMACY))
 					{
 						GET_PLAYER(*iter).GetDiplomacyAI()->DoReevaluatePlayer(eReceivingPlayer);
 					}
@@ -5182,7 +5182,7 @@ void CvGameDeals::DoTurn()
 
 			//humans deal with their own renewals - no diplo AI prompting.
 			bool bHumanToHuman = false;
-			if (GET_PLAYER(it->GetFromPlayer()).isHuman() && GET_PLAYER(it->GetToPlayer()).isHuman())
+			if (GET_PLAYER(it->GetFromPlayer()).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(it->GetToPlayer()).isHuman(ISHUMAN_AI_DIPLOMACY))
 				bHumanToHuman = true;
 
 			// if there are non-renewable items in the deal, move on
@@ -5558,7 +5558,7 @@ void CvGameDeals::DoCancelAllProposedMPDealsWithPlayer(PlayerTypes eCancelPlayer
 	{
 		eLoopPlayer = (PlayerTypes) iPlayerLoop;
 		CvPlayer& kLoopPlayer = GET_PLAYER(eLoopPlayer);
-		if ((eTargetPlayers == DIPLO_AI_PLAYERS && !kLoopPlayer.isHuman()) || (eTargetPlayers == DIPLO_ALL_PLAYERS) || (eLoopPlayer == static_cast<PlayerTypes>(eTargetPlayers)))
+		if ((eTargetPlayers == DIPLO_AI_PLAYERS && !kLoopPlayer.isHuman(ISHUMAN_AI_DIPLOMACY)) || (eTargetPlayers == DIPLO_ALL_PLAYERS) || (eLoopPlayer == static_cast<PlayerTypes>(eTargetPlayers)))
 		{
 			CvDeal kDeal;
 			while (RemoveProposedDeal(eCancelPlayer, eLoopPlayer, &kDeal, true))

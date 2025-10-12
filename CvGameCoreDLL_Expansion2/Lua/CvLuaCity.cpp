@@ -14,9 +14,7 @@
 #include "CvLuaCity.h"
 #include "CvLuaPlot.h"
 #include "CvLuaUnit.h"
-#if defined(MOD_BALANCE_CORE_BUILDING_INVESTMENTS) || defined (MOD_BALANCE_CORE_UNIT_INVESTMENTS)
 #include "../CvInternalGameCoreUtils.h"
-#endif
 
 #pragma warning(disable:4800 ) //forcing value to bool 'true' or 'false'
 
@@ -74,6 +72,7 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 
 	Method(CanJoin);
 	Method(IsBuildingLocalResourceValid);
+	Method(GetImprovementCount);
 
 	Method(GetBuildingYieldRateTimes100)
 	Method(GetBuildingYieldModifier)
@@ -123,23 +122,17 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(GetProductionNeeded);
 	Method(GetUnitProductionNeeded);
 	Method(GetBuildingProductionNeeded);
-#if defined(MOD_BALANCE_CORE_BUILDING_INVESTMENTS)
 	Method(GetBuildingInvestment);
 	Method(IsWorldWonder);
 	Method(GetWorldWonderCost);
 	Method(GetNumPoliciesNeeded);
-#endif
-#if defined(MOD_BALANCE_CORE_BUILDING_INVESTMENTS)
 	Method(GetUnitInvestment);
-#endif
 	Method(GetProjectProductionNeeded);
 	Method(GetProductionTurnsLeft);
 	Method(GetUnitProductionTurnsLeft);
 	Method(GetBuildingProductionTurnsLeft);
 	Method(GetProjectProductionTurnsLeft);
-#if defined(MOD_PROCESS_STOCKPILE)
 	Method(GetProcessProductionTurnsLeft);
-#endif
 
 	Method(CreateApolloProgram);
 
@@ -226,10 +219,8 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(SetPopulation);
 	Method(ChangePopulation);
 	Method(GetRealPopulation);
-#if defined(MOD_GLOBAL_CITY_AUTOMATON_WORKERS)
 	Method(GetAutomatons);
 	Method(SetAutomatons);
-#endif
 	Method(GetHighestPopulation);
 	Method(SetHighestPopulation);
 	//Method(GetWorkingPopulation);
@@ -277,9 +268,7 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 
 	Method(GetCultureRateModifier);
 	Method(ChangeCultureRateModifier);
-#if defined(MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
 	Method(GetCityYieldModFromMonopoly);
-#endif
 	Method(GetTourismRateModifier);
 	Method(ChangeTourismRateModifier);
 
@@ -340,14 +329,10 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(GetBuyPlotDistance);
 	Method(GetWorkPlotDistance);
 
-#if defined(MOD_BUILDINGS_CITY_WORKING)
 	Method(GetCityWorkingChange);
 	Method(ChangeCityWorkingChange);
-#endif
-#if defined(MOD_BUILDINGS_CITY_AUTOMATON_WORKERS)
 	Method(GetCityAutomatonWorkersChange);
 	Method(ChangeCityAutomatonWorkersChange);
-#endif
 
 	Method(GetRemainingFreeSpecialists);
 	Method(GetBasicNeedsMedian);
@@ -447,9 +432,7 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(GetBaseYieldRate);
 	Method(GetBaseYieldRateTimes100);
 
-#if defined(MOD_GLOBAL_GREATWORK_YIELDTYPES)
 	Method(GetBaseYieldRateFromGreatWorks);
-#endif
 
 	Method(GetBaseYieldRateFromTerrain);
 	Method(ChangeBaseYieldRateFromTerrain);
@@ -544,10 +527,8 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(SetDamage);
 	Method(ChangeDamage);
 	Method(GetMaxHitPoints);
-#if defined(MOD_EVENTS_CITY_BOMBARD)
 	Method(GetBombardRange);
 	Method(GetCityBuildingRangeStrikeModifier);
-#endif
 	Method(CanRangeStrike);
 	Method(CanRangeStrikeNow);
 	Method(CanRangeStrikeAt);
@@ -581,12 +562,10 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(GetBuildingYieldChange);
 	Method(SetBuildingYieldChange);
 
-#if defined(MOD_BALANCE_CORE_POLICIES)
 	Method(GetReligionYieldRateModifier);
 	Method(GetReligionBuildingYieldRateModifier);
 	Method(GetYieldPerTurnFromMinors);
 	Method(SetYieldPerTurnFromMinors);
-#endif
 	Method(GetBaseYieldRateFromNonSpecialists);
 	Method(GetBuildingYieldChangeFromCorporationFranchises);
 	Method(GetYieldChangeFromCorporationFranchises);
@@ -611,10 +590,8 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(HasCounterSpy);
 	Method(GetCounterSpy);
 
-#if defined(MOD_RELIGION_CONVERSION_MODIFIERS)
 	Method(GetBuildingConversionModifier);
 	Method(GetBuildingGlobalConversionModifier);
-#endif
 
 	Method(GetNumCityPlots);
 	Method(CanPlaceUnitHere);
@@ -708,7 +685,6 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 
 	Method(GetHurryProduction);
 
-#if defined(MOD_BALANCE_CORE_EVENTS)
 	Method(GetDisabledTooltip);
 	Method(GetScaledEventChoiceValue);
 	Method(IsCityEventChoiceActive);
@@ -721,10 +697,7 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(SetCityEventChoiceCooldown);
 	Method(IsCityEventChoiceValid);
 	Method(IsCityEventChoiceValidEspionage);
-#endif
 
-
-#if defined(MOD_BALANCE_CORE_JFD)
 	Method(IsColony);
 	Method(SetColony);
 
@@ -789,7 +762,6 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(SetYieldFromDevelopment);
 
 	Method(GetCompetitiveSpawnUnitType);
-#endif
 }
 //------------------------------------------------------------------------------
 void CvLuaCity::HandleMissingInstance(lua_State* L)
@@ -1385,7 +1357,7 @@ int CvLuaCity::lGetPurchaseBuildingTooltip(lua_State* L)
 		}
 	}
 
-	if (MOD_BALANCE_CORE_BUILDING_INVESTMENTS && eBuilding != NO_BUILDING)
+	if (MOD_BALANCE_BUILDING_INVESTMENTS && eBuilding != NO_BUILDING)
 	{
 		//Have we already invested here?
 		CvBuildingEntry* pGameBuilding = GC.getBuildingInfo(eBuilding);
@@ -1472,6 +1444,17 @@ int CvLuaCity::lIsBuildingLocalResourceValid(lua_State* L)
 	CvCity* pkCity = GetInstance(L);
 
 	lua_pushboolean(L, pkCity->IsBuildingLocalResourceValid(static_cast<BuildingTypes>(lua_tointeger(L, 2)), lua_toboolean(L, 3)));
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// int GetImprovementCount(ImprovementTypes eImprovement);
+int CvLuaCity::lGetImprovementCount(lua_State* L)
+{
+	CvCity* pkCity = GetInstance(L);
+	const ImprovementTypes eImprovement = static_cast<ImprovementTypes>(lua_tointeger(L, 2));
+
+	lua_pushinteger(L, pkCity->GetImprovementCount(eImprovement));
 	return 1;
 }
 
@@ -1568,7 +1551,7 @@ int CvLuaCity::lGetBuildingYieldRateTimes100(lua_State* L)
 		}
 	}
 	// Mod for civs keeping their pantheon belief forever
-	if (MOD_RELIGION_PERMANENT_PANTHEON)
+	if (MOD_BALANCE_PERMANENT_PANTHEONS)
 	{
 		if (GC.getGame().GetGameReligions()->HasCreatedPantheon(ePlayer))
 		{
@@ -2054,15 +2037,21 @@ int CvLuaCity::lIsWorldWonder(lua_State* L)
 }
 int CvLuaCity::lGetWorldWonderCost(lua_State* L)
 {
-	int iNumWorldWonderPercent = 0;
 	CvCity* pkCity = GetInstance(L);
-
 	const BuildingTypes eBuildingType = (BuildingTypes)lua_tointeger(L, 2);
+	if (!MOD_BALANCE_WORLD_WONDER_COST_INCREASE)
+	{
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+
+	int iNumWorldWonderPercent = 0;
 	CvBuildingEntry* pGameBuilding = GC.getBuildingInfo(eBuildingType);
-	if (MOD_BALANCE_CORE_WONDER_COST_INCREASE && pGameBuilding)
+	if (pGameBuilding)
 	{
 		const CvBuildingClassInfo& kBuildingClassInfo = pGameBuilding->GetBuildingClassInfo();
-		if (::isWorldWonderClass(kBuildingClassInfo)) {
+		if (::isWorldWonderClass(kBuildingClassInfo))
+		{
 			const CvCity* pLoopCity;
 			int iLoop;
 			for (pLoopCity = GET_PLAYER(pkCity->getOwner()).firstCity(&iLoop); pLoopCity != NULL; pLoopCity = GET_PLAYER(pkCity->getOwner()).nextCity(&iLoop))
@@ -2072,22 +2061,21 @@ int CvLuaCity::lGetWorldWonderCost(lua_State* L)
 					for (int iBuildingLoop = 0; iBuildingLoop < GC.getNumBuildingInfos(); iBuildingLoop++)
 					{
 						const BuildingTypes eBuilding = static_cast<BuildingTypes>(iBuildingLoop);
-						CvBuildingEntry* pkeBuildingInfo = GC.getBuildingInfo(eBuilding);
+						CvBuildingEntry* pkBuildingInfo = GC.getBuildingInfo(eBuilding);
 
 						// Has this Building
-						if (pkeBuildingInfo && pLoopCity->GetCityBuildings()->GetNumBuilding(eBuilding) > 0)
+						if (pLoopCity->GetCityBuildings()->GetNumBuilding(eBuilding) > 0)
 						{
-							if (isWorldWonderClass(pkeBuildingInfo->GetBuildingClassInfo()))
+							if (isWorldWonderClass(pkBuildingInfo->GetBuildingClassInfo()))
 							{
-								if (pkeBuildingInfo->GetPrereqAndTech() == NO_TECH)
+								if (pkBuildingInfo->GetPrereqAndTech() == NO_TECH)
 									continue;
 
-								CvTechEntry* pkTechInfo = GC.getTechInfo((TechTypes)pkeBuildingInfo->GetPrereqAndTech());
+								CvTechEntry* pkTechInfo = GC.getTechInfo((TechTypes)pkBuildingInfo->GetPrereqAndTech());
 								if (pkTechInfo)
 								{
 									// Loop through all eras and apply Building production mod based on how much time has passed
 									EraTypes eBuildingUnlockedEra = (EraTypes)pkTechInfo->GetEra();
-
 									if (eBuildingUnlockedEra == NO_ERA)
 										continue;
 
@@ -2095,16 +2083,16 @@ int CvLuaCity::lGetWorldWonderCost(lua_State* L)
 									switch (iEraDifference)
 									{
 									case 0:
-										iNumWorldWonderPercent += /*25*/ GD_INT_GET(BALANCE_CORE_WORLD_WONDER_SAME_ERA_COST_MODIFIER);
+										iNumWorldWonderPercent += /*25*/ GD_INT_GET(BALANCE_WORLD_WONDER_SAME_ERA_COST_MODIFIER);
 										break;
 									case 1:
-										iNumWorldWonderPercent += /*15*/ GD_INT_GET(BALANCE_CORE_WORLD_WONDER_PREVIOUS_ERA_COST_MODIFIER);
+										iNumWorldWonderPercent += /*15*/ GD_INT_GET(BALANCE_WORLD_WONDER_PREVIOUS_ERA_COST_MODIFIER);
 										break;
 									case 2:
-										iNumWorldWonderPercent += /*10*/ GD_INT_GET(BALANCE_CORE_WORLD_WONDER_SECOND_PREVIOUS_ERA_COST_MODIFIER);
+										iNumWorldWonderPercent += /*10*/ GD_INT_GET(BALANCE_WORLD_WONDER_SECOND_PREVIOUS_ERA_COST_MODIFIER);
 										break;
 									default:
-										iNumWorldWonderPercent += /*5*/ GD_INT_GET(BALANCE_CORE_WORLD_WONDER_EARLIER_ERA_COST_MODIFIER);
+										iNumWorldWonderPercent += /*5*/ GD_INT_GET(BALANCE_WORLD_WONDER_EARLIER_ERA_COST_MODIFIER);
 									}
 								}
 							}
@@ -2246,14 +2234,12 @@ int CvLuaCity::lGetProjectProductionTurnsLeft(lua_State* L)
 {
 	return BasicLuaMethod<int, ProjectTypes>(L, &CvCity::getProductionTurnsLeft);
 }
-#if defined(MOD_PROCESS_STOCKPILE)
 //------------------------------------------------------------------------------
 //int getProcessProductionTurnsLeft(ProcessTypes eProcess, int iNum);
 int CvLuaCity::lGetProcessProductionTurnsLeft(lua_State* L)
 {
 	return BasicLuaMethod<int, ProcessTypes>(L, &CvCity::getProductionTurnsLeft);
 }
-#endif
 //------------------------------------------------------------------------------
 // int IsCanPurchase(UnitTypes eUnitType, BuildingTypes eBuildingType, ProjectTypes eProjectType, YieldTypes ePurchaseYield);
 int CvLuaCity::lIsCanPurchase(lua_State* L)
@@ -3008,7 +2994,6 @@ int CvLuaCity::lSetHighestPopulation(lua_State* L)
 //{
 //	return BasicLuaMethod(L, &CvCity::getSpecialistPopulation);
 //}
-#if defined(MOD_GLOBAL_CITY_AUTOMATON_WORKERS)
 //------------------------------------------------------------------------------
 //int getAutomatons();
 int CvLuaCity::lGetAutomatons(lua_State* L)
@@ -3021,7 +3006,6 @@ int CvLuaCity::lSetAutomatons(lua_State* L)
 {
 	return BasicLuaMethod(L, &CvCity::setAutomatons);
 }
-#endif
 //------------------------------------------------------------------------------
 //int getBaseGreatPeopleRate();
 int CvLuaCity::lGetBaseGreatPeopleRate(lua_State* L)
@@ -3341,7 +3325,7 @@ int CvLuaCity::lChangeCultureRateModifier(lua_State* L)
 	pCity->changeYieldRateModifier(YIELD_CULTURE, iChange);
 	return 0;
 }
-#if defined(MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
+
 //int GetCityYieldModFromMonopoly() const;
 int CvLuaCity::lGetCityYieldModFromMonopoly(lua_State* L)
 {
@@ -3366,7 +3350,7 @@ int CvLuaCity::lGetCityYieldModFromMonopoly(lua_State* L)
 	lua_pushinteger(L, iModifier);
 	return 1;
 }
-#endif
+
 //------------------------------------------------------------------------------
 //int getTourismRateModifier() const;
 int CvLuaCity::lGetTourismRateModifier(lua_State* L)
@@ -3384,12 +3368,8 @@ int CvLuaCity::lChangeTourismRateModifier(lua_State* L)
 int CvLuaCity::lGetNumGreatWorks(lua_State* L)
 {
 	CvCity* pkCity = GetInstance(L);
-#if defined(MOD_GLOBAL_GREATWORK_YIELDTYPES)
 	const bool bIgnoreYield = luaL_optbool(L, 2, true);
 	lua_pushinteger(L, pkCity->GetCityCulture()->GetNumGreatWorks(bIgnoreYield));
-#else
-	lua_pushinteger(L, pkCity->GetCityCulture()->GetNumGreatWorks());
-#endif
 	return 1;
 }
 //------------------------------------------------------------------------------
@@ -3406,9 +3386,6 @@ int CvLuaCity::lGetBaseTourism(lua_State* L)
 {
 	CvCity* pkCity = GetInstance(L);
 	int iValue = pkCity->getYieldRateTimes100(YIELD_TOURISM);
-	if (!MOD_BALANCE_CORE_TOURISM_HUNDREDS)
-		iValue /= 100;
-
 	lua_pushinteger(L, iValue);
 	return 1;
 }
@@ -3779,9 +3756,9 @@ int CvLuaCity::lGetReligionBuildingClassYieldChange(lua_State* L)
 			}
 		}
 	}
-#if defined(MOD_RELIGION_PERMANENT_PANTHEON)
+
 	// Mod for civs keeping their pantheon belief forever
-	if (MOD_RELIGION_PERMANENT_PANTHEON)
+	if (MOD_BALANCE_PERMANENT_PANTHEONS)
 	{
 		if (GC.getGame().GetGameReligions()->HasCreatedPantheon(pkCity->getOwner()))
 		{
@@ -3797,7 +3774,7 @@ int CvLuaCity::lGetReligionBuildingClassYieldChange(lua_State* L)
 			}
 		}
 	}
-#endif
+
 	lua_pushinteger(L, iYieldFromBuilding);
 	return 1;
 }
@@ -3934,7 +3911,6 @@ int CvLuaCity::lGetWorkPlotDistance(lua_State* L)
 	return BasicLuaMethod(L, &CvCity::getWorkPlotDistance);
 }
 
-#if defined(MOD_BUILDINGS_CITY_WORKING)
 //------------------------------------------------------------------------------
 //int getCityWorkingChange();
 int CvLuaCity::lGetCityWorkingChange(lua_State* L)
@@ -3948,9 +3924,7 @@ int CvLuaCity::lChangeCityWorkingChange(lua_State* L)
 {
 	return BasicLuaMethod(L, &CvCity::changeCityWorkingChange);
 }
-#endif
 
-#if defined(MOD_BUILDINGS_CITY_AUTOMATON_WORKERS)
 //------------------------------------------------------------------------------
 //int getCityAutomatonWorkersChange();
 int CvLuaCity::lGetCityAutomatonWorkersChange(lua_State* L)
@@ -3964,7 +3938,6 @@ int CvLuaCity::lChangeCityAutomatonWorkersChange(lua_State* L)
 {
 	return BasicLuaMethod(L, &CvCity::changeCityAutomatonWorkersChange);
 }
-#endif
 
 int CvLuaCity::lGetRemainingFreeSpecialists(lua_State* L)
 {
@@ -4673,7 +4646,6 @@ int CvLuaCity::lSetYieldPerTurnFromMinors(lua_State* L)
 	pkCity->SetYieldFromMinors(eYield, iValue);
 	return 1;
 }
-#if defined(MOD_GLOBAL_GREATWORK_YIELDTYPES)
 //------------------------------------------------------------------------------
 // LEGACY METHOD
 int CvLuaCity::lGetBaseYieldRateFromGreatWorks(lua_State* L)
@@ -4684,7 +4656,6 @@ int CvLuaCity::lGetBaseYieldRateFromGreatWorks(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#endif
 //------------------------------------------------------------------------------
 int CvLuaCity::lGetBaseYieldRateFromTerrain(lua_State* L)
 {
@@ -5431,7 +5402,7 @@ int CvLuaCity::lGetMaxHitPoints(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#if defined(MOD_EVENTS_CITY_BOMBARD)
+
 //int, bool GetBombardRange();
 int CvLuaCity::lGetBombardRange(lua_State* L)
 {
@@ -5450,7 +5421,7 @@ int CvLuaCity::lGetCityBuildingRangeStrikeModifier(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#endif
+
 //------------------------------------------------------------------------------
 //bool CanRangeStrike()
 int CvLuaCity::lCanRangeStrike(lua_State* L)
@@ -5844,7 +5815,6 @@ int CvLuaCity::lGetBuildingYieldChange(lua_State* L)
 	return 1;
 }
 
-#if defined(MOD_BALANCE_CORE_POLICIES)
 //int getReligionYieldRateModifier(YieldTypes eYield);
 int CvLuaCity::lGetReligionYieldRateModifier(lua_State* L)
 {
@@ -5884,7 +5854,6 @@ int CvLuaCity::lGetReligionBuildingYieldRateModifier(lua_State* L)
 
 	return 1;
 }
-#endif
 
 int CvLuaCity::lGetBaseYieldRateFromNonSpecialists(lua_State* L)
 {
@@ -6019,7 +5988,7 @@ int CvLuaCity::lGetSpecialistYieldChange(lua_State* L)
 	}
 
 	// Mod for civs keeping their pantheon belief forever
-	if (MOD_RELIGION_PERMANENT_PANTHEON)
+	if (MOD_BALANCE_PERMANENT_PANTHEONS)
 	{
 		if (GC.getGame().GetGameReligions()->HasCreatedPantheon(pkCity->getOwner()))
 		{
@@ -6184,7 +6153,6 @@ int CvLuaCity::lGetCounterSpy(lua_State* L)
 	return 1;
 }
 
-#if defined(MOD_RELIGION_CONVERSION_MODIFIERS)
 //int GetBuildingConversionModifier(BuildingTypes eBuilding)
 int CvLuaCity::lGetBuildingConversionModifier(lua_State* L)
 {
@@ -6219,7 +6187,6 @@ int CvLuaCity::lGetBuildingGlobalConversionModifier(lua_State* L)
 	}
 	return 1;
 }
-#endif
 
 //------------------------------------------------------------------------------
 //void setBuildingYieldChange(BuildingClassTypes eBuildingClass, YieldTypes eYield, int iChange);
@@ -6294,9 +6261,8 @@ int CvLuaCity::lGetReligionCityRangeStrikeModifier(lua_State* L)
 		}
 	}
 
-#if defined(MOD_RELIGION_PERMANENT_PANTHEON)
 	// Mod for civs keeping their pantheon belief forever
-	if (MOD_RELIGION_PERMANENT_PANTHEON)
+	if (MOD_BALANCE_PERMANENT_PANTHEONS)
 	{
 		if (GC.getGame().GetGameReligions()->HasCreatedPantheon(pkCity->getOwner()))
 		{
@@ -6312,7 +6278,6 @@ int CvLuaCity::lGetReligionCityRangeStrikeModifier(lua_State* L)
 			}
 		}
 	}
-#endif
 
 	lua_pushinteger(L, iReligionRangeStrikeMod);
 
@@ -6481,7 +6446,6 @@ int CvLuaCity::lIsFoodRoutes(lua_State* L)
 	return 1;
 }
 
-#if defined(MOD_BALANCE_CORE_EVENTS)
 int CvLuaCity::lGetDisabledTooltip(lua_State* L)
 {
 	CvString DisabledTT = "";
@@ -6660,7 +6624,6 @@ int CvLuaCity::lIsCityEventChoiceValidEspionage(lua_State* L)
 
 	return 1;
 }
-#endif
 
 int CvLuaCity::lGetSappedTurns(lua_State* L)
 {
@@ -6697,7 +6660,6 @@ int CvLuaCity::lGetHurryProduction(lua_State* L)
 	return BasicLuaMethod(L, &CvCity::GetHurryProduction);
 }
 
-#if defined(MOD_BALANCE_CORE_JFD)
 int CvLuaCity::lIsColony(lua_State* L)
 {
 	CvCity* pkCity = GetInstance(L);
@@ -7080,5 +7042,3 @@ int CvLuaCity::lGetCompetitiveSpawnUnitType(lua_State* L)
 	lua_pushinteger(L, eUnit);
 	return 1;
 }
-
-#endif

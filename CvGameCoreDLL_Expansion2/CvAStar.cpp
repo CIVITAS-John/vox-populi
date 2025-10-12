@@ -426,7 +426,7 @@ bool CvAStar::FindPathWithCurrentConfiguration(int iXstart, int iYstart, int iXd
 		{
 			// Add debug breakpoint here for investigation during development
 			OutputDebugString("Repeated pathfinding start\n");
-			ASSERT(false, "Repeated pathfinding detected - investigate call path");
+			ASSERT_DEBUG(false, "Repeated pathfinding detected - investigate call path");
 		}
 		giLastStartIndex = iStartIndex;
 		giLastDestIndex = iDestIndex;
@@ -883,7 +883,7 @@ void UnitPathInitialize(const SPathFinderUserData& data, CvAStar* finder)
 	pCacheData->m_ePlayerID = pUnit->getOwner();
 	pCacheData->m_eTeamID = pUnit->getTeam();
 	pCacheData->m_eDomainType = pUnit->getDomainType();
-	pCacheData->m_bAIControl = !pUnit->isHuman() || pUnit->IsAutomated();
+	pCacheData->m_bAIControl = !pUnit->isHuman(ISHUMAN_AI_UNITS) || pUnit->IsAutomated();
 	pCacheData->m_bIsNoRevealMap = pUnit->isNoRevealMap();
 	pCacheData->m_bCanEverEmbark = pUnit->CanEverEmbark();
 	pCacheData->m_bIsEmbarked = pUnit->isEmbarked();
@@ -994,7 +994,7 @@ void UpdateNodeCacheData(CvAStarNode* node, const CvUnit* pUnit, const CvAStar* 
 	kToNodeCacheData.bCanEnterTerritoryPermanent = finder->HaveFlag(CvUnit::MOVEFLAG_IGNORE_RIGHT_OF_PASSAGE) || pUnit->canEnterTerritory(ePlotTeam, true);
 
 	//precompute this. it only depends on this one plot, so we don't have to do this in PathCost()
-	if (MOD_SANE_UNIT_MOVEMENT_COST)
+	if (MOD_BALANCE_SANE_UNIT_MOVEMENT_COST)
 	{
 		kToNodeCacheData.plotMovementCostMultiplier = GD_INT_GET(MOVE_DENOMINATOR); //will be ignored!
 		kToNodeCacheData.plotMovementCostAdder = CvUnitMovement::GetMovementCostChangeFromPromotions(pUnit, pPlot);
@@ -1237,7 +1237,23 @@ int PathEndTurnCost(CvPlot* pToPlot, const CvPathNodeCacheData& kToNodeCacheData
 		//we should give more weight to the first end-turn plot, the danger values for future stops are less concrete
 		int iFutureFactor = std::max(1,4-iTurnsInFuture);
 
-		if (pUnit->IsCombatUnit() && pUnit->isNativeDomain(pToPlot))
+		bool bIsCombatUnit = pUnit->IsCombatUnit() && pUnit->isNativeDomain(pToPlot);
+
+		if (bIsCombatUnit)
+		{
+			if (pUnit->isHuman(ISHUMAN_AI_UNITS))
+			{
+				if (pUnit->IsAutomated())
+					bIsCombatUnit = false;
+			}
+			else
+			{
+				if (pUnit->AI_getUnitAIType() == UNITAI_EXPLORE || pUnit->AI_getUnitAIType() == UNITAI_EXPLORE_SEA)
+					bIsCombatUnit = false;
+			}
+		}
+
+		if (bIsCombatUnit)
 		{
 			//be extra careful if requested but don't really abort, else we might not find a path at all
 			int iScale = bAbortInDanger ? 2 : 1;
@@ -1251,11 +1267,11 @@ int PathEndTurnCost(CvPlot* pToPlot, const CvPathNodeCacheData& kToNodeCacheData
 			else if (iPlotDanger*iScale > pUnit->GetCurrHitPoints()/3)
 				iCost += PATH_END_TURN_LOW_DANGER_WEIGHT*iFutureFactor;
 		}
-		else //civilian or embarked
+		else //civilian, embarked or exploring
 		{
 			if (bOnlySafeEmbark && iPlotDanger>0 && !pUnit->isNativeDomain(pToPlot))
 				return -1; //don't expose ourselves
-			else if (iPlotDanger == INT_MAX && iTurnsInFuture < 2 && bAbortInDanger)
+			else if (iPlotDanger > pUnit->GetCurrHitPoints() / 2 && iTurnsInFuture < 2 && bAbortInDanger)
 				return -1; //don't ever do this
 			else if (iPlotDanger > pUnit->GetCurrHitPoints())
 				iCost += PATH_END_TURN_HIGH_DANGER_WEIGHT * 4 * iFutureFactor;
@@ -1468,7 +1484,7 @@ int PathValid(const CvAStarNode* parent, const CvAStarNode* node, const SPathFin
 	CvUnit* pUnit = pCacheData->pUnit;
 	TeamTypes eUnitTeam = pCacheData->getTeam();
 
-	if (!kToNodeCacheData.bIsRevealedToTeam && !pUnit->isHuman() && !finder->HaveFlag(CvUnit::MOVEFLAG_PRETEND_ALL_REVEALED) && pUnit->AI_getUnitAIType()!=UNITAI_EXPLORE)
+	if (!kToNodeCacheData.bIsRevealedToTeam && !pUnit->isHuman(ISHUMAN_AI_UNITS) && !finder->HaveFlag(CvUnit::MOVEFLAG_PRETEND_ALL_REVEALED) && pUnit->AI_getUnitAIType()!=UNITAI_EXPLORE)
 		return FALSE;
 
 	bool bNextNodeHostile = kToNodeCacheData.bIsEnemyCity || (kToNodeCacheData.bIsVisibleEnemyCombatUnit && !finder->HaveFlag(CvUnit::MOVEFLAG_IGNORE_ENEMIES));
@@ -1529,7 +1545,9 @@ int PathValid(const CvAStarNode* parent, const CvAStarNode* node, const SPathFin
 		}
 	}
 	else if (finder->HaveFlag(CvUnit::MOVEFLAG_VISIBLE_ONLY))
-		return FALSE;
+		// Let workers run through one unseen tile at the time, otherwise they can barely move between cities in the early game
+		if (!pFromPlot->isVisible(eUnitTeam))
+			return FALSE;
 
 	//some checks about terrain etc. needs to be revealed, otherwise we leak information in the UI
 	if (kToNodeCacheData.bIsRevealedToTeam)
@@ -2058,7 +2076,7 @@ static void AddCityConnectionHarborConnections(const CvPlot* pPlot, const CvASta
 
 static void AddCityConnectionRiverConnections(CvPlot* pPlot, const CvAStar* finder, vector<pair<int, int>>& out)
 {
-	if (!MOD_RIVER_CITY_CONNECTIONS)
+	if (!MOD_BALANCE_RIVER_CITY_CONNECTIONS)
 		return;
 
 	RouteTypes eRoute = finder->GetData().eRoute;
@@ -2213,6 +2231,44 @@ int CityConnectionWaterValid(const CvAStarNode* parent, const CvAStarNode* node,
 			if (GET_PLAYER(ePlayer).IsAtWarWith(ePlotOwnerPlayer))
 				return FALSE;
 		}
+	}
+
+	return TRUE;
+}
+
+//	--------------------------------------------------------------------------------
+/// Can a work boat (safely) traverse this plot?
+static int WorkerSeaUnitSafeValid(const CvAStarNode* parent, const CvAStarNode* node, const SPathFinderUserData& data, const CvAStar*)
+{
+	if (parent == NULL)
+		return TRUE;
+
+	PlayerTypes ePlayer = data.ePlayer;
+	TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+
+	CvPlot* pNewPlot = GC.getMap().plotUnchecked(node->m_iX, node->m_iY);
+	CvPlot* pOldPlot = GC.getMap().plotUnchecked(parent->m_iX, parent->m_iY);
+
+	if (!pNewPlot || !pNewPlot->isRevealed(eTeam))
+		return FALSE;
+
+	if (!pNewPlot->isVisible(eTeam) && !pOldPlot->isVisible(eTeam))
+		return FALSE;
+
+	if (pNewPlot->isDeepWater() && !GET_PLAYER(ePlayer).CanCrossOcean())
+		return FALSE;
+
+	if (pNewPlot->isIce() && !GET_PLAYER(ePlayer).CanCrossIce())
+		return FALSE;
+
+	if (!pNewPlot->isWater() && !pNewPlot->isCoastalCityOrPassableImprovement(ePlayer, true, true))
+		return FALSE;
+
+	if (pNewPlot->getTeam() != eTeam && !pNewPlot->isAdjacentTeam(eTeam))
+	{
+		CvPlot* pOldPlot = GC.getMap().plotUnchecked(parent->m_iX, parent->m_iY);
+		if (pOldPlot->getTeam() != eTeam && !pOldPlot->isAdjacentTeam(eTeam))
+			return FALSE;
 	}
 
 	return TRUE;
@@ -2821,6 +2877,10 @@ bool CvStepFinder::Configure(const SPathFinderUserData& config)
 		break;
 	case PT_AIR_REBASE:
 		SetFunctionPointers(NULL, StepHeuristic, NULL, RebaseValid, RebaseGetExtraChildren, UnitPathInitialize, UnitPathUninitialize);
+		m_iBasicPlotCost = PATH_BASE_COST;
+		break;
+	case PT_WORKER_SEA_UNIT_SAFE:
+		SetFunctionPointers(NULL, StepHeuristic, NULL, WorkerSeaUnitSafeValid, NULL, NULL, NULL);
 		m_iBasicPlotCost = PATH_BASE_COST;
 		break;
 	default:

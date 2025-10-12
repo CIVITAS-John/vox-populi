@@ -1128,7 +1128,7 @@ function TipHandler( control )
 			end
 
 			-- Can't upgrade because we're outside our territory
-			if (pPlot:GetOwner() ~= unit:GetOwner()) then
+			if (not unit:CanUpgradeInTerritory(false)) then
 				
 				-- Add spacing for all entries after the first
 				if (bFirstEntry) then
@@ -1154,7 +1154,7 @@ function TipHandler( control )
 			end
 			
 			-- Can't upgrade because we lack the Gold
-			if (iGoldToUpgrade > pActivePlayer:GetGold()) then
+			if (iGoldToUpgrade > pActivePlayer:GetGoldTimes100() / 100) then
 				
 				-- Add spacing for all entries after the first
 				if (bFirstEntry) then

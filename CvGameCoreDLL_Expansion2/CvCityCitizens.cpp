@@ -224,7 +224,7 @@ void CvCityCitizens::DoTurn()
 			bForceCheck |= SetForcedAvoidGrowth(false);
 	}
 
-	if (!thisPlayer.isHuman())
+	if (!thisPlayer.isHuman(ISHUMAN_AI_CITY_MANAGEMENT))
 	{
 		// Are we running at a deficit?
 		static EconomicAIStrategyTypes eStrategyLosingMoney = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_LOSING_MONEY", true);
@@ -484,7 +484,7 @@ YieldAndGPPList CvCityCitizens::GetPlotYields(CvPlot* pPlot, SPrecomputedExpensi
 
 bool CvCityCitizens::CityShouldEmphasizeFood(int iAssumedExcessFood) const
 {
-	bool bCityFoodProduction = !GET_PLAYER(GetOwner()).isHuman() && m_pCity->getPopulation() > 3 && m_pCity->isFoodProduction(); //settler!
+	bool bCityFoodProduction = !GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT) && m_pCity->getPopulation() > 3 && m_pCity->isFoodProduction(); //settler!
 	bool bSmallCity = m_pCity->getPopulation() < /*2 in CP, 4 in VP*/ GD_INT_GET(CITY_MIN_SIZE_FOR_SETTLERS);
 	int iFoodThreshold = GetExcessFoodThreshold100();
 
@@ -496,12 +496,12 @@ bool CvCityCitizens::CityShouldEmphasizeFood(int iAssumedExcessFood) const
 
 bool CvCityCitizens::CityShouldEmphasizeProduction() const
 {
-	if (GET_PLAYER(GetOwner()).isHuman() || m_pCity->getPopulation() <= 3)
+	if ((GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT)) || m_pCity->getPopulation() <= 3)
 		return false;
 
 	//settler
-	if (m_pCity->isFoodProduction())
-		return true;
+	//if (m_pCity->isFoodProduction())
+	//	return true;
 
 	// world wonder
 	if (m_pCity->IsBuildingWorldWonder())
@@ -583,7 +583,7 @@ bool CvCityCitizens::IsAvoidGrowth() const
 
 	//failsafe for AI
 	const CvPlayer& kPlayer = GET_PLAYER(GetOwner());
-	if (!kPlayer.isHuman() && kPlayer.IsEmpireVeryUnhappy())
+	if ((!kPlayer.isHuman(ISHUMAN_AI_CITY_MANAGEMENT)) && kPlayer.IsEmpireVeryUnhappy())
 	{
 		return true;
 	}
@@ -1432,7 +1432,7 @@ vector<TileChange> CvCityCitizens::GetBestOptionsQuick(int iNumOptions, bool bAd
 				if (bAdd)
 				{
 					// how many specialists of this type can we assign?
-					if (GET_PLAYER(GetOwner()).isHuman() && (IsNoAutoAssignSpecialists()))
+					if (GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT) && IsNoAutoAssignSpecialists())
 					{
 						iNumSpecialists = 0;
 					}
@@ -1667,7 +1667,7 @@ void CvCityCitizens::DoInitialAssigment(bool bAssumeStarving, bool bAssumeBelowG
 	gCachedNumbers.update(m_pCity);
 	
 	// score all possible options
-	vector<TileChange> vScoredOptions = GetBestOptionsQuick(iNumToAssign, /*bAdd*/ true, /*bAllowOverride*/ !GET_PLAYER(GetOwner()).isHuman(), gCachedNumbers, bAssumeStarving, bAssumeBelowGrowthThreshold, gCachedNumbers.iNetGold < 0);
+	vector<TileChange> vScoredOptions = GetBestOptionsQuick(iNumToAssign, /*bAdd*/ true, /*bAllowOverride*/ !GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT), gCachedNumbers, bAssumeStarving, bAssumeBelowGrowthThreshold, gCachedNumbers.iNetGold < 0);
 
 	// assign the best ones
 	for (int i = 0; i < (int)vScoredOptions.size(); i++)
@@ -1696,7 +1696,7 @@ bool CvCityCitizens::DoAddBestCitizenFromUnassigned(CvCity::eUpdateMode updateMo
 	int iBestPlotValue = -1;
 	CvPlot* pBestPlot = GetBestCityPlotWithValue(iBestPlotValue, eBEST_UNWORKED_NO_OVERRIDE, gCachedNumbers, bLogging);
 
-	bool bSpecialistForbidden = GET_PLAYER(GetOwner()).isHuman() && ( IsNoAutoAssignSpecialists() || NoSpecialists );
+	bool bSpecialistForbidden = GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT) && ( IsNoAutoAssignSpecialists() || NoSpecialists );
 	FILogFile* pLog = bLogging && GC.getLogging() ? LOGFILEMGR.GetLog("CityTileScorer.csv", FILogFile::kDontTimeStamp) : NULL;
 
 	int iSpecialistValue = -1;
@@ -1984,7 +1984,7 @@ void CvCityCitizens::OptimizeWorkedPlots(bool bLogging)
 
 	int iCount = 0;
 	FILogFile* pLog = bLogging && GC.getLogging() ? LOGFILEMGR.GetLog("CityTileScorer.csv", FILogFile::kDontTimeStamp) : NULL;
-	bool bIsHuman = GET_PLAYER(GetOwner()).isHuman();
+	bool bIsHuman = GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT);
 	bool bSpecialistForbidden = bIsHuman && IsNoAutoAssignSpecialists();
 
 	if (pLog)
@@ -2017,7 +2017,7 @@ void CvCityCitizens::OptimizeWorkedPlots(bool bLogging)
 		bool bBelowGrowthThreshold = iNetFood100 < GetExcessFoodThreshold100();
 		bool bInDebt = gCachedNumbers.iNetGold < 0;
 		
-		bool bAllowOverride = !GET_PLAYER(GetOwner()).isHuman();
+		bool bAllowOverride = !GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT);
 		vector<TileChange> vRemoveOptions = GetBestOptionsQuick(iNumOptionsPlots, /*bAdd*/ false, bAllowOverride, gCachedNumbers, bStarving, bBelowGrowthThreshold, bInDebt, /*bIncludePlots*/ true, /*bIncludeSpecialists*/ false, true);
 		if (!bSpecialistForbidden)
 		{
@@ -2127,7 +2127,7 @@ bool CvCityCitizens::NeedReworkCitizens()
 
 	//for simplicity we do not check for laborers here
 	int iRemoveWorstSpecialistValue = 0;
-	if (!GET_PLAYER(GetOwner()).isHuman() || !IsNoAutoAssignSpecialists())
+	if (!GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT) || !IsNoAutoAssignSpecialists())
 	{
 		GetAIWorstSpecialistCurrentlyInBuilding(iRemoveWorstSpecialistValue, gCachedNumbers);
 	}
@@ -2144,7 +2144,7 @@ bool CvCityCitizens::NeedReworkCitizens()
 	GetBestCityPlotWithValue(iAddBestUnworkedPlotValue, eBEST_UNWORKED_NO_OVERRIDE, gCachedNumbers);
 
 	int iAddBestSpecialistValue = 0;
-	if (!GET_PLAYER(GetOwner()).isHuman() || !IsNoAutoAssignSpecialists())
+	if (!GET_PLAYER(GetOwner()).isHuman(ISHUMAN_AI_CITY_MANAGEMENT) || !IsNoAutoAssignSpecialists())
 	{
 		GetAIBestSpecialistBuilding(iAddBestSpecialistValue, gCachedNumbers);
 	}
@@ -2786,7 +2786,7 @@ int CvCityCitizens::GetSpecialistRate(SpecialistTypes eSpecialist, CvString* too
 	}
 
 	int iGPPFromMonopolies = 0;
-	if (MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
+	if (MOD_BALANCE_RESOURCE_MONOPOLIES)
 	{
 		iGPPFromMonopolies = GetPlayer()->getSpecificGreatPersonRateChangeFromMonopoly(eGreatPerson) * 100;
 	}
@@ -2799,8 +2799,10 @@ int CvCityCitizens::GetSpecialistRate(SpecialistTypes eSpecialist, CvString* too
 		GC.getGame().BuildYieldTimes100HelpText(tooltip, "TXT_KEY_GPP_FROM_MONOPOLY", iGPPFromMonopolies, szIconString);
 	}
 
+	int iProgressTimes100 = GetSpecialistGreatPersonProgressTimes100(eSpecialist);
+
 	int iBaseGPP = iGPPFromSpecialists + iGPPFromBuildings + iGPPFromReligion + iGPPFromMonopolies;
-	if (iBaseGPP > 0)
+	if (iBaseGPP > 0 || iProgressTimes100 > 0)
 	{
 		int iPlayerMod = GetPlayer()->getGreatPeopleRateModifier() + GetPlayer()->GetGreatPersonRateModifier(eGreatPerson);
 		int iNumPuppets = GetPlayer()->GetNumPuppetCities();
@@ -2827,50 +2829,55 @@ int CvCityCitizens::GetSpecialistRate(SpecialistTypes eSpecialist, CvString* too
 
 		if (tooltip)
 		{
-			*tooltip += strNewLine + strLineDivision + strNewLine;
-			*tooltip += GetLocalizedText("TXT_KEY_GPP_BASE", szIconString, szGreatPerson, static_cast<float>(iBaseGPP) / 100);
-
-			// Player mod already includes league mod, so we separate them
-			// Unfortunately, this is still hardcoded
-			const GreatPersonTypes eEngineer = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_ENGINEER"));
-			const GreatPersonTypes eScientist = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_SCIENTIST"));
-			const GreatPersonTypes eMerchant = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_MERCHANT"));
-			const GreatPersonTypes eArtist = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_ARTIST"));
-			const GreatPersonTypes eMusician = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_MUSICIAN"));
-			const GreatPersonTypes eWriter = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_WRITER"));
-
-			int iLeagueMod = 0;
-			if (eGreatPerson == eEngineer || eGreatPerson == eScientist || eGreatPerson == eMerchant)
+			if (!tooltip->IsEmpty())
+				*tooltip += strNewLine + strLineDivision + strNewLine;
+			
+			if (iPlayerMod + iMonopolyMod + iCityMod + iGoldenAgePolicyMod + iGoldenAgeTraitMod + iGoldenAgeReligionMod > 0)
 			{
-				iLeagueMod += GC.getGame().GetGameLeagues()->GetScienceyGreatPersonRateModifier(GetOwner());
-			}
-			else if (eGreatPerson == eArtist || eGreatPerson == eMusician || eGreatPerson == eWriter)
-			{
-				iLeagueMod += GC.getGame().GetGameLeagues()->GetArtsyGreatPersonRateModifier(GetOwner());
-			}
-			iPlayerMod -= iLeagueMod;
+				*tooltip += GetLocalizedText("TXT_KEY_GPP_BASE", szIconString, szGreatPerson, static_cast<float>(iBaseGPP) / 100);
+				*tooltip += strNewLine + strLineDivision;
 
-			// City mod can be further divided into buildings and others
-			int iImprovementMod = GetCity()->GetImprovementGreatPersonRateModifier();
-			int iCapitalMod = GetPlayer()->GetNumMarriedCityStatesNotAtWar() * /*15*/ GD_INT_GET(BALANCE_GPP_RATE_IN_CAPITAL_PER_MARRIAGE);
-			iCityMod -= iImprovementMod + iCapitalMod;
+				// Player mod already includes league mod, so we separate them
+				// Unfortunately, this is still hardcoded
+				const GreatPersonTypes eEngineer = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_ENGINEER"));
+				const GreatPersonTypes eScientist = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_SCIENTIST"));
+				const GreatPersonTypes eMerchant = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_MERCHANT"));
+				const GreatPersonTypes eArtist = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_ARTIST"));
+				const GreatPersonTypes eMusician = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_MUSICIAN"));
+				const GreatPersonTypes eWriter = static_cast<GreatPersonTypes>(GC.getInfoTypeForString("GREATPERSON_WRITER"));
 
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_PLAYER", iPlayerMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_MONOPOLY", iMonopolyMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_CAPITAL", iCapitalMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_BUILDINGS", iCityMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_GA_TRAIT", iGoldenAgeTraitMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_GA_POLICY", iGoldenAgePolicyMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_GA_BELIEF", iGoldenAgeReligionMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_IMPROVEMENT", iImprovementMod);
-			GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_LEAGUE", iLeagueMod);
-			*tooltip += strNewLine + strLineDivision + strNewLine;
+				int iLeagueMod = 0;
+				if (eGreatPerson == eEngineer || eGreatPerson == eScientist || eGreatPerson == eMerchant)
+				{
+					iLeagueMod += GC.getGame().GetGameLeagues()->GetScienceyGreatPersonRateModifier(GetOwner());
+				}
+				else if (eGreatPerson == eArtist || eGreatPerson == eMusician || eGreatPerson == eWriter)
+				{
+					iLeagueMod += GC.getGame().GetGameLeagues()->GetArtsyGreatPersonRateModifier(GetOwner());
+				}
+				iPlayerMod -= iLeagueMod;
+
+				// City mod can be further divided into buildings and others
+				int iImprovementMod = GetCity()->GetImprovementGreatPersonRateModifier();
+				int iCapitalMod = GetPlayer()->GetNumMarriedCityStatesNotAtWar() * /*15*/ GD_INT_GET(BALANCE_GPP_RATE_IN_CAPITAL_PER_MARRIAGE);
+				iCityMod -= iImprovementMod + iCapitalMod;
+
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_PLAYER", iPlayerMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_MONOPOLY", iMonopolyMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_CAPITAL", iCapitalMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_BUILDINGS", iCityMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_GA_TRAIT", iGoldenAgeTraitMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_GA_POLICY", iGoldenAgePolicyMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_GA_BELIEF", iGoldenAgeReligionMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_IMPROVEMENT", iImprovementMod);
+				GC.getGame().BuildProdModHelpText(tooltip, "TXT_KEY_GPP_MOD_LEAGUE", iLeagueMod);
+				*tooltip += strNewLine + strLineDivision + strNewLine;
+			}
 
 			Localization::String localized = Localization::Lookup("TXT_KEY_GPP_TOTAL");
-			int iProgressTimes100 = GetSpecialistGreatPersonProgressTimes100(eSpecialist);
 			int iNextGPCost = GetSpecialistUpgradeThreshold(static_cast<UnitClassTypes>(pkGreatPersonInfo->GetUnitClassType()));
-			int iTurnsRemaining = (iNextGPCost * 100 - iProgressTimes100 - 1) / iGPP + 1; // rounded up
-			localized << szGreatPerson << static_cast<float>(iProgressTimes100) / 100 << iNextGPCost << static_cast<float>(iGPP) / 100 << szIconString << iTurnsRemaining;
+			CvString strTurnsRemaining = (iGPP > 0) ? CvString::format("%d", (iNextGPCost * 100 - iProgressTimes100 - 1) / iGPP + 1) : "---"; // rounded up
+			localized << szGreatPerson << static_cast<float>(iProgressTimes100) / 100 << iNextGPCost << static_cast<float>(iGPP) / 100 << szIconString << strTurnsRemaining.c_str();
 			const char* szLocalized = localized.toUTF8();
 			if (szLocalized)
 				*tooltip += szLocalized;
@@ -3512,7 +3519,7 @@ int CvCityCitizens::GetSpecialistUpgradeThreshold(UnitClassTypes eUnitClass) con
 		iThreshold *= kPlayer.getHandicapInfo().getGreatPeoplePercent();
 		iThreshold /= 100;
 
-		if (!kPlayer.isHuman())
+		if (!kPlayer.isHuman(ISHUMAN_HANDICAP))
 		{
 			iThreshold *= GC.getGame().getHandicapInfo().getAIGreatPeoplePercent();
 			iThreshold /= 100;
@@ -3728,7 +3735,7 @@ void SPrecomputedExpensiveNumbers::update(CvCity* pCity, bool bInsideLoop)
 				bonusForXTerrain[i][j] = INT_MAX;
 		}
 
-		if (kPlayer.isHuman())
+		if (kPlayer.isHuman(ISHUMAN_AI_DIPLOMACY))
 		{
 			bWantArt = false;
 			bWantScience = false;
@@ -3767,7 +3774,7 @@ void SPrecomputedExpensiveNumbers::update(CvCity* pCity, bool bInsideLoop)
 		iBasicNeedsRateChangeForIncreasedDistress = -INT_MAX;
 		iBasicNeedsRateChangeForIncreasedDistress = -INT_MAX;
 		iBasicNeedsRateChangeForIncreasedDistress = -INT_MAX;
-		int iLimit = MOD_BALANCE_CORE_UNCAPPED_UNHAPPINESS ? INT_MAX : pCity->getPopulation();
+		int iLimit = MOD_BALANCE_UNCAPPED_UNHAPPINESS ? INT_MAX : pCity->getPopulation();
 		if (iDistress < iLimit)
 		{
 			// for additional distress to count, it must get us over the flat reduction threshold

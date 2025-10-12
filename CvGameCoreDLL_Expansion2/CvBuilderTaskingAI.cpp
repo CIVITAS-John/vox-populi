@@ -147,7 +147,7 @@ void CvBuilderTaskingAI::Update(void)
 
 	if(m_bLogging)
 	{
-		bool bShowOutput = m_pPlayer->isHuman();
+		bool bShowOutput = m_pPlayer->isHuman(ISHUMAN_LOGGING);
 
 		if(m_pPlayer->IsEmpireUnhappy())
 		{
@@ -226,9 +226,9 @@ int CvBuilderTaskingAI::GetMoveCostWithRoute(const CvPlot* pFromPlot, const CvPl
 	bool bFakeRouteTo = (pTraits->IsRiverMovementBonus() && bMovingAlongRiver);
 	bool bFakeRouteFrom = (pTraits->IsRiverMovementBonus() && bMovingAlongRiver);
 
-	if (!MOD_SANE_UNIT_MOVEMENT_COST)
+	if (!MOD_BALANCE_SANE_UNIT_MOVEMENT_COST)
 	{
-		//balance patch does not require plot ownership
+		// VP does not require plot ownership
 		bFakeRouteTo |= (pTraits->IsWoodlandMovementBonus() && (eToFeature == FEATURE_FOREST || eToFeature == FEATURE_JUNGLE) && (MOD_BALANCE_VP || pToPlot->getTeam() == eTeam));
 		bFakeRouteFrom |= (pTraits->IsWoodlandMovementBonus() && (eFromFeature == FEATURE_FOREST || eFromFeature == FEATURE_JUNGLE) && (MOD_BALANCE_VP || pToPlot->getTeam() == eTeam));
 	}
@@ -619,7 +619,7 @@ static int GetPotentialHappinessFromConnection(CvPlayer* pPlayer, CvCity* pCity)
 		return 0;
 	}
 
-	if (MOD_BALANCE_CORE_UNCAPPED_UNHAPPINESS)
+	if (MOD_BALANCE_UNCAPPED_UNHAPPINESS)
 		return pCity->GetUnhappinessFromIsolation();
 
 	int iUnhappiness = 0;
@@ -695,7 +695,7 @@ static int GetPotentialHappinessFromConnection(CvPlayer* pPlayer, CvCity* pCity)
 	{
 		fUnhappiness += (float)pCity->getPopulation() * /*0.34f*/ GD_FLOAT_GET(UNHAPPINESS_PER_ISOLATED_POP);
 	}
-	int iLimit = MOD_BALANCE_CORE_UNCAPPED_UNHAPPINESS ? INT_MAX : pCity->getPopulation();
+	int iLimit = MOD_BALANCE_UNCAPPED_UNHAPPINESS ? INT_MAX : pCity->getPopulation();
 
 	int iPotentialUnhappinessFromIsolation = range((int)fUnhappiness, 0, iLimit);
 
@@ -855,7 +855,7 @@ void CvBuilderTaskingAI::ConnectCitiesForShortcuts(CvCity* pCity1, CvCity* pCity
 		return;
 
 	ShortcutConnectionHelper(pCity1, pCity2, eBuild, eRoute, iPlotDistance, false);
-	if (MOD_RIVER_CITY_CONNECTIONS && eRoute == ROUTE_ROAD)
+	if (MOD_BALANCE_RIVER_CITY_CONNECTIONS && eRoute == ROUTE_ROAD)
 		ShortcutConnectionHelper(pCity1, pCity2, eBuild, eRoute, iPlotDistance, true);
 }
 
@@ -2094,7 +2094,7 @@ void CvBuilderTaskingAI::AddImprovingPlotsDirective(vector<OptionWithScore<Build
 	if (eExistingImprovement != NO_IMPROVEMENT)
 	{
 		// Do we have a special improvement here? (great person improvement, gifted improvement from major civ)
-		if (PlotHasSpecialImprovement(pPlot) || (m_pPlayer->isOption(PLAYEROPTION_SAFE_AUTOMATION) && m_pPlayer->isHuman()))
+		if (PlotHasSpecialImprovement(pPlot) || (m_pPlayer->isOption(PLAYEROPTION_SAFE_AUTOMATION) && m_pPlayer->isHuman(ISHUMAN_AI_UNITS)))
 		{
 			if (m_bLogging)
 			{
@@ -2155,7 +2155,7 @@ void CvBuilderTaskingAI::AddImprovingPlotsDirective(vector<OptionWithScore<Build
 
 		if (!bWillConnectResource && bWillRemoveFeature)
 		{
-			if (m_pPlayer->isOption(PLAYEROPTION_LEAVE_FORESTS) && m_pPlayer->isHuman())
+			if (m_pPlayer->isOption(PLAYEROPTION_LEAVE_FORESTS) && m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 			{
 				if (m_bLogging) {
 						CvString strTemp;
@@ -2243,7 +2243,7 @@ void CvBuilderTaskingAI::AddRemoveRouteDirective(vector<OptionWithScore<BuilderD
 		return;
 
 	// If "Automated Workers Don't Replace Improvements" option is enabled, don't remove roads
-	if (m_pPlayer->isOption(PLAYEROPTION_SAFE_AUTOMATION) && m_pPlayer->isHuman())
+	if (m_pPlayer->isOption(PLAYEROPTION_SAFE_AUTOMATION) && m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 		return;
 
 	if (pPlot->GetPlannedRouteState(m_pPlayer->GetID()) >= ROAD_PLANNING_INCLUDE)
@@ -2727,7 +2727,7 @@ bool CvBuilderTaskingAI::PlotHasSpecialImprovement(const CvPlot* pPlot) const
 		}
 	}
 
-	if (m_pPlayer->isHuman())
+	if (m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 	{
 		// Great person improvements
 		ImprovementTypes eImprovement = pPlot->getImprovementType();
@@ -2770,6 +2770,17 @@ int CvBuilderTaskingAI::GetResourceWeight(ResourceTypes eResource, int iQuantity
 	{
 		// measure quantity
 		int iValue = (iQuantity + 1) * 250;
+
+		// big bonus for late game resources
+		TechTypes eRevealTech = (TechTypes)pkResource->getTechReveal();
+		if (eRevealTech != NO_TECH)
+		{
+			CvTechEntry* pkRevealTech = GC.getTechInfo(eRevealTech);
+			if (pkRevealTech && pkRevealTech->GetEra() >= GD_INT_GET(RENAISSANCE_ERA))
+			{
+				iValue *= 10;
+			}
+		}
 
 		return iValue;
 	}
@@ -3369,7 +3380,7 @@ pair<int,int> CvBuilderTaskingAI::ScorePlotBuild(CvPlot* pPlot, ImprovementTypes
 					}
 					}
 
-					if (iAdjacentForests == 3 || (iAdjacentForests == 2 && MOD_ALTERNATE_CELTS) || iAdjacentForests == 1)
+					if (iAdjacentForests == 3 || (iAdjacentForests == 2 && MOD_BALANCE_ALTERNATE_CELTS_TRAIT) || iAdjacentForests == 1)
 					{
 						iNewYieldTimes100 -= (100 * GetYieldBaseModifierTimes100(eYield)) / GetYieldBaseModifierTimes100(YIELD_GOLD);
 					}
@@ -3584,7 +3595,7 @@ pair<int,int> CvBuilderTaskingAI::ScorePlotBuild(CvPlot* pPlot, ImprovementTypes
 
 			// If the old improvement granted the same resource, subtract the resource from this improvement
 			ImprovementTypes eOldImprovement = !pPlot->IsImprovementPillaged() ? pPlot->getImprovementType() : NO_IMPROVEMENT;
-			if (eOldImprovement != NO_IMPROVEMENT)
+			if (eOldImprovement != NO_IMPROVEMENT && eResource != NO_RESOURCE)
 			{
 				CvImprovementEntry* pkOldImprovementInfo = GC.getImprovementInfo(eOldImprovement);
 				if (pkOldImprovementInfo && (pkOldImprovementInfo->IsConnectsResource(eResource) || pkOldImprovementInfo->GetResourceFromImprovement() == eResource))
@@ -3714,10 +3725,9 @@ pair<int,int> CvBuilderTaskingAI::ScorePlotBuild(CvPlot* pPlot, ImprovementTypes
 	{
 		static const BuildTypes eDigBuild = (BuildTypes)GC.getInfoTypeForString("BUILD_ARCHAEOLOGY_DIG");
 		if (m_pPlayer->canBuild(pPlot, eDigBuild) && eDigBuild != eBuild)
-			iSecondaryScore -= 1000;
+			return make_pair(-1, 0);
 	}
 
-#if defined(MOD_IMPROVEMENTS_EXTENSIONS)
 	// improvement spawns resource?
 	if (MOD_IMPROVEMENTS_EXTENSIONS && pOwningCity)
 	{
@@ -3733,7 +3743,6 @@ pair<int,int> CvBuilderTaskingAI::ScorePlotBuild(CvPlot* pPlot, ImprovementTypes
 			iYieldScore = (iYieldScore * 3) / 2;
 		}
 	}
-#endif
 
 	//Is this a good spot for a defensive building?
 	bool bNewIsDefensive = pkImprovementInfo && (pkImprovementInfo->GetDefenseModifier() > 0 || pkImprovementInfo->GetNearbyEnemyDamage() > 0);
@@ -4478,7 +4487,7 @@ void CvBuilderTaskingAI::LogDirective(BuilderDirective directive, int iWeight, b
 			strLog += pkResourceInfo->GetType();
 			strLog += ",";
 			CvPlot* pPlot = GC.getMap().plot(directive.m_sX, directive.m_sY);
-			strLog += pPlot->getNumResource();
+			strLog += CvString::format("%d", pPlot->getNumResource());
 			strLog += ",";
 		}
 	}
@@ -4537,7 +4546,7 @@ void CvBuilderTaskingAI::LogDirective(BuilderDirective directive, int iWeight, b
 		strLog += (", Chosen!");
 	}
 
-	LogInfo(strLog, m_pPlayer, m_pPlayer->isHuman());
+	LogInfo(strLog, m_pPlayer, m_pPlayer->isHuman(ISHUMAN_LOGGING));
 }
 
 // looks at the current plot to see what it's worth
@@ -4576,16 +4585,14 @@ void CvBuilderTaskingAI::UpdateProjectedPlotYields(const CvPlot* pPlot, BuildTyp
 		const CvReligion* pReligion = (eMajority != NO_RELIGION) ? GC.getGame().GetGameReligions()->GetReligion(eMajority, pOwningCity->getOwner()) : 0;
 		const CvBeliefEntry* pBelief = (eSecondaryPantheon != NO_BELIEF) ? GC.GetGameBeliefs()->GetEntry(eSecondaryPantheon) : 0;
 
-#if defined(MOD_RELIGION_PERMANENT_PANTHEON)
 		const CvReligion* pPantheon = NULL;
 		BeliefTypes ePantheonBelief = NO_BELIEF;
 		// Mod for civs keeping their pantheon belief forever
-		if (MOD_RELIGION_PERMANENT_PANTHEON)
+		if (MOD_BALANCE_PERMANENT_PANTHEONS)
 		{
 			pPantheon = GC.getGame().GetGameReligions()->GetReligion(RELIGION_PANTHEON, pOwningCity->getOwner());
 			ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(pOwningCity->getOwner());
 		}
-#endif
 
 		for (uint ui = 0; ui < NUM_YIELD_TYPES; ui++)
 		{
@@ -4594,8 +4601,7 @@ void CvBuilderTaskingAI::UpdateProjectedPlotYields(const CvPlot* pPlot, BuildTyp
 				m_aiProjectedPlotYields[ui] = pPlot->getYieldWithBuild(eBuild, (YieldTypes)ui, false, eForceCityConnection, m_pPlayer->GetID(), pOwningCity, pReligion, pBelief);
 				m_aiProjectedPlotYields[ui] = max(m_aiProjectedPlotYields[ui], 0);
 
-#if defined(MOD_RELIGION_PERMANENT_PANTHEON)
-				if (MOD_RELIGION_PERMANENT_PANTHEON)
+				if (MOD_BALANCE_PERMANENT_PANTHEONS)
 				{
 					if (GC.getGame().GetGameReligions()->HasCreatedPantheon(m_pPlayer->GetID()))
 					{
@@ -4609,7 +4615,6 @@ void CvBuilderTaskingAI::UpdateProjectedPlotYields(const CvPlot* pPlot, BuildTyp
 						}
 					}
 				}
-#endif
 
 				/*if (m_bLogging) {
 					CvString strLog;

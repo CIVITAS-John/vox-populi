@@ -15,6 +15,7 @@
 #include "CvLuaPlot.h"
 #include "CvLuaUnit.h"
 #include "../CvMinorCivAI.h"
+#include "../CvPlayerAI.h"
 #include "../CvUnitCombat.h"
 #include "../CvTacticalAnalysisMap.h"
 
@@ -141,9 +142,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(CanTrade);
 	Method(CanBuyCityState);
 	Method(CanRepairFleet);
-#if defined(MOD_GLOBAL_SEPARATE_GREAT_ADMIRAL)
 	Method(CanChangePort);
-#endif
 	Method(CanBuildSpaceship);
 
 	Method(CanGoldenAge);
@@ -164,9 +163,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(UpgradePrice);
 	Method(CanUpgradeRightNow);
 	Method(CanUpgradeTo);
-#if defined(MOD_GLOBAL_CS_UPGRADES)
 	Method(CanUpgradeInTerritory);
-#endif
 	Method(GetNumResourceNeededToUpgrade);
 	Method(GetNumResourceTotalNeededToUpgrade);
 
@@ -175,9 +172,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetSpecialUnitType);
 	Method(GetCaptureUnitType);
 	Method(GetUnitCombatType);
-#if defined(MOD_GLOBAL_PROMOTION_CLASSES)
 	Method(GetUnitPromotionType);
-#endif
 	Method(GetUnitAIType);
 	Method(SetUnitAIType);
 	Method(GetDomainType);
@@ -223,9 +218,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetImprovementBuildType);
 	Method(GetRouteBuildType);
 
-#if defined(MOD_CIV6_WORKER)
 	Method(GetBuilderStrength);
-#endif
 
 	Method(IsNoBadGoodies);
 	Method(IsOnlyDefensive);
@@ -321,23 +314,13 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetMovementRules);
 	Method(GetZOCStatus);
 	Method(GetWithdrawChance);
-#if defined(MOD_PROMOTIONS_IMPROVEMENT_BONUS)
 	Method(GetNearbyImprovementCombatBonus);
 	Method(GetNearbyImprovementBonusRange);
 	Method(GetCombatBonusImprovement);
-#endif
-#if defined(MOD_PROMOTIONS_CROSS_MOUNTAINS)
 	Method(CanCrossMountains);
-#endif
-#if defined(MOD_PROMOTIONS_CROSS_OCEANS)
 	Method(CanCrossOceans);
-#endif
-#if defined(MOD_PROMOTIONS_CROSS_ICE)
 	Method(CanCrossIce);
-#endif
-#if defined(MOD_PROMOTIONS_GG_FROM_BARBARIANS)
 	Method(IsGGFromBarbarians);
-#endif
 	Method(IsNeverInvisible);
 	Method(IsInvisible);
 	Method(IsNukeImmune);
@@ -466,9 +449,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetGarrisonedCity);
 
 	Method(GetExtraVisibilityRange);
-#if defined(MOD_PROMOTIONS_VARIABLE_RECON)
 	Method(GetExtraReconRange);
-#endif
 	Method(GetExtraMoves);
 	Method(GetExtraMoveDiscount);
 	Method(GetExtraRange);
@@ -562,10 +543,8 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetCityName);
 	Method(IsTerrainDoubleMove);
 	Method(IsFeatureDoubleMove);
-#if defined(MOD_PROMOTIONS_HALF_MOVE)
 	Method(IsTerrainHalfMove);
 	Method(IsFeatureHalfMove);
-#endif
 
 	Method(GetScriptData);
 	Method(SetScriptData);
@@ -626,21 +605,17 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetResistancePower);
 	Method(GetAllianceCSStrength);
 	Method(GetCombatModFromUnitLevel);
-#if defined(MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
 	Method(GetMonopolyAttackBonus);
 	Method(GetMonopolyDefenseBonus);
-#endif
 	Method(IsHigherTechThan);
 	Method(IsLargerCivThan);
 
 	Method(IsRangedSupportFire);
 
-#if defined(MOD_BALANCE_CORE_MILITARY)
 	Method(GetAIOperationInfo);
 	Method(GetMissionInfo);
 	Method(GetDanger);
 	Method(GetTacticalZoneID);
-#endif
 
 	Method(AddMessage);
 	Method(IsCivilization);
@@ -2156,7 +2131,7 @@ int CvLuaUnit::lGetBlastTourism(lua_State* L)
 	CvUnit* pUnit = GetInstance(L);
 	int iResult = pUnit->GetTourismBlastStrength();
 
-	if (MOD_BALANCE_CORE_NEW_GP_ATTRIBUTES && iResult > 0)
+	if (MOD_BALANCE_NEW_GREAT_PERSON_ATTRIBUTES && iResult > 0)
 	{
 		CvPlot* pPlot = pUnit->plot();
 		if (pPlot && pUnit->canBlastTourism(pPlot))
@@ -2294,18 +2269,16 @@ int CvLuaUnit::lCanUpgradeTo(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#if defined(MOD_GLOBAL_CS_UPGRADES)
 //------------------------------------------------------------------------------
 int CvLuaUnit::lCanUpgradeInTerritory(lua_State* L)
 {
 	CvUnit* pkUnit = GetInstance(L);
-	const bool bTestVisible = luaL_optint(L, 2, 0);
+	const bool bTestVisible = luaL_optbool(L, 2, false);
 	const bool bResult = pkUnit->CanUpgradeInTerritory(bTestVisible);
 
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#endif
 //------------------------------------------------------------------------------
 int CvLuaUnit::lGetNumResourceNeededToUpgrade(lua_State* L)
 {
@@ -2406,7 +2379,6 @@ int CvLuaUnit::lGetUnitCombatType(lua_State* L)
 	lua_pushinteger(L, eResult);
 	return 1;
 }
-#if defined(MOD_GLOBAL_PROMOTION_CLASSES)
 //------------------------------------------------------------------------------
 //int /*UnitCombatTypes*/ getUnitPromotionType();
 int CvLuaUnit::lGetUnitPromotionType(lua_State* L)
@@ -2417,7 +2389,6 @@ int CvLuaUnit::lGetUnitPromotionType(lua_State* L)
 	lua_pushinteger(L, eResult);
 	return 1;
 }
-#endif
 //------------------------------------------------------------------------------
 //int /*UnitAITypes*/ getUnitAIType();
 int CvLuaUnit::lGetUnitAIType(lua_State* L)
@@ -2793,7 +2764,7 @@ int CvLuaUnit::lGetRouteBuildType(lua_State* L)
 	lua_pushinteger(L, iRoute);
 	return 1;
 }
-#if defined(MOD_CIV6_WORKER)
+
 //------------------------------------------------------------------------------
 //int getBuilderStrength();
 int CvLuaUnit::lGetBuilderStrength(lua_State* L)
@@ -2804,7 +2775,7 @@ int CvLuaUnit::lGetBuilderStrength(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#endif
+
 //------------------------------------------------------------------------------
 //bool isNoBadGoodies();
 int CvLuaUnit::lIsNoBadGoodies(lua_State* L)
@@ -3774,7 +3745,6 @@ int CvLuaUnit::lGetWithdrawChance(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#if defined(MOD_PROMOTIONS_IMPROVEMENT_BONUS)
 //------------------------------------------------------------------------------
 int CvLuaUnit::lGetNearbyImprovementCombatBonus(lua_State* L)
 {
@@ -3802,8 +3772,6 @@ int CvLuaUnit::lGetCombatBonusImprovement(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#endif
-#if defined(MOD_PROMOTIONS_CROSS_MOUNTAINS)
 //------------------------------------------------------------------------------
 //bool canCrossMountains();
 int CvLuaUnit::lCanCrossMountains(lua_State* L)
@@ -3814,8 +3782,6 @@ int CvLuaUnit::lCanCrossMountains(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#endif
-#if defined(MOD_PROMOTIONS_CROSS_OCEANS)
 //------------------------------------------------------------------------------
 //bool canCrossOceans();
 int CvLuaUnit::lCanCrossOceans(lua_State* L)
@@ -3826,8 +3792,6 @@ int CvLuaUnit::lCanCrossOceans(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#endif
-#if defined(MOD_PROMOTIONS_CROSS_ICE)
 //------------------------------------------------------------------------------
 //bool canCrossIce();
 int CvLuaUnit::lCanCrossIce(lua_State* L)
@@ -3838,8 +3802,6 @@ int CvLuaUnit::lCanCrossIce(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#endif
-#if defined(MOD_PROMOTIONS_GG_FROM_BARBARIANS)
 //------------------------------------------------------------------------------
 //bool isGGFromBarbarians();
 int CvLuaUnit::lIsGGFromBarbarians(lua_State* L)
@@ -3850,7 +3812,6 @@ int CvLuaUnit::lIsGGFromBarbarians(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#endif
 //------------------------------------------------------------------------------
 //bool isNeverInvisible();
 int CvLuaUnit::lIsNeverInvisible(lua_State* L)
@@ -5110,11 +5071,10 @@ int CvLuaUnit::lIsHealOutsideFriendly(lua_State* L)
 	return 1;
 }
 //------------------------------------------------------------------------------
-//bool isHillsDoubleMove();
 int CvLuaUnit::lIsHillsDoubleMove(lua_State* L)
 {
 	CvUnit* pkUnit = GetInstance(L);
-	const bool bResult = pkUnit->isHillsDoubleMove();
+	const bool bResult = pkUnit->isTerrainDoubleMove(TERRAIN_HILL);
 
 	lua_pushboolean(L, bResult);
 	return 1;
@@ -5148,7 +5108,6 @@ int CvLuaUnit::lGetExtraVisibilityRange(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#if defined(MOD_PROMOTIONS_VARIABLE_RECON)
 //------------------------------------------------------------------------------
 //int getExtraReconRange();
 int CvLuaUnit::lGetExtraReconRange(lua_State* L)
@@ -5159,7 +5118,6 @@ int CvLuaUnit::lGetExtraReconRange(lua_State* L)
 	lua_pushinteger(L, iResult);
 	return 1;
 }
-#endif
 //------------------------------------------------------------------------------
 //int getExtraMoves();
 int CvLuaUnit::lGetExtraMoves(lua_State* L)
@@ -5787,7 +5745,7 @@ int CvLuaUnit::lGetSapperAreaEffectBonus(lua_State* L)
 int CvLuaUnit::lGetGiveCombatModToUnit(lua_State* L)
 {
 	CvUnit* pkUnit = GetInstance(L);
-	if (MOD_CORE_AREA_EFFECT_PROMOTIONS)
+	if (MOD_API_AREA_EFFECT_PROMOTIONS)
 	{
 		const int bResult = pkUnit->GetGiveCombatModToUnit();
 		lua_pushinteger(L, bResult);
@@ -5819,12 +5777,8 @@ int CvLuaUnit::lGetNearbyUnitClassModifierFromUnitClass(lua_State* L)
 int CvLuaUnit::lGetNearbyImprovementModifier(lua_State* L)
 {
 	CvUnit* pkUnit = GetInstance(L);
-#if defined(MOD_BALANCE_CORE_MILITARY)
 	CvPlot* pkPlot = CvLuaPlot::GetInstance(L, 2, false);
 	const int bResult = pkUnit->GetNearbyImprovementModifier(pkPlot);
-#else
-	const int bResult = pkUnit->GetNearbyImprovementModifier();
-#endif
 	lua_pushinteger(L, bResult);
 	return 1;
 }
@@ -5968,7 +5922,7 @@ int CvLuaUnit::lIsFeatureDoubleMove(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#if defined(MOD_PROMOTIONS_HALF_MOVE)
+
 //------------------------------------------------------------------------------
 //bool isTerrainHalfMove(int /*TerrainTypes*/ eIndex);
 int CvLuaUnit::lIsTerrainHalfMove(lua_State* L)
@@ -5991,7 +5945,7 @@ int CvLuaUnit::lIsFeatureHalfMove(lua_State* L)
 	lua_pushboolean(L, bResult);
 	return 1;
 }
-#endif
+
 //------------------------------------------------------------------------------
 //string getScriptData() const;
 int CvLuaUnit::lGetScriptData(lua_State* L)
@@ -6569,7 +6523,7 @@ int CvLuaUnit::lGetCombatModFromUnitLevel(lua_State* L)
 	
 	return 1;
 }
-#if defined(MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
+
 //int GetMonopolyAttackBonus();
 int CvLuaUnit::lGetMonopolyAttackBonus(lua_State* L)
 {
@@ -6644,7 +6598,7 @@ int CvLuaUnit::lGetMonopolyDefenseBonus(lua_State* L)
 
 	return 1;
 }
-#endif
+
 //------------------------------------------------------------------------------
 //bool IsHigherTechThan(UnitTypes eOtherUnit );
 int CvLuaUnit::lIsHigherTechThan(lua_State* L)
@@ -6688,9 +6642,6 @@ int CvLuaUnit::lAddMessage(lua_State* L)
 	SHOW_UNIT_MESSAGE(pUnit, ePlayer, szMessage);
 	return 0;
 }
-
-#if defined(MOD_BALANCE_CORE_MILITARY)
-#include "../CvPlayerAI.h"
 
 //------------------------------------------------------------------------------
 int CvLuaUnit::lGetAIOperationInfo(lua_State* L)
@@ -6770,8 +6721,6 @@ int CvLuaUnit::lGetTacticalZoneID(lua_State* L)
 
 	return 1;
 }
-
-#endif
 
 LUAAPIIMPL(Unit, IsCivilization)
 LUAAPIIMPL(Unit, HasPromotion)

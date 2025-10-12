@@ -401,7 +401,7 @@ void CvDllNetMessageHandler::ResponseFoundReligion(PlayerTypes ePlayer, Religion
 			// We don't want them to lose the opportunity to found the religion, and the Great Prophet is already gone so just repost the notification
 			// If someone beat them to the last religion, well... tough luck.
 			CvPlayerAI& kPlayer = GET_PLAYER(ePlayer);
-			if(kPlayer.isHuman() && eResult != CvGameReligions::FOUNDING_NO_RELIGIONS_AVAILABLE)
+			if(kPlayer.isHuman(ISHUMAN_AI_RELIGION_CHOICE) && eResult != CvGameReligions::FOUNDING_NO_RELIGIONS_AVAILABLE)
 			{
 				CvNotifications* pNotifications = kPlayer.GetNotifications();
 				if(pNotifications)
@@ -434,7 +434,7 @@ void CvDllNetMessageHandler::ResponseEnhanceReligion(PlayerTypes ePlayer, Religi
 		// We don't want them to lose the opportunity to enhance the religion, and the Great Prophet is already gone so just repost the notification
 		CvCity* pkCity = GC.getMap().plot(iCityX, iCityY)->getPlotCity();
 		CvPlayerAI& kPlayer = GET_PLAYER(ePlayer);
-		if(kPlayer.isHuman() && eResult != CvGameReligions::FOUNDING_NO_RELIGIONS_AVAILABLE && pkCity)
+		if(kPlayer.isHuman(ISHUMAN_AI_RELIGION_CHOICE) && eResult != CvGameReligions::FOUNDING_NO_RELIGIONS_AVAILABLE && pkCity)
 		{
 			CvNotifications* pNotifications = kPlayer.GetNotifications();
 			if(pNotifications)
@@ -1104,29 +1104,26 @@ void CvDllNetMessageHandler::ResponseSellBuilding(PlayerTypes ePlayer, int iCity
 		return;
 
 	CvCity* pCity = GET_PLAYER(ePlayer).getCity(iCityID);
-	if(pCity)
+	if (pCity)
 	{
 		pCity->GetCityBuildings()->DoSellBuilding(eBuilding);
 
-#if defined(MOD_EVENTS_CITY)
-		if (MOD_EVENTS_CITY) {
+		if (MOD_EVENTS_CITY)
 			GAMEEVENTINVOKE_HOOK(GAMEEVENT_CitySoldBuilding, ePlayer, iCityID, eBuilding);
-		} else {
-#endif
-		ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
-		if (pkScriptSystem) 
+		else
 		{
-			CvLuaArgsHandle args;
-			args->Push(ePlayer);
-			args->Push(iCityID);
-			args->Push(eBuilding);
+			ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
+			if (pkScriptSystem) 
+			{
+				CvLuaArgsHandle args;
+				args->Push(ePlayer);
+				args->Push(iCityID);
+				args->Push(eBuilding);
 
-			bool bResult = false;
-			LuaSupport::CallHook(pkScriptSystem, "CitySoldBuilding", args.get(), bResult);
+				bool bResult = false;
+				LuaSupport::CallHook(pkScriptSystem, "CitySoldBuilding", args.get(), bResult);
+			}
 		}
-#if defined(MOD_EVENTS_CITY)
-		}
-#endif
 	}
 }
 //------------------------------------------------------------------------------

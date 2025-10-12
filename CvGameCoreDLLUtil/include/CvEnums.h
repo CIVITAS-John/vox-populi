@@ -1307,12 +1307,10 @@ enum CLOSED_ENUM GameOptionTypes
 	NUM_GAMEOPTION_TYPES ENUM_META_VALUE
 };
 
-#if defined(MOD_ISKA_GAMEOPTIONS)
-// Ayyy lmao
+// ISKA_GAMEOPTIONS
 #define GAMEOPTION_6PCS					"GAMEOPTION_6PCS"
 #define GAMEOPTION_NO_COLONIES			"GAMEOPTION_NO_COLONIES"
 #define GAMEOPTION_AI_ONLY				"GAMEOPTION_AI_ONLY"
-#endif
 
 #define GAMEOPTION_QUICK_COMBAT_KEY		"GAMEOPTION_QUICK_COMBAT"
 #define GAMEOPTION_QUICK_MOVEMENT_KEY	"GAMEOPTION_QUICK_MOVEMENT"
@@ -1334,12 +1332,7 @@ enum CLOSED_ENUM GameOptionTypes
 #define GAMEOPTION_PASSIVE_ESPIONAGE	"GAMEOPTION_PASSIVE_ESPIONAGE"
 #define GAMEOPTION_DISABLE_VICTORY_COMPETITION	"GAMEOPTION_DISABLE_VICTORY_COMPETITION"
 #define GAMEOPTION_DISABLE_ENDGAME_AGGRESSION	"GAMEOPTION_DISABLE_ENDGAME_AGGRESSION"
-
-#if defined(MOD_BARBARIAN_GG_GA_POINTS)
-// Iamblichos
 #define GAMEOPTION_BARB_GG_GA_POINTS	"GAMEOPTION_BARB_GG_GA_POINTS"
-#endif
-
 #define GAMEOPTION_GOOD_EVENTS			"GAMEOPTION_GOOD_EVENTS"
 #define GAMEOPTION_BAD_EVENTS			"GAMEOPTION_BAD_EVENTS"
 #define GAMEOPTION_NEUTRAL_EVENTS		"GAMEOPTION_NEUTRAL_EVENTS"
@@ -1515,12 +1508,10 @@ enum OPEN_ENUM TurnTimerTypes
 	NO_TURNTIMER = -1,
 };
 
-#if defined(MOD_EVENTS_DIPLO_MODIFIERS)
 enum OPEN_ENUM DiploModifierTypes
 {
 	NO_DIPLOMODIFIER = -1,
 };
-#endif
 
 enum OPEN_ENUM EraTypes
 {
@@ -1895,7 +1886,6 @@ enum OPEN_ENUM VoteSourceTypes
 	NO_VOTESOURCE = -1,
 };
 
-#if defined(MOD_BALANCE_CORE_EVENTS)
 enum OPEN_ENUM EventTypes
 {
 	NO_EVENT = -1,
@@ -1923,7 +1913,6 @@ enum CLOSED_ENUM EventClassTypes
 
 	NUM_EVENT_CLASS_TYPES ENUM_META_VALUE
 };
-#endif
 
 enum CLOSED_ENUM ActivityTypes
 {
@@ -2913,10 +2902,7 @@ enum CLOSED_ENUM EndTurnBlockingTypes
 	ENDTURN_BLOCKING_CHOOSE_ARCHAEOLOGY,
 	ENDTURN_BLOCKING_LEAGUE_CALL_FOR_VOTES,
 	ENDTURN_BLOCKING_CHOOSE_IDEOLOGY,
-
-#if defined(MOD_UI_CITY_PRODUCTION)
 	ENDTURN_BLOCKING_CITY_TILE,
-#endif
 	ENDTURN_BLOCKING_PENDING_DEAL,
 	ENDTURN_BLOCKING_EVENT_CHOICE,
 	ENDTURN_BLOCKING_CHOOSE_CITY_FATE,
@@ -3476,9 +3462,7 @@ enum CLOSED_ENUM GreatPeopleDirectiveTypes
 	GREAT_PEOPLE_DIRECTIVE_SPREAD_RELIGION,
 	GREAT_PEOPLE_DIRECTIVE_CULTURE_BLAST,
 	GREAT_PEOPLE_DIRECTIVE_TOURISM_BLAST,
-#if defined(MOD_BALANCE_CORE_MILITARY)
 	GREAT_PEOPLE_DIRECTIVE_FIELD_COMMAND,
-#endif
 	NUM_GREAT_PEOPLE_DIRECTIVES ENUM_META_VALUE
 };
 
@@ -3550,14 +3534,8 @@ enum CLOSED_ENUM TradeConnectionType
 	TRADE_CONNECTION_INTERNATIONAL,
 	TRADE_CONNECTION_FOOD,
 	TRADE_CONNECTION_PRODUCTION,
-
-#if defined(MOD_TRADE_WONDER_RESOURCE_ROUTES)
 	TRADE_CONNECTION_WONDER_RESOURCE,
-#endif
-
-#if defined(MOD_BALANCE_CORE_GOLD_INTERNAL_TRADE_ROUTES)
 	TRADE_CONNECTION_GOLD_INTERNAL,
-#endif
 
 	NUM_TRADE_CONNECTION_TYPES ENUM_META_VALUE
 };
@@ -3786,7 +3764,6 @@ enum CLOSED_ENUM AITacticalTargetType
 };
 #endif //CVENUMS_H
 
-#if defined(MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
 enum CLOSED_ENUM MonopolyTypes
 {
 	NO_MONOPOLY = -1,
@@ -3805,7 +3782,6 @@ enum CLOSED_ENUM RenewalReason
 	REASON_HUMAN_REJECTION = 3,
 	REASON_BETTER_RENEWAL_CHOICE = 4,
 };
-#endif
 
 enum CLOSED_ENUM RoutePurpose
 {
@@ -3833,4 +3809,32 @@ enum CLOSED_ENUM Likelyhood
 	LIKELYHOOD_POSSIBLE,
 	LIKELYHOOD_LIKELY,
 	LIKELYHOOD_CERTAIN
+};
+
+// Passed as an argument to isHuman calls to communicate what the purpose of the isHuman call was.
+// I.e., if the isHuman result is false, what AI code will be run.
+enum CLOSED_ENUM IsHumanReason
+{
+	ISHUMAN_AI_CITY_MANAGEMENT,     // City management, including plot purchasing, annex/raze/keep decisions, city focus, citizen distribution, etc.
+	ISHUMAN_AI_CITY_PRODUCTION,     // City production.
+	ISHUMAN_AI_DIPLOMACY,           // All functionality related to interacting with other civs, including trade but excluding espionage. Also includes flavor messages that are sent e.g. when tiles are stolen.
+	ISHUMAN_AI_ECONOMY,             // All logic related to the economic AI, including many grand strategy decisions and general planning.
+	ISHUMAN_AI_ESPIONAGE,           // All logic related to espionage.
+	ISHUMAN_AI_EVENT_CHOICE,        // Event choices.
+	ISHUMAN_AI_FAITH_SPENDING,      // Faith purchases.
+	ISHUMAN_AI_GREAT_PERSON_CHOICE, // Great person choices.
+	ISHUMAN_AI_POLICY_CHOICE,       // Policy and ideology choices
+	ISHUMAN_AI_RELIGION_CHOICE,     // Religion choices, i.e. what Pantheon to found and everything related to founding and extending religions
+	ISHUMAN_AI_TECH_CHOICE,         // Technology choices.
+	ISHUMAN_AI_TOURISM,             // All logic related to tourism, including archaeology choices and great work swapping.
+	ISHUMAN_AI_UNIT_PROMOTIONS,     // Unit promotions.
+	ISHUMAN_AI_UNITS,               // Unit control, excluding trade units.
+	ISHUMAN_AI_WORLD_CONGRESS,      // Making proposals and voting in the World Congress.
+	ISHUMAN_ACHIEVEMENTS,           // isHuman calls to check whether achievements should be given.
+	ISHUMAN_HANDICAP,               // isHuman calls to check whether AI handicap bonuses should be given.
+	ISHUMAN_LOGGING,                // isHuman calls to check whether certain events should be logged.
+	ISHUMAN_MECHANICS,              // isHuman calls to check whether to apply certain human only mechanics, such as OCC, but also certain AI behaviors towards human players.
+	ISHUMAN_NOTIFICATIONS,          // isHuman calls to check whether notifications should be sent.
+	ISHUMAN_UI,                     // UI related isHuman calls.
+	OTHER_ISHUMAN_REASON            // Any other isHuman call reason (multiplayer syncing or other isHuman calls we do not want to tamper with).
 };

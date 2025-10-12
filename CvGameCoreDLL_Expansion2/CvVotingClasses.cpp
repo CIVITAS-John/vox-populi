@@ -1417,21 +1417,18 @@ void CvActiveResolution::DoEffects(PlayerTypes ePlayer)
 
 	if (GetEffects()->bOpenDoor)
 	{
-		if (!GET_PLAYER(ePlayer).isMinorCiv())
+		if (GET_PLAYER(ePlayer).isMajorCiv() && GET_PLAYER(ePlayer).isAlive() && eTargetCityState != NO_PLAYER && GET_PLAYER(eTargetCityState).isMinorCiv() && GET_PLAYER(eTargetCityState).isAlive())
 		{
-			if (GET_PLAYER(ePlayer).isAlive())
+			TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+			TeamTypes eCityStateTeam = GET_PLAYER(eTargetCityState).getTeam();
+			if (!GET_TEAM(eTeam).isHasMet(eCityStateTeam))
 			{
-				if (GET_PLAYER(eTargetCityState).isMinorCiv() && eTargetCityState != NO_PLAYER && GET_PLAYER(eTargetCityState).isAlive())
-				{
-					if(!GET_TEAM(GET_PLAYER(ePlayer).getTeam()).isHasMet(GET_PLAYER(eTargetCityState).getTeam()))
-					{
-						GET_TEAM(GET_PLAYER(ePlayer).getTeam()).meet(GET_PLAYER(eTargetCityState).getTeam(), false);
-					}
-					GET_PLAYER(eTargetCityState).GetMinorCivAI()->SetFriendshipWithMajor(ePlayer, 40);
-				}
-				GET_PLAYER(eTargetCityState).GetMinorCivAI()->SetNoAlly(true);
-				GET_PLAYER(eTargetCityState).GetMinorCivAI()->SetAlly(NO_PLAYER,false);
+				GET_TEAM(eTeam).meet(eCityStateTeam, false);
+				GET_PLAYER(eTargetCityState).GetMinorCivAI()->DoFirstContactWithMajor(ePlayer, GET_TEAM(eTeam).isAtWar(eCityStateTeam));
 			}
+			GET_PLAYER(eTargetCityState).GetMinorCivAI()->SetFriendshipWithMajor(ePlayer, 40);
+			GET_PLAYER(eTargetCityState).GetMinorCivAI()->SetNoAlly(true);
+			GET_PLAYER(eTargetCityState).GetMinorCivAI()->SetAlly(NO_PLAYER,false);
 		}
 	}
 
@@ -1586,7 +1583,7 @@ void CvActiveResolution::DoEffects(PlayerTypes ePlayer)
 	{
 		PRECONDITION(eTargetLuxury != NO_RESOURCE, "Banning Happiness for NO_RESOURCE.");
 		// Refresh happiness
-		if (MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
+		if (MOD_BALANCE_RESOURCE_MONOPOLIES)
 		{
 			for (int iResourceLoop = 0; iResourceLoop < GC.getNumResourceInfos(); iResourceLoop++)
 			{
@@ -1810,7 +1807,7 @@ void CvActiveResolution::RemoveEffects(PlayerTypes ePlayer)
 	{
 		PRECONDITION(eTargetLuxury != NO_RESOURCE, "Repealing a band on Happiness for NO_RESOURCE.");
 		// Refresh happiness
-		if (MOD_BALANCE_CORE_RESOURCE_MONOPOLIES)
+		if (MOD_BALANCE_RESOURCE_MONOPOLIES)
 		{
 			for (int iResourceLoop = 0; iResourceLoop < GC.getNumResourceInfos(); iResourceLoop++)
 			{
@@ -2669,12 +2666,12 @@ void CvLeague::DoProposeRepeal(int iResolutionID, PlayerTypes eProposer)
 			iFound++;
 
 			// XP2 Achievement
-			if (MOD_API_ACHIEVEMENTS && !GC.getGame().isGameMultiPlayer())
+			if (MOD_ENABLE_ACHIEVEMENTS && !GC.getGame().isGameMultiPlayer())
 			{
 				PlayerTypes eOriginalProposer = it->GetProposerDecision()->GetProposer();
 				if (eOriginalProposer != NO_PLAYER && eOriginalProposer == eProposer)
 				{
-					if (GET_PLAYER(eProposer).isHuman() && GET_PLAYER(eProposer).isLocalPlayer())
+					if (GET_PLAYER(eProposer).isHuman(ISHUMAN_ACHIEVEMENTS) && GET_PLAYER(eProposer).isLocalPlayer())
 					{
 						gDLL->UnlockAchievement(ACHIEVEMENT_XP2_42);
 					}
@@ -3149,13 +3146,11 @@ bool CvLeague::CanProposeEnact(ResolutionTypes eResolution, PlayerTypes ePropose
 		}
 	}
 
-#if defined(MOD_EVENTS_RESOLUTIONS)
-	if (MOD_EVENTS_RESOLUTIONS) {
-		if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_PlayerCanPropose, eProposer, eResolution, iChoice, true) == GAMEEVENTRETURN_FALSE) {
+	if (MOD_EVENTS_RESOLUTIONS)
+	{
+		if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_PlayerCanPropose, eProposer, eResolution, iChoice, true) == GAMEEVENTRETURN_FALSE)
 			bValid = false;
-		}
 	}
-#endif
 	
 	return bValid;
 }
@@ -3199,13 +3194,11 @@ bool CvLeague::CanProposeRepeal(int iResolutionID, PlayerTypes eProposer, CvStri
 		}
 	}
 
-#if defined(MOD_EVENTS_RESOLUTIONS)
-	if (MOD_EVENTS_RESOLUTIONS) {
-		if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_PlayerCanPropose, eProposer, iResolutionID, iChoice, false) == GAMEEVENTRETURN_FALSE) {
+	if (MOD_EVENTS_RESOLUTIONS)
+	{
+		if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_PlayerCanPropose, eProposer, iResolutionID, iChoice, false) == GAMEEVENTRETURN_FALSE)
 			bValid = false;
-		}
 	}
-#endif
 	
 	
 	// Must already be active
@@ -4047,10 +4040,6 @@ int CvLeague::GetCoreVotesForMember(PlayerTypes ePlayer)
 
 int CvLeague::CalculateStartingVotesForMember(PlayerTypes ePlayer, bool bFakeUN, bool bForceUpdateSources)
 {
-	// if battle royale is enabled, the human player is the observer, and should not be allowed votes
-	if (MOD_BATTLE_ROYALE && GET_PLAYER(ePlayer).isHuman())
-		return 0;
-
 	//try the cached value first
 	Member* thisMember = GetMember(ePlayer);
 	if (thisMember != NULL && thisMember->ePlayer != NO_PLAYER)
@@ -4932,7 +4921,7 @@ int CvLeague::GetProjectProgress(LeagueProjectTypes eProject)
 							iCivProgress /= std::max(100 + iMod, 1);
 						}
 
-						if (!GET_PLAYER(ePlayer).isHuman())
+						if (!GET_PLAYER(ePlayer).isHuman(ISHUMAN_HANDICAP))
 						{
 							iMod = GC.getGame().getHandicapInfo().getAIWorldCreatePercent() - 100;
 							if (iCivProgress > INT_MAX / 100) {
@@ -5007,7 +4996,7 @@ int CvLeague::GetMemberContribution(PlayerTypes ePlayer, LeagueProjectTypes eLea
 			iValue *= 100;
 			iValue /= std::max(100 + iMod, 1);
 		}
-		if (!GET_PLAYER(ePlayer).isHuman())
+		if (!GET_PLAYER(ePlayer).isHuman(ISHUMAN_HANDICAP))
 		{
 			iMod = GC.getGame().getHandicapInfo().getAIWorldCreatePercent() - 100;
 			if (iValue > INT_MAX / 100) {
@@ -5219,11 +5208,7 @@ int CvLeague::GetFeatureYieldChange(FeatureTypes eFeature, YieldTypes eYield)
 	if (pInfo)
 	{
 		// Natural Wonders
-#if defined(MOD_PSEUDO_NATURAL_WONDER)
 		if (pInfo->IsNaturalWonder(true))
-#else
-		if (pInfo->IsNaturalWonder())
-#endif
 		{
 			int iNaturalWonderMod = 0;
 			if (eYield == YIELD_CULTURE)
@@ -7235,12 +7220,12 @@ CvString CvLeague::GetGreatPersonRateModifierDetails(UnitClassTypes /*eGreatPers
 
 void CvLeague::CheckProjectAchievements()
 {
-	if (!MOD_API_ACHIEVEMENTS)
+	if (!MOD_ENABLE_ACHIEVEMENTS)
 		return;
 
 	for (MemberList::const_iterator member = m_vMembers.begin(); member != m_vMembers.end(); ++member)
 	{
-		if (member->ePlayer != NO_PLAYER && GET_PLAYER(member->ePlayer).isAlive() && GET_PLAYER(member->ePlayer).isHuman() && GET_PLAYER(member->ePlayer).isLocalPlayer())
+		if (member->ePlayer != NO_PLAYER && GET_PLAYER(member->ePlayer).isAlive() && GET_PLAYER(member->ePlayer).isHuman(ISHUMAN_ACHIEVEMENTS) && GET_PLAYER(member->ePlayer).isLocalPlayer())
 		{
 			int iHighestContributorProjects = 0;
 
@@ -7452,7 +7437,7 @@ void CvLeague::FinishSession()
 						for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 						{
 							PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 								continue;
 							if (eLoopPlayer == *playerIt)
 								continue;
@@ -7519,9 +7504,12 @@ void CvLeague::FinishSession()
 								if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 								{
 									PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-									bool bAIWantedToPass = iDesireMultiplier >= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-									bool bAIWantedToFail = iDesireMultiplier < 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-									DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+									if (eTarget != *playerIt)
+									{
+										bool bAIWantedToPass = iDesireMultiplier >= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+										bool bAIWantedToFail = iDesireMultiplier < 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+										DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+									}
 								}
 							}
 
@@ -7554,7 +7542,7 @@ void CvLeague::FinishSession()
 						for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 						{
 							PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 								continue;
 							if (eLoopPlayer == *playerIt)
 								continue;
@@ -7611,9 +7599,12 @@ void CvLeague::FinishSession()
 								if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 								{
 									PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-									bool bAIWantedToPass = iDesireMultiplier >= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-									bool bAIWantedToFail = iDesireMultiplier < 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-									DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+									if (eTarget != *playerIt)
+									{
+										bool bAIWantedToPass = iDesireMultiplier >= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+										bool bAIWantedToFail = iDesireMultiplier < 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+										DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+									}
 								}
 							}
 
@@ -7647,7 +7638,7 @@ void CvLeague::FinishSession()
 					for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 					{
 						PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-						if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+						if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 							continue;
 						if (eLoopPlayer == *playerIt)
 							continue;
@@ -7702,9 +7693,12 @@ void CvLeague::FinishSession()
 							if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 							{
 								PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-								bool bAIWantedToPass = iDesireMultiplier <= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-								bool bAIWantedToFail = iDesireMultiplier > 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-								DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+								if (eTarget != *playerIt)
+								{
+									bool bAIWantedToPass = iDesireMultiplier <= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+									bool bAIWantedToFail = iDesireMultiplier > 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+									DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+								}
 							}
 						}
 
@@ -7737,7 +7731,7 @@ void CvLeague::FinishSession()
 					for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 					{
 						PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-						if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+						if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 							continue;
 						if (eLoopPlayer == *playerIt)
 							continue;
@@ -7788,10 +7782,13 @@ void CvLeague::FinishSession()
 							// Special handling for sanction proposals against others.
 							if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 							{
-								PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-								bool bAIWantedToPass = iDesireMultiplier <= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-								bool bAIWantedToFail = iDesireMultiplier > 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-								DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+								PlayerTypes eTarget = (PlayerTypes)it->GetProposerDecision()->GetDecision();
+								if (eTarget != *playerIt)
+								{
+									bool bAIWantedToPass = iDesireMultiplier <= 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+									bool bAIWantedToFail = iDesireMultiplier > 0 && it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetRepealDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+									DoRepealSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+								}
 							}
 						}
 
@@ -7838,7 +7835,7 @@ void CvLeague::FinishSession()
 						for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 						{
 							PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 								continue;
 							if (eLoopPlayer == *playerIt)
 								continue;
@@ -7907,9 +7904,12 @@ void CvLeague::FinishSession()
 								if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 								{
 									PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-									bool bAIWantedToPass = iDesireMultiplier > 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-									bool bAIWantedToFail = iDesireMultiplier <= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-									DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+									if (eTarget != *playerIt)
+									{
+										bool bAIWantedToPass = iDesireMultiplier > 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+										bool bAIWantedToFail = iDesireMultiplier <= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+										DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+									}
 								}
 							}
 
@@ -7942,7 +7942,7 @@ void CvLeague::FinishSession()
 						for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 						{
 							PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 								continue;
 							if (eLoopPlayer == *playerIt)
 								continue;
@@ -8003,9 +8003,12 @@ void CvLeague::FinishSession()
 								if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 								{
 									PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-									bool bAIWantedToPass = iDesireMultiplier > 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-									bool bAIWantedToFail = iDesireMultiplier <= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-									DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+									if (eTarget != *playerIt)
+									{
+										bool bAIWantedToPass = iDesireMultiplier > 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+										bool bAIWantedToFail = iDesireMultiplier <= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+										DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ true, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+									}
 								}
 							}
 
@@ -8061,7 +8064,7 @@ void CvLeague::FinishSession()
 						for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 						{
 							PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 								continue;
 							if (eLoopPlayer == *playerIt)
 								continue;
@@ -8120,9 +8123,12 @@ void CvLeague::FinishSession()
 								if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 								{
 									PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-									bool bAIWantedToPass = iDesireMultiplier < 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-									bool bAIWantedToFail = iDesireMultiplier >= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-									DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+									if (eTarget != *playerIt)
+									{
+										bool bAIWantedToPass = iDesireMultiplier < 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+										bool bAIWantedToFail = iDesireMultiplier >= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+										DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ false, bAIWantedToPass, bAIWantedToFail);
+									}
 								}
 							}
 
@@ -8155,7 +8161,7 @@ void CvLeague::FinishSession()
 						for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 						{
 							PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
-							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman() || !GET_PLAYER(eLoopPlayer).isMajorCiv())
+							if (!GET_PLAYER(eLoopPlayer).isAlive() || GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) || !GET_PLAYER(eLoopPlayer).isMajorCiv())
 								continue;
 							if (eLoopPlayer == *playerIt)
 								continue;
@@ -8208,9 +8214,12 @@ void CvLeague::FinishSession()
 								if (GET_PLAYER(eLoopPlayer).GetLeagueAI()->IsSanctionProposal(&(*it), NO_PLAYER))
 								{
 									PlayerTypes eTarget = (PlayerTypes) it->GetProposerDecision()->GetDecision();
-									bool bAIWantedToPass = iDesireMultiplier < 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
-									bool bAIWantedToFail = iDesireMultiplier >= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
-									DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+									if (eTarget != *playerIt)
+									{
+										bool bAIWantedToPass = iDesireMultiplier < 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer);
+										bool bAIWantedToFail = iDesireMultiplier >= 0 && it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_NO, eLoopPlayer) >= it->GetVoterDecision()->GetVotesCastForChoice(LeagueHelpers::CHOICE_YES, eLoopPlayer);
+										DoEnactSanctionsDiplomacy(eTarget, eLoopPlayer, *playerIt, /*bPassed*/ false, /*bVotedToPass*/ true, bAIWantedToPass, bAIWantedToFail);
+									}
 								}
 							}
 
@@ -8576,9 +8585,7 @@ void CvLeague::NotifyProposalResult(CvEnactProposal* pProposal)
 	ASSERT(pProposal != NULL);
 	if (pProposal == NULL) return;
 
-#if defined(MOD_EVENTS_RESOLUTIONS)
 	int iDecision = -1;
-#endif
 
 	CvString sSummary = "";
 	CvString sMessage = "";
@@ -8609,10 +8616,8 @@ void CvLeague::NotifyProposalResult(CvEnactProposal* pProposal)
 			sMessage += sTemp.toUTF8();
 		}
 		sMessage += "[NEWLINE]" + pProposal->GetVoterDecision()->GetVotesAsText(this);
-	
-#if defined(MOD_EVENTS_RESOLUTIONS)
+
 		iDecision = pProposal->GetVoterDecision()->GetDecision();
-#endif
 	}
 	else if (pProposal->GetEffects()->bChangeLeagueHost)
 	{
@@ -8649,10 +8654,8 @@ void CvLeague::NotifyProposalResult(CvEnactProposal* pProposal)
 		sMessageTemp << GetName() << sHostKey;
 		sMessage += sMessageTemp.toUTF8();
 		sMessage += "[NEWLINE]" + pProposal->GetVoterDecision()->GetVotesAsText(this);
-	
-#if defined(MOD_EVENTS_RESOLUTIONS)
+
 		iDecision = pProposal->GetVoterDecision()->GetDecision();
-#endif
 	}
 	else
 	{
@@ -8669,23 +8672,18 @@ void CvLeague::NotifyProposalResult(CvEnactProposal* pProposal)
 		sSummary = sSummaryTemp.toUTF8();
 		sMessage = sMessageTemp.toUTF8();
 		sMessage += "[NEWLINE]" + pProposal->GetVoterDecision()->GetVotesAsText(this);
-	
-#if defined(MOD_EVENTS_RESOLUTIONS)
+
 		iDecision = pProposal->GetProposerDecision()->GetDecision();
-#endif
 	}
 
-#if defined(MOD_EVENTS_RESOLUTIONS)
-	if (MOD_EVENTS_RESOLUTIONS) {
+	if (MOD_EVENTS_RESOLUTIONS)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_ResolutionResult, pProposal->GetType(), pProposal->GetProposalPlayer(), iDecision, true, pProposal->IsPassed(GetVotesSpentThisSession()));
-	}
-#endif
 
 	for (int iPlayerLoop = 0; iPlayerLoop < MAX_PLAYERS; iPlayerLoop++)
 	{
 		PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
 
-		if (GET_PLAYER(eLoopPlayer).isObserver() || (GET_PLAYER(eLoopPlayer).isHuman() && GET_PLAYER(eLoopPlayer).isAlive()))
+		if (GET_PLAYER(eLoopPlayer).isObserver() || (GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_NOTIFICATIONS) && GET_PLAYER(eLoopPlayer).isAlive()))
 		{
 			CvNotifications* pNotifications = GET_PLAYER(eLoopPlayer).GetNotifications();
 			if (pNotifications)
@@ -8716,17 +8714,14 @@ void CvLeague::NotifyProposalResult(CvRepealProposal* pProposal)
 	CvString sMessage = sMessageTemp.toUTF8();
 	sMessage += "[NEWLINE]" + pProposal->GetRepealDecision()->GetVotesAsText(this);
 
-#if defined(MOD_EVENTS_RESOLUTIONS)
-	if (MOD_EVENTS_RESOLUTIONS) {
+	if (MOD_EVENTS_RESOLUTIONS)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_ResolutionResult, pProposal->GetType(), pProposal->GetProposalPlayer(), pProposal->GetProposerDecision()->GetDecision(), false, pProposal->IsPassed(iTotalSessionVotes));
-	}
-#endif
 
 	for (int iPlayerLoop = 0; iPlayerLoop < MAX_PLAYERS; iPlayerLoop++)
 	{
 		PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
 
-		if (GET_PLAYER(eLoopPlayer).isObserver() || (GET_PLAYER(eLoopPlayer).isHuman() && GET_PLAYER(eLoopPlayer).isAlive()))
+		if (GET_PLAYER(eLoopPlayer).isObserver() || (GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_NOTIFICATIONS) && GET_PLAYER(eLoopPlayer).isAlive()))
 		{
 			CvNotifications* pNotifications = GET_PLAYER(eLoopPlayer).GetNotifications();
 			if (pNotifications)
@@ -8742,7 +8737,7 @@ void CvLeague::NotifySessionSoon(int iTurnsLeft)
 	for (MemberList::iterator it = m_vMembers.begin(); it != m_vMembers.end(); ++it)
 	{
 		PlayerTypes eMember = it->ePlayer;
-		if (GET_PLAYER(eMember).isHuman())
+		if (GET_PLAYER(eMember).isHuman(ISHUMAN_NOTIFICATIONS))
 		{
 			CvNotifications* pNotifications = GET_PLAYER(eMember).GetNotifications();
 			if (pNotifications)
@@ -8780,7 +8775,7 @@ void CvLeague::NotifyProjectComplete(LeagueProjectTypes eProject)
 		{
 			PlayerTypes eLoopPlayer = (PlayerTypes) iPlayerLoop;
 
-			if (GET_PLAYER(eLoopPlayer).isObserver() || (GET_PLAYER(eLoopPlayer).isHuman() && GET_PLAYER(eLoopPlayer).isAlive()))
+			if (GET_PLAYER(eLoopPlayer).isObserver() || (GET_PLAYER(eLoopPlayer).isHuman(ISHUMAN_NOTIFICATIONS) && GET_PLAYER(eLoopPlayer).isAlive()))
 			{
 				CvNotifications* pNotifications = GET_PLAYER(eLoopPlayer).GetNotifications();
 				if (pNotifications)
@@ -8808,7 +8803,7 @@ void CvLeague::NotifyProjectProgress(LeagueProjectTypes eProject)
 		{
 			PlayerTypes eMember = it->ePlayer;
 			CvPlayer& kPlayer = GET_PLAYER(eMember);
-			if (kPlayer.isHuman())
+			if (kPlayer.isHuman(ISHUMAN_NOTIFICATIONS))
 			{
 				if (kPlayer.isLocalPlayer() && !kPlayer.isObserver())
 				{
@@ -9481,7 +9476,7 @@ void CvGameLeagues::DoPlayerTurn(CvPlayer& kPlayer)
 				// Call for Proposals
 				if (it->CanPropose(kPlayer.GetID()))
 				{
-					if (kPlayer.isHuman())
+					if (kPlayer.isHuman(ISHUMAN_AI_WORLD_CONGRESS))
 					{
 						CvNotifications* pNotifications = kPlayer.GetNotifications();
 						if (pNotifications)
@@ -9497,18 +9492,16 @@ void CvGameLeagues::DoPlayerTurn(CvPlayer& kPlayer)
 					}
 					else
 					{
-#if defined(MOD_EVENTS_RESOLUTIONS)
 						bool bAllUsed = false;
 						
-						if (MOD_EVENTS_RESOLUTIONS) {
-							if (GAMEEVENTINVOKE_TESTANY(GAMEEVENT_ResolutionProposing, kPlayer.GetID(), it->GetID()) == GAMEEVENTRETURN_TRUE) {
+						if (MOD_EVENTS_RESOLUTIONS)
+						{
+							if (GAMEEVENTINVOKE_TESTANY(GAMEEVENT_ResolutionProposing, kPlayer.GetID(), it->GetID()) == GAMEEVENTRETURN_TRUE)
 								bAllUsed = true;
-							}
 						}
 						
 						if (!bAllUsed)
-#endif
-						kPlayer.GetLeagueAI()->DoProposals(&(*it));
+							kPlayer.GetLeagueAI()->DoProposals(&(*it));
 					}
 				}
 				// Call for Votes and other Session actions
@@ -9534,7 +9527,7 @@ void CvGameLeagues::DoPlayerTurn(CvPlayer& kPlayer)
 
 						if (it->IsAnythingProposed())
 						{
-							if (kPlayer.isHuman())
+							if (kPlayer.isHuman(ISHUMAN_AI_WORLD_CONGRESS))
 							{
 								CvNotifications* pNotifications = kPlayer.GetNotifications();
 								if (pNotifications)
@@ -9550,19 +9543,16 @@ void CvGameLeagues::DoPlayerTurn(CvPlayer& kPlayer)
 							}
 							else
 							{
-#if defined(MOD_EVENTS_RESOLUTIONS)
 								bool bAllUsed = false;
 								
-								if (MOD_EVENTS_RESOLUTIONS && it->GetRemainingVotesForMember(kPlayer.GetID()) > 0) {
-									if (GAMEEVENTINVOKE_TESTANY(GAMEEVENT_ResolutionVoting, kPlayer.GetID(), it->GetID()) == GAMEEVENTRETURN_TRUE) {
+								if (MOD_EVENTS_RESOLUTIONS && it->GetRemainingVotesForMember(kPlayer.GetID()) > 0)
+								{
+									if (GAMEEVENTINVOKE_TESTANY(GAMEEVENT_ResolutionVoting, kPlayer.GetID(), it->GetID()) == GAMEEVENTRETURN_TRUE)
 										bAllUsed = true;
-									}
 								}
 						
 								if (!bAllUsed)
-#endif
-								
-								kPlayer.GetLeagueAI()->DoVotes(&(*it));
+									kPlayer.GetLeagueAI()->DoVotes(&(*it));
 							}
 						}
 						else
@@ -10266,7 +10256,7 @@ FDataStream& operator<<(FDataStream& stream, const CvLeagueAI& leagueAI)
 
 void CvLeagueAI::DoTurn()
 {
-	if (m_pPlayer->isHuman())
+	if (m_pPlayer->isHuman(ISHUMAN_AI_WORLD_CONGRESS))
 	{
 		return;
 	}
@@ -10325,7 +10315,7 @@ CvLeagueAI::VoteCommitmentList CvLeagueAI::GetDesiredVoteCommitments(PlayerTypes
 		if (pLeague)
 		{
 			// For human players, make assumptions
-			if (GetPlayer()->isHuman())
+			if (GetPlayer()->isHuman(ISHUMAN_AI_WORLD_CONGRESS))
 			{
 				EnactProposalList vEnactProposals = pLeague->GetEnactProposals();
 				for (EnactProposalList::iterator it = vEnactProposals.begin(); it != vEnactProposals.end(); ++it)
@@ -11255,7 +11245,7 @@ CvLeagueAI::KnowledgeLevels CvLeagueAI::GetKnowledgeGivenToOtherPlayer(PlayerTyp
 	{
 		eKnowledge = KNOWLEDGE_INTIMATE;
 	}
-	if (GetPlayer()->isHuman())
+	if (GetPlayer()->isHuman(ISHUMAN_AI_DIPLOMACY))
 	{
 		// Human player intentions are never known
 		eKnowledge = KNOWLEDGE_NONE;
@@ -11278,7 +11268,7 @@ CvLeagueAI::KnowledgeLevels CvLeagueAI::GetKnowledgeGivenToOtherPlayer(PlayerTyp
 			break;
 		}
 
-		if (!bOverride && !GetPlayer()->isHuman())
+		if (!bOverride && !GetPlayer()->isHuman(ISHUMAN_UI))
 		{
 			if (bShareIdeology)
 			{
@@ -12552,7 +12542,7 @@ int CvLeagueAI::ScoreVoteChoiceYesNo(CvProposal* pProposal, int iChoice, bool bE
 		{
 			iExtra -= 75 * iNumOwned;
 
-			if (MOD_BALANCE_CORE_RESOURCE_MONOPOLIES && GetPlayer()->HasGlobalMonopoly(eTargetLuxury))
+			if (MOD_BALANCE_RESOURCE_MONOPOLIES && GetPlayer()->HasGlobalMonopoly(eTargetLuxury))
 			{
 				iExtra -= 350;
 			}
