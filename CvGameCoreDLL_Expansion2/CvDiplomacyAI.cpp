@@ -105,7 +105,7 @@ void CvDiplomacyAI::Init(CvPlayer* pPlayer)
 	m_bEndedFriendshipThisTurn = false;
 	m_bUpdatedWarProgressThisTurn = false;
 	m_iNumReevaluations = 0;
-	m_bWaitingForDigChoice = false;
+	m_iNumWaitingForDigChoice = 0;
 	m_bBackstabber = false;
 	m_bCompetingForVictory = false;
 	m_ePrimaryVictoryPursuit = NO_VICTORY_PURSUIT;
@@ -446,7 +446,7 @@ void CvDiplomacyAI::Serialize(DiplomacyAI& diplomacyAI, Visitor& visitor)
 	visitor(diplomacyAI.m_bEndedFriendshipThisTurn);
 	visitor(diplomacyAI.m_bUpdatedWarProgressThisTurn);
 	visitor(diplomacyAI.m_iNumReevaluations);
-	visitor(diplomacyAI.m_bWaitingForDigChoice);
+	visitor(diplomacyAI.m_iNumWaitingForDigChoice);
 	visitor(diplomacyAI.m_bBackstabber);
 	visitor(diplomacyAI.m_bCompetingForVictory);
 	visitor(diplomacyAI.m_ePrimaryVictoryPursuit);
@@ -8629,12 +8629,18 @@ void CvDiplomacyAI::ChangeNumReevaluations(int iChange)
 
 bool CvDiplomacyAI::IsWaitingForDigChoice() const
 {
-	return m_bWaitingForDigChoice;
+	return m_iNumWaitingForDigChoice > 0;
 }
 
-void CvDiplomacyAI::SetWaitingForDigChoice(bool bValue)
+void CvDiplomacyAI::SetNumWaitingForDigChoice(int iNewValue)
 {
-	m_bWaitingForDigChoice = bValue;
+	m_iNumWaitingForDigChoice = iNewValue;
+}
+
+void CvDiplomacyAI::ChangeNumWaitingForDigChoice(int iChange)
+{
+	m_iNumWaitingForDigChoice += iChange;
+	ASSERT(m_iNumWaitingForDigChoice >= 0);
 }
 
 /// Are we avoiding deals? Temporary non-serialized value, used to avoid constant iterating over players...
@@ -9147,7 +9153,7 @@ void CvDiplomacyAI::DoTurn(DiplomacyMode eDiploMode, PlayerTypes ePlayer)
 	m_eTargetPlayer = ePlayer;
 
 	// If this somehow wasn't cleared, clear it now
-	SetWaitingForDigChoice(false);
+	SetNumWaitingForDigChoice(0);
 
 	// Test if the backstabber flag should be enabled or disabled
 	TestBackstabberFlag();
@@ -19863,6 +19869,7 @@ void CvDiplomacyAI::SelectBestApproachTowardsMajorCiv(PlayerTypes ePlayer, bool 
 	// If we picked offensive policy trees, war is a lot better for us.
 	PolicyBranchTypes eAuthority = (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_HONOR", true);
 	PolicyBranchTypes eImperialism = (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_EXPLORATION", true);
+	bool bCanCrossOcean = GetPlayer()->CanCrossOcean() && iMyEra >= GD_INT_GET(MEDIEVAL_ERA);
 
 	if (GetPlayer()->GetPlayerPolicies()->IsPolicyBranchUnlocked(eAuthority))
 	{
@@ -19879,15 +19886,18 @@ void CvDiplomacyAI::SelectBestApproachTowardsMajorCiv(PlayerTypes ePlayer, bool 
 	}
 	if (GetPlayer()->GetPlayerPolicies()->IsPolicyBranchUnlocked(eImperialism))
 	{
-		iWarBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_WAR] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_WAR] * 2 * iAttackMultiplier;
-		iHostileBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_HOSTILE] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_HOSTILE] * 2 * iAttackMultiplier;
-		iDeceptiveBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_DECEPTIVE] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_DECEPTIVE] * 2 * iAttackMultiplier;
-		
-		if (GetPlayer()->GetPlayerPolicies()->IsPolicyBranchFinished(eImperialism))
+		if (MOD_BALANCE_VP || (bCanCrossOcean && GetPlayer()->GetNumEffectiveCoastalCities() > 1 && GET_PLAYER(ePlayer).GetNumEffectiveCoastalCities() > 0))
 		{
 			iWarBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_WAR] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_WAR] * 2 * iAttackMultiplier;
 			iHostileBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_HOSTILE] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_HOSTILE] * 2 * iAttackMultiplier;
 			iDeceptiveBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_DECEPTIVE] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_DECEPTIVE] * 2 * iAttackMultiplier;
+			
+			if (GetPlayer()->GetPlayerPolicies()->IsPolicyBranchFinished(eImperialism))
+			{
+				iWarBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_WAR] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_WAR] * 2 * iAttackMultiplier;
+				iHostileBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_HOSTILE] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_HOSTILE] * 2 * iAttackMultiplier;
+				iDeceptiveBonus += bWantsOpportunityAttack ? vApproachBias[CIV_APPROACH_DECEPTIVE] * 3 * iAttackMultiplier : vApproachBias[CIV_APPROACH_DECEPTIVE] * 2 * iAttackMultiplier;
+			}
 		}
 	}
 	if (eMyBranch == GD_INT_GET(POLICY_BRANCH_AUTOCRACY))
@@ -20532,8 +20542,6 @@ void CvDiplomacyAI::SelectBestApproachTowardsMajorCiv(PlayerTypes ePlayer, bool 
 	////////////////////////////////////
 	// PROXIMITY MULTIPLIER - the farther away a player is the less likely we are to care about them!
 	////////////////////////////////////
-
-	bool bCanCrossOcean = GetPlayer()->CanCrossOcean() && iMyEra >= GD_INT_GET(MEDIEVAL_ERA);
 
 	if (bCanCrossOcean)
 	{
@@ -24872,7 +24880,7 @@ void CvDiplomacyAI::SelectBestApproachTowardsMinorCiv(PlayerTypes ePlayer)
 	}
 
 	// Check for kill CS quests
-	if ((!MOD_BALANCE_QUEST_CHANGES && GET_PLAYER(ePlayer).GetMinorCivAI()->IsEnabledQuest(MINOR_CIV_QUEST_KILL_CITY_STATE)) || GET_PLAYER(ePlayer).GetMinorCivAI()->IsActiveQuestForPlayer(eMyPlayer, MINOR_CIV_QUEST_KILL_CITY_STATE))
+	if ((!MOD_BALANCE_QUEST_CHANGES && GET_PLAYER(ePlayer).GetMinorCivAI()->IsEnabledQuest(MINOR_CIV_QUEST_KILL_CITY_STATE)) || (MOD_BALANCE_QUEST_CHANGES && GET_PLAYER(ePlayer).GetMinorCivAI()->IsActiveQuestForPlayer(eMyPlayer, MINOR_CIV_QUEST_KILL_CITY_STATE)))
 	{
 		for (int iMinorCivLoop = MAX_MAJOR_CIVS; iMinorCivLoop < MAX_CIV_PLAYERS; iMinorCivLoop++)
 		{
@@ -28578,14 +28586,14 @@ bool CvDiplomacyAI::IsWillingToGiveOpenBordersToPlayer(PlayerTypes ePlayer)
 	{
 		int iHiddenSites = GetPlayer()->GetEconomicAI()->GetVisibleHiddenAntiquitySitesOwnTerritory();
 		int iNormalSites = GetPlayer()->GetEconomicAI()->GetVisibleAntiquitySitesOwnTerritory() - iHiddenSites;
-		PolicyBranchTypes eArtistry = (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_AESTHETICS", true);
+		PolicyBranchTypes eHiddenSiteBranch = MOD_BALANCE_VP ? (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_AESTHETICS", true) : (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_EXPLORATION", true);
 		
 		if (iNormalSites > 0)
 		{
 			return false;
 		}
-		// Have they unlocked Artistry?
-		if (iHiddenSites > 0 && GET_PLAYER(ePlayer).GetPlayerPolicies()->IsPolicyBranchUnlocked(eArtistry))
+		// Have they unlocked the branch whose finisher lets them see hidden sites?
+		if (iHiddenSites > 0 && GET_PLAYER(ePlayer).GetPlayerPolicies()->IsPolicyBranchUnlocked(eHiddenSiteBranch))
 		{
 			return false;
 		}
