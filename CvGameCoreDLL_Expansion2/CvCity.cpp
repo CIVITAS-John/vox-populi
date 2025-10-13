@@ -2239,13 +2239,12 @@ void CvCity::AcquireWaywardPlots()
 			CvPlot* pPlot = pLoopCity->plot();
 			if (pPlot)
 			{
-				int iDistance = plotDistance(iX, iY, pLoopCity->getX(), pLoopCity->getY());
+				int iDistance = plotDistance(pLoopPlot->getX(), pLoopPlot->getY(), pLoopCity->getX(), pLoopCity->getY());
 				if (iDistance <= iDistanceFromThisCity)
 				{
 					bAnyCloserCity = true;
 					break;
 				}
-
 			}
 		}
 
@@ -2481,7 +2480,6 @@ void CvCity::doTurn()
 							if (iExcessConsumption > 0)
 							{
 								// Refund the resource consumption at the cost of a penalty to empire-wide building maintenance
-								GET_PLAYER(getOwner()).changeResourceShortageValue(eResourceLoop, -iExcessConsumption);
 								int iPenalty = iExcessConsumption * 2;
 								iTotalPenalty += iPenalty;
 								CvNotifications* pNotifications = GET_PLAYER(getOwner()).GetNotifications();
@@ -2497,6 +2495,10 @@ void CvCity::doTurn()
 									strSummary << getNameKey();
 									pNotifications->Add(NOTIFICATION_DISCOVERED_STRATEGIC_RESOURCE, strText.toUTF8(), strSummary.toUTF8(), getX(), getY(), eResourceLoop);
 								}
+								GET_PLAYER(getOwner()).changeResourceShortageValue(eResourceLoop, -iExcessConsumption);
+								iResourceShortageValue = GET_PLAYER(getOwner()).getResourceShortageValue(eResourceLoop);
+								if (iResourceShortageValue <= 0)
+									break;
 							}
 						}
 					}
@@ -28181,7 +28183,7 @@ void CvCity::BuyPlot(int iPlotX, int iPlotY, bool bAutomaticPurchaseFromBuilding
 				// Message for human
 				if (!bAutomaticPurchaseFromBuilding)
 				{
-					if (!GET_PLAYER(ePlotOwner).isHuman() && getTeam() != GET_PLAYER(eEmbassyOwner).getTeam() && !GET_PLAYER(getOwner()).IsAtWarWith(eEmbassyOwner) && !CvPreGame::isNetworkMultiplayerGame() && GC.getGame().getActivePlayer() == getOwner() && !GC.getGame().IsInsultMessagesDisabled() && !GC.getGame().IsAllDiploStatementsDisabled())
+					if (!GET_PLAYER(ePlotOwner).isHuman() && getTeam() != GET_PLAYER(eEmbassyOwner).getTeam() && !GET_PLAYER(getOwner()).IsAtWarWith(eEmbassyOwner) && !CvPreGame::isNetworkMultiplayerGame() && GC.getGame().getActivePlayer() == getOwner() && !MOD_DIPLOAI_SHUT_UP_INSULTS)
 					{
 						DLLUI->SetForceDiscussionModeQuitOnBack(true);		// Set force quit so that when discuss mode pops up the Back button won't go to leader root
 						const char* strText = GET_PLAYER(eEmbassyOwner).GetDiplomacyAI()->GetDiploStringForMessage(DIPLO_MESSAGE_CULTURE_BOMBED);
@@ -28254,7 +28256,7 @@ void CvCity::BuyPlot(int iPlotX, int iPlotY, bool bAutomaticPurchaseFromBuilding
 		// Message for human
 		if (!bAutomaticPurchaseFromBuilding && GET_PLAYER(ePlotOwner).isMajorCiv())
 		{
-			if (!GET_PLAYER(ePlotOwner).isHuman() && getTeam() != GET_PLAYER(ePlotOwner).getTeam() && !GET_PLAYER(getOwner()).IsAtWarWith(ePlotOwner) && !CvPreGame::isNetworkMultiplayerGame() && GC.getGame().getActivePlayer() == getOwner() && !GC.getGame().IsInsultMessagesDisabled() && !GC.getGame().IsAllDiploStatementsDisabled())
+			if (!GET_PLAYER(ePlotOwner).isHuman() && getTeam() != GET_PLAYER(ePlotOwner).getTeam() && !GET_PLAYER(getOwner()).IsAtWarWith(ePlotOwner) && !CvPreGame::isNetworkMultiplayerGame() && GC.getGame().getActivePlayer() == getOwner() && !MOD_DIPLOAI_SHUT_UP_INSULTS)
 			{
 				DLLUI->SetForceDiscussionModeQuitOnBack(true);		// Set force quit so that when discuss mode pops up the Back button won't go to leader root
 				const char* strText = GET_PLAYER(ePlotOwner).GetDiplomacyAI()->GetDiploStringForMessage(DIPLO_MESSAGE_CULTURE_BOMBED);

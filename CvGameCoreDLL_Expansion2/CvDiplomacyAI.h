@@ -80,6 +80,7 @@ public:
 	vector<PlayerTypes> GetDefensiveWarAllies(PlayerTypes eOtherPlayer, bool bIncludeMinors, bool bReverseMode, bool bNewWarsOnly) const;
 	vector<PlayerTypes> GetWarAllies(PlayerTypes eOtherPlayer, bool bDefensive, bool bIncludeWars, bool bReverseMode, bool bNewWarsOnly) const;
 	bool IsNuclearGandhi(bool bPotentially = false) const;
+	bool IsAIMustAcceptHumanDiscussRequests() const;
 
 	// ************************************
 	// Personality Flavors
@@ -926,10 +927,6 @@ public:
 	int GetNumReevaluations() const;
 	void SetNumReevaluations(int iValue);
 	void ChangeNumReevaluations(int iChange);
-
-	bool IsWaitingForDigChoice() const;
-	void SetNumWaitingForDigChoice(int iNewValue);
-	void ChangeNumWaitingForDigChoice(int iChange);
 
 	bool IsAvoidDeals() const;
 	void SetAvoidDeals(bool bValue);
@@ -1887,7 +1884,6 @@ private:
 	bool m_bEndedFriendshipThisTurn;
 	bool m_bUpdatedWarProgressThisTurn;
 	int m_iNumReevaluations; // Used for RNG
-	int m_iNumWaitingForDigChoice;
 	bool m_bBackstabber;
 	bool m_bCompetingForVictory;
 	VictoryPursuitTypes m_ePrimaryVictoryPursuit;

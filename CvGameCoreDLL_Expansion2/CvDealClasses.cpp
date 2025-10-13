@@ -612,13 +612,17 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 
 	case TRADE_ITEM_CITIES:
 		{
-			// Some game options restrict all city trades
-			if (GC.getGame().IsAllCityTradingDisabled())
-				return false;
-			else if (GC.getGame().IsAICityTradingDisabled() && !bHumanToHuman)
-				return false;
-			else if (GC.getGame().IsAICityTradingHumanOnly() && !pFromPlayer->isHuman(ISHUMAN_MECHANICS) && !pToPlayer->isHuman(ISHUMAN_MECHANICS))
-				return false;
+			if (!bHumanToHuman && MOD_DEALAI_DISABLE_CITY_TRADES)
+			{
+				bool bOnlyAI = gCustomMods.getOption("DEALAI_DISABLE_CITY_TRADES_SETTING", 1) == 1;
+				if (bOnlyAI)
+				{
+					if (!pFromPlayer->isHuman(ISHUMAN_MECHANICS) && !pToPlayer->isHuman(ISHUMAN_MECHANICS))
+						return false;
+				}
+				else
+					return false;
+			}
 
 			// Can't trade a city to a human in an OCC game
 			if (GC.getGame().isOption(GAMEOPTION_ONE_CITY_CHALLENGE) && pToPlayer->isHuman(ISHUMAN_MECHANICS))
@@ -654,7 +658,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 					if (pCity->getDamageTakenThisTurn() > 0 || pCity->getDamageTakenLastTurn() > 0)
 						return false;
 
-					if (!bHumanToHuman && !bSameTeam && pCity->getOriginalOwner() == ePlayer)
+					if (MOD_DEALAI_NO_PEACETIME_SELLING_FOUNDED_CITIES && !bHumanToHuman && !bSameTeam && pCity->getOriginalOwner() == ePlayer)
 						return false;
 
 					if (pCity->GetCityCitizens()->AnyPlotBlockaded())
@@ -936,7 +940,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 					else
 					{
 						// Only a decisive winner can agree to make peace
-						if (pFromPlayer->GetDiplomacyAI()->GetWarScore(vMembers[i]) < /*75*/ range(GD_INT_GET(DIPLOAI_THIRD_PARTY_PEACE_WARSCORE), 1, 100))
+						if (pFromPlayer->GetDiplomacyAI()->GetWarScore(vMembers[i]) < /*75*/ range(GD_INT_GET(THIRD_PARTY_PEACE_MIN_WAR_SCORE), 0, 100))
 							return false;
 
 						// Check for peace blocks
@@ -965,17 +969,17 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 			if (pFromPlayer->IsAITeammateOfHuman())
 				return false;
 
-			// Not allowed by Diplo AI Options
-			if (!bHumanToHuman)
+			// Not allowed by Deal AI Options
+			if (!bHumanToHuman && MOD_DEALAI_DISABLE_WAR_BRIBES)
 			{
-				if (GC.getGame().IsAllWarBribesDisabled())
+				bool bOnlyAI = gCustomMods.getOption("DEALAI_DISABLE_WAR_BRIBES_SETTING", 1) == 1;
+				if (bOnlyAI)
 				{
-					return false;
+					if (!pFromPlayer->isHuman(ISHUMAN_MECHANICS) && !pToPlayer->isHuman(ISHUMAN_MECHANICS))
+						return false;
 				}
-				if (GC.getGame().IsAIWarBribesDisabled() && !pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && !pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY))
-				{
+				else
 					return false;
-				}
 			}
 
 			TeamTypes eTargetTeam = (TeamTypes)iData1;
@@ -1138,7 +1142,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				if (pResolutionEffects->bDiplomaticVictory)
 				{
 					// Forbidden by game options
-					if (GD_INT_GET(DIPLOAI_NO_OTHER_WORLD_LEADER_VOTES) > 1)
+					if (MOD_LEAGUEAI_NO_OTHER_WORLD_LEADER_VOTES)
 						return false;
 
 					// AI never sells World Leader votes if they're teamed up with a human!
@@ -1149,7 +1153,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				if (pResolutionEffects->bChangeLeagueHost)
 				{
 					// Forbidden by game options
-					if (GD_INT_GET(DIPLOAI_NO_OTHER_HOST_VOTES) > 0)
+					if (MOD_LEAGUEAI_NO_OTHER_HOST_VOTES)
 						return false;
 
 					// AI never sells League Host votes if they're teamed up with a human!
@@ -1163,7 +1167,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				if (pResolutionEffects->bDiplomaticVictory)
 				{
 					// Forbidden by game options
-					if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && GD_INT_GET(DIPLOAI_NO_OTHER_WORLD_LEADER_VOTES) > 1)
+					if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && MOD_LEAGUEAI_NO_OTHER_WORLD_LEADER_VOTES)
 						return false;
 
 					// AI cannot buy votes for itself if it has a different team leader
@@ -1176,7 +1180,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 				if (pResolutionEffects->bChangeLeagueHost)
 				{
 					// Forbidden by game options
-					if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && GD_INT_GET(DIPLOAI_NO_OTHER_HOST_VOTES) > 0)
+					if (!pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && MOD_LEAGUEAI_NO_OTHER_HOST_VOTES)
 						return false;
 
 					// AI cannot buy votes for itself if it has a different team leader
@@ -1284,8 +1288,6 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 
 			// Vassalage is disabled
 			if (GC.getGame().isOption(GAMEOPTION_NO_VASSALAGE))
-				return false;
-			if (!bPeaceDeal && GD_INT_GET(DIPLOAI_DISABLE_VOLUNTARY_VASSALAGE) > 0)
 				return false;
 
 			// Can we become the vassal of this team?
@@ -1404,12 +1406,10 @@ bool CvDeal::BlockTemporaryForPermanentTrade(TradeableItems eItemType, PlayerTyp
 		return false;
 
 	// Restrictions on trading removed via advanced options?
-	if (!bNoHumans && GC.getGame().IsPermanentForTemporaryTradingAllowed())
+	if (!bNoHumans && MOD_DEALAI_GLOBAL_PERMANENT_FOR_TEMPORARY)
 		return false;
 
 	// Can AI players trade their temporary items for humans' permanent items?
-	bool bCanTradeHumanPermanentForAITemporary = GC.getGame().IsHumanPermanentForAITemporaryTradingAllowed();
-
 	bool bTemporary = false;
 	switch (eItemType)
 	{
@@ -1443,7 +1443,7 @@ bool CvDeal::BlockTemporaryForPermanentTrade(TradeableItems eItemType, PlayerTyp
 	// This item is temporary - it cannot be traded for a permanent item
 	if (bTemporary)
 	{
-		if (!bCanTradeHumanPermanentForAITemporary || bFromHuman || bNoHumans)
+		if (!MOD_DEALAI_HUMAN_PERMANENT_FOR_AI_TEMPORARY || bFromHuman || bNoHumans)
 		{
 			vector<TradeableItems> vProhibitedItems;
 			vProhibitedItems.push_back(TRADE_ITEM_GOLD);
@@ -1463,7 +1463,7 @@ bool CvDeal::BlockTemporaryForPermanentTrade(TradeableItems eItemType, PlayerTyp
 	// This item is permanent - it cannot be traded for a temporary item
 	else
 	{
-		if (!bCanTradeHumanPermanentForAITemporary || !bFromHuman || bNoHumans)
+		if (!MOD_DEALAI_HUMAN_PERMANENT_FOR_AI_TEMPORARY || !bFromHuman || bNoHumans)
 		{
 			vector<TradeableItems> vProhibitedItems;
 			vProhibitedItems.push_back(TRADE_ITEM_GOLD_PER_TURN);
@@ -2262,16 +2262,6 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 				}
 			}
 
-			if (!bPeaceDeal && GD_INT_GET(DIPLOAI_DISABLE_VOLUNTARY_VASSALAGE) > 0)
-			{
-				strTooltip = strDivider;
-				strTooltip += strStartColor;
-				strReason = GetLocalizedText("TXT_KEY_DIPLO_BLOCKED_GAME_RULE");
-				strTooltip += strReason;
-				strTooltip += strEndColor;
-				return strTooltip;
-			}
-
 			// Check Lua to see if an event has been registered to prevent vassals
 			// Create an event like follows: GameEvents.CanMakeVassal.Add(function(eMasterTeam, eVassalTeam) ...)
 
@@ -2679,7 +2669,8 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 				if (iNumCivs == 0)
 					break;
 
-				int iRequiredWarscore = /*75*/ range(GD_INT_GET(DIPLOAI_THIRD_PARTY_PEACE_WARSCORE), 1, 100);
+				// Only a decisive winner can agree to make peace
+				int iRequiredWarscore = /*75*/ range(GD_INT_GET(THIRD_PARTY_PEACE_MIN_WAR_SCORE), 0, 100);
 				
 				if (iNumCivs > 1)
 				{
@@ -2770,10 +2761,12 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 				return GetLocalizedText("TXT_KEY_DIPLO_ALREADY_AT_WAR");
 			}
 
-			// Not allowed by Diplo AI Options
-			if (GC.getGame().IsAllWarBribesDisabled())
+			// Not allowed by Deal AI Options
+			if (MOD_DEALAI_DISABLE_WAR_BRIBES)
 			{
-				return GetLocalizedText("TXT_KEY_DIPLO_BLOCKED_GAME_RULE");
+				bool bOnlyAI = gCustomMods.getOption("DEALAI_DISABLE_WAR_BRIBES_SETTING", 1) == 1;
+				if (!bOnlyAI)
+					return GetLocalizedText("TXT_KEY_DIPLO_BLOCKED_GAME_RULE");
 			}
 
 			// AI teammate of human
@@ -4782,14 +4775,14 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 					}
 				}
 				// Notify all other civs
-				else if (bObserver || eTeam == eGivingTeam || eTeam == eReceivingTeam || (GET_TEAM(eTeam).isHasMet(eTargetTeam) && GET_TEAM(eTeam).isHasMet(eGivingTeam)) || (GET_PLAYER(ePlayer).isHuman() && GC.getGame().IsDiploDebugModeEnabled() && !bHumanToHuman))
+				else if (bObserver || eTeam == eGivingTeam || eTeam == eReceivingTeam || (GET_TEAM(eTeam).isHasMet(eTargetTeam) && GET_TEAM(eTeam).isHasMet(eGivingTeam)) || (GET_PLAYER(ePlayer).isHuman() && MOD_DIPLO_DEBUG_MODE && !bHumanToHuman))
 				{
 					if (bObserver || GET_PLAYER(ePlayer).isHuman(ISHUMAN_AI_DIPLOMACY))
 					{
 						CvNotifications* pNotify = GET_PLAYER(ePlayer).GetNotifications();
 						if (pNotify)
 						{
-							bool bMetBroker = bObserver || eTeam == eGivingTeam || eTeam == eReceivingTeam || GET_TEAM(eTeam).isHasMet(eReceivingTeam) || (GC.getGame().IsDiploDebugModeEnabled() && !bHumanToHuman);
+							bool bMetBroker = bObserver || eTeam == eGivingTeam || eTeam == eReceivingTeam || GET_TEAM(eTeam).isHasMet(eReceivingTeam) || (MOD_DIPLO_DEBUG_MODE && !bHumanToHuman);
 							Localization::String strText = Localization::Lookup("TXT_KEY_NOTIFICATION_DIPLOMACY_THIRD_PARTY_BROKER_PEACE_OTHER");
 							if (bMetBroker)
 							{
@@ -4917,7 +4910,7 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 					continue;
 				}
 
-				if (GET_PLAYER(ePlayer).isHuman(ISHUMAN_AI_DIPLOMACY) && GC.getGame().IsDiploDebugModeEnabled() && !bHumanToHuman)
+				if (GET_PLAYER(ePlayer).isHuman(ISHUMAN_NOTIFICATIONS) && MOD_DIPLO_DEBUG_MODE && !bHumanToHuman)
 				{
 					vDebugModePlayers.push_back(ePlayer);
 				}

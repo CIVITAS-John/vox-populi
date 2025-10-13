@@ -1495,7 +1495,7 @@ void CvPlayerCulture::MoveWorks(GreatWorkSlotType eType, vector<CvGreatWorkBuild
 	if (eType == CvTypes::getGREAT_WORK_SLOT_LITERATURE())
 	{
 		GreatWorkClass eClass = (GreatWorkClass)GC.getInfoTypeForString("GREAT_WORK_LITERATURE");
-		gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, -1);
+		int iGreatWorkIndex = -1;
 
 		if (bSwapWithOtherCivs)
 		{
@@ -1504,17 +1504,22 @@ void CvPlayerCulture::MoveWorks(GreatWorkSlotType eType, vector<CvGreatWorkBuild
 				if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
 				{
 					// CUSTOMLOG("  ... for writing to %i", it->m_iGreatWorkIndex);
-					gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, it->m_iGreatWorkIndex);
+					iGreatWorkIndex = it->m_iGreatWorkIndex;
 					break;
 				}
 			}
 		}
+
+		if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+			gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, iGreatWorkIndex);
+		else
+			SetSwappableGreatWork(eClass, iGreatWorkIndex);
 	}
 	// For Art and Artifacts
 	else if (eType == CvTypes::getGREAT_WORK_SLOT_ART_ARTIFACT())
 	{
 		GreatWorkClass eClass = (GreatWorkClass)GC.getInfoTypeForString("GREAT_WORK_ART");
-		gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, -1);
+		int iGreatWorkIndex = -1;
 
 		if(bSwapWithOtherCivs)
 		{
@@ -1523,14 +1528,19 @@ void CvPlayerCulture::MoveWorks(GreatWorkSlotType eType, vector<CvGreatWorkBuild
 				if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
 				{
 					// CUSTOMLOG("  ... for art to %i", it->m_iGreatWorkIndex);
-					gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, it->m_iGreatWorkIndex);
+					iGreatWorkIndex = it->m_iGreatWorkIndex;
 					break;
 				}
 			}
 		}
 
+		if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+			gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, iGreatWorkIndex);
+		else
+			SetSwappableGreatWork(eClass, iGreatWorkIndex);
+
 		eClass = (GreatWorkClass)GC.getInfoTypeForString("GREAT_WORK_ARTIFACT");
-		gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, -1);
+		iGreatWorkIndex = -1;
 
 		if (bSwapWithOtherCivs)
 		{
@@ -1539,11 +1549,16 @@ void CvPlayerCulture::MoveWorks(GreatWorkSlotType eType, vector<CvGreatWorkBuild
 				if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
 				{
 					// CUSTOMLOG("  ... for artifact to %i", it->m_iGreatWorkIndex);
-					gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, it->m_iGreatWorkIndex);
+					iGreatWorkIndex = it->m_iGreatWorkIndex;
 					break;
 				}
 			}
 		}
+
+		if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+			gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eClass, iGreatWorkIndex);
+		else
+			SetSwappableGreatWork(eClass, iGreatWorkIndex);
 	}
 
 	bool bSecondUpdate = MoveSingleWorks(buildings, works1, works2, eFocusYield, true);
@@ -1627,16 +1642,33 @@ bool CvPlayerCulture::ThemeBuilding(vector<CvGreatWorkBuildingInMyEmpire>::const
 		else if (pkBonusInfo->IsMustBeEqualArtArtifact())
 		{
 			if (ThemeEqualArtArtifact(*buildingIt, bestThemes.GetElement(iI), pkEntry->GetGreatWorkCount(), works1, works2))
-			{
 				return true;
-			}
+			else
+				continue;
 		}
 		else
 		{
-			worksToConsider = works1;
+			worksToConsider.clear();
+			// Need owned works to be before unowned works
+			for (it = works1.begin(); it != works1.end(); ++it)
+			{
+				if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
+					worksToConsider.push_back(*it);
+			}
 			for (it = works2.begin(); it != works2.end(); ++it)
 			{
-				worksToConsider.push_back(*it);
+				if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
+					worksToConsider.push_back(*it);
+			}
+			for (it = works1.begin(); it != works1.end(); ++it)
+			{
+				if (it->m_eOwnedByPlayer != m_pPlayer->GetID())
+					worksToConsider.push_back(*it);
+			}
+			for (it = works2.begin(); it != works2.end(); ++it)
+			{
+				if (it->m_eOwnedByPlayer != m_pPlayer->GetID())
+					worksToConsider.push_back(*it);
 			}
 		}
 
@@ -1690,7 +1722,7 @@ bool CvPlayerCulture::ThemeBuilding(vector<CvGreatWorkBuildingInMyEmpire>::const
 			}
 
 			if (iOwnedWorks + iExtraOwnedWorks < iCountSlots)
-				return false;
+				continue;
 
 			// Did we theme it properly?
 			bThemedProperly = false;
@@ -1780,10 +1812,27 @@ bool CvPlayerCulture::ThemeBuilding(vector<CvGreatWorkBuildingInMyEmpire>::const
 				}
 				else
 				{
-					worksToConsider = works1;
+					worksToConsider.clear();
+					// Need owned works to be before unowned works
+					for (it = works1.begin(); it != works1.end(); ++it)
+					{
+						if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
+							worksToConsider.push_back(*it);
+					}
 					for (it = works2.begin(); it != works2.end(); ++it)
 					{
-						worksToConsider.push_back(*it);
+						if (it->m_eOwnedByPlayer == m_pPlayer->GetID())
+							worksToConsider.push_back(*it);
+					}
+					for (it = works1.begin(); it != works1.end(); ++it)
+					{
+						if (it->m_eOwnedByPlayer != m_pPlayer->GetID())
+							worksToConsider.push_back(*it);
+					}
+					for (it = works2.begin(); it != works2.end(); ++it)
+					{
+						if (it->m_eOwnedByPlayer != m_pPlayer->GetID())
+							worksToConsider.push_back(*it);
 					}
 				}
 
@@ -1867,7 +1916,7 @@ bool CvPlayerCulture::ThemeEqualArtArtifact(CvGreatWorkBuildingInMyEmpire kBldg,
 		}
 
 		if (iOwnedWorks + iExtraOwnedWorks < iWorksInHalf)
-			return false;
+			continue;
 
 		// Do we have the right amount of art?
 		if (static_cast<int>(aArtifactsChosen.size()) == iWorksInHalf)
@@ -1929,7 +1978,7 @@ bool CvPlayerCulture::ThemeEqualArtArtifact(CvGreatWorkBuildingInMyEmpire kBldg,
 				}
 
 				if (iOwnedWorks + iExtraOwnedWorks < iWorksInHalf)
-					return false;
+					continue;
 
 				// Did we theme it properly?
 				bool bThemedProperly = false;
@@ -2239,15 +2288,10 @@ bool CvPlayerCulture::MoveWorkIntoSlot(int iWorkID, int iToCityID, BuildingTypes
 					{
 						LogMoveSingleWork(kWork.m_iGreatWorkIndex, kWork.m_eOwnedByPlayer, iFromCityID, eFromBuilding, iFromSlot, m_pPlayer->GetID(), iToCityID, eToBuilding, iToSlot);
 
-						gDLL->sendMoveGreatWorks(
-							m_pPlayer->GetID(),
-							iFromCityID,
-							eFromBuildingClass,
-							iFromSlot,
-							iToCityID,
-							eToBuildingClass,
-							iToSlot
-						);
+						if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+							gDLL->sendMoveGreatWorks(m_pPlayer->GetID(), iFromCityID, eFromBuildingClass, iFromSlot, iToCityID, eToBuildingClass, iToSlot);
+						else
+							GC.getGame().GetGameCulture()->MoveGreatWorks(m_pPlayer->GetID(), iFromCityID, eFromBuildingClass, iFromSlot, iToCityID, eToBuildingClass, iToSlot);
 
 						// We can't trust this external DLL call to happen instantly, so we need to update works1 and works2 manually here
 						for (vector<CvGreatWorkAvailableForUse>::iterator it = works1.begin(); it != works1.end(); ++it)
@@ -2307,7 +2351,10 @@ bool CvPlayerCulture::MoveWorkIntoSlot(int iWorkID, int iToCityID, BuildingTypes
 				if (it->m_eOwnedByPlayer == m_pPlayer->GetID() && (!toIgnore || toIgnore->find(it->m_iGreatWorkIndex) == toIgnore->end()))
 				{
 					// CUSTOMLOG("  ... for art to %i", it->m_iGreatWorkIndex);
-					gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eGWClass, it->m_iGreatWorkIndex);
+					if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+						gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eGWClass, it->m_iGreatWorkIndex);
+					else
+						SetSwappableGreatWork(eGWClass, it->m_iGreatWorkIndex);
 					iOurSwapWorkIndex = it->m_iGreatWorkIndex;
 					break;
 				}
@@ -2320,7 +2367,10 @@ bool CvPlayerCulture::MoveWorkIntoSlot(int iWorkID, int iToCityID, BuildingTypes
 				if (it->m_eOwnedByPlayer == m_pPlayer->GetID() && (!toIgnore || toIgnore->find(it->m_iGreatWorkIndex) == toIgnore->end()))
 				{
 					// CUSTOMLOG("  ... for art to %i", it->m_iGreatWorkIndex);
-					gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eGWClass, it->m_iGreatWorkIndex);
+					if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+						gDLL->sendSetSwappableGreatWork(m_pPlayer->GetID(), eGWClass, it->m_iGreatWorkIndex);
+					else
+						SetSwappableGreatWork(eGWClass, it->m_iGreatWorkIndex);
 					iOurSwapWorkIndex = it->m_iGreatWorkIndex;
 					break;
 				}
@@ -2348,7 +2398,10 @@ bool CvPlayerCulture::MoveWorkIntoSlot(int iWorkID, int iToCityID, BuildingTypes
 
 		LogSwapMultipleWorks(kWork.m_eOwnedByPlayer, iOurSwapWorkIndex, kWork.m_iGreatWorkIndex);
 
-		gDLL->sendSwapGreatWorks(m_pPlayer->GetID(), iOurSwapWorkIndex, kWork.m_eOwnedByPlayer, kWork.m_iGreatWorkIndex);
+		if (m_pPlayer->isHuman(ISHUMAN_AI_TOURISM))
+			gDLL->sendSwapGreatWorks(m_pPlayer->GetID(), iOurSwapWorkIndex, kWork.m_eOwnedByPlayer, kWork.m_iGreatWorkIndex);
+		else
+			GC.getGame().GetGameCulture()->SwapGreatWorks(m_pPlayer->GetID(), iOurSwapWorkIndex, kWork.m_eOwnedByPlayer, kWork.m_iGreatWorkIndex);
 
 		LogMoveSingleWork(kWork.m_iGreatWorkIndex, kWork.m_eOwnedByPlayer, iFromCityID, eFromBuilding, iFromSlot, m_pPlayer->GetID(), kWorkToSwapAway.m_iCityID, kWorkToSwapAway.m_eBuilding, kWorkToSwapAway.m_iSlot);
 
@@ -2418,6 +2471,54 @@ int CvPlayerCulture::GetSwappableArtifactIndex() const
 int CvPlayerCulture::GetSwappableMusicIndex() const
 {
 	return m_iSwappableMusicIndex;
+}
+
+void CvPlayerCulture::SetSwappableGreatWork(GreatWorkClass eGWClass, int iGreatWorkIndex)
+{
+	// -1 indicates that they want to clear the slot
+	if (iGreatWorkIndex == -1)
+	{
+		if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_ARTIFACT"))
+		{
+			SetSwappableArtifactIndex(-1);
+		}
+		else if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_ART"))
+		{
+			SetSwappableArtIndex(-1);
+		}
+		else if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_LITERATURE"))
+		{
+			SetSwappableWritingIndex(-1);
+		}
+		else if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_MUSIC"))
+		{
+			SetSwappableMusicIndex(-1);
+		}
+	}
+	else
+	{
+		// does this player control this work
+		if (ControlsGreatWork(iGreatWorkIndex))
+		{
+			if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_ARTIFACT"))
+			{
+				SetSwappableArtifactIndex(iGreatWorkIndex);
+			}
+			else if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_ART"))
+			{
+				SetSwappableArtIndex(iGreatWorkIndex);
+			}
+			else if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_LITERATURE"))
+			{
+				SetSwappableWritingIndex(iGreatWorkIndex);
+			}
+			else if (eGWClass == GC.getInfoTypeForString("GREAT_WORK_MUSIC"))
+			{
+				SetSwappableMusicIndex(iGreatWorkIndex);
+			}
+		}
+	}
+	GC.GetEngineUserInterface()->setDirty(GreatWorksScreen_DIRTY_BIT, true);
 }
 
 void CvPlayerCulture::SetSwappableWritingIndex(int iIndex)
@@ -2654,7 +2755,7 @@ ArchaeologyChoiceType CvPlayerCulture::GetArchaeologyChoice(CvPlot *pPlot)
 }
 
 /// Make things happen at an archaeology dig
-void CvPlayerCulture::DoArchaeologyChoice (ArchaeologyChoiceType eChoice)
+void CvPlayerCulture::DoArchaeologyChoice(ArchaeologyChoiceType eChoice)
 {
 	CvGameCulture *pCulture = GC.getGame().GetGameCulture();
 	BuildingClassTypes eBuildingToHouse = NO_BUILDINGCLASS;
@@ -2719,27 +2820,15 @@ void CvPlayerCulture::DoArchaeologyChoice (ArchaeologyChoiceType eChoice)
 				}
 				// Major civ owned territory?
 				else if (kOwner.isMajorCiv())
-				{
 					kOwner.GetDiplomacyAI()->ChangeNumLandmarksBuiltForMe(m_pPlayer->GetID(), 1);
-					kOwner.GetDiplomacyAI()->ChangeNumWaitingForDigChoice(-1);
-				}
 			}
 		}
 	}
 	break;
 	case ARCHAEOLOGY_ARTIFACT_PLAYER1:
 	{
-		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv())
-		{
-			if (pUnit && pPlot->getTeam() != pUnit->getTeam() && GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->IsWaitingForDigChoice())
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(pUnit->getOwner(), 1);
-			}
-			else
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNumWaitingForDigChoice(-1);
-			}
-		}
+		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv() && pPlot->getTeam() != m_pPlayer->getTeam())
+			GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(m_pPlayer->GetID(), 1);
 
 		pHousingCity = m_pPlayer->GetCulture()->GetClosestAvailableGreatWorkSlot(pPlot->getX(), pPlot->getY(), eArtArtifactSlot, eBuildingToHouse, iSlot);
 		int iGWindex = pCulture->CreateGreatWork(eGreatArtifact, eClass, pPlot->GetArchaeologicalRecord().m_ePlayer1, pPlot->GetArchaeologicalRecord().m_eEra, "");
@@ -2787,17 +2876,9 @@ void CvPlayerCulture::DoArchaeologyChoice (ArchaeologyChoiceType eChoice)
 	break;
 	case ARCHAEOLOGY_ARTIFACT_PLAYER2:
 	{
-		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv())
-		{
-			if (pUnit && pPlot->getTeam() != pUnit->getTeam() && GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->IsWaitingForDigChoice())
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(pUnit->getOwner(), 1);
-			}
-			else
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNumWaitingForDigChoice(-1);
-			}
-		}
+		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv() && pPlot->getTeam() != m_pPlayer->getTeam())
+			GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(m_pPlayer->GetID(), 1);
+
 		pHousingCity = m_pPlayer->GetCulture()->GetClosestAvailableGreatWorkSlot(pPlot->getX(), pPlot->getY(), eArtArtifactSlot, eBuildingToHouse, iSlot);
 		int iGWindex = pCulture->CreateGreatWork(eGreatArtifact, eClass, pPlot->GetArchaeologicalRecord().m_ePlayer2, pPlot->GetArchaeologicalRecord().m_eEra, "");
 		pHousingCity->GetCityBuildings()->SetBuildingGreatWork(eBuildingToHouse, iSlot, iGWindex);
@@ -2846,17 +2927,9 @@ void CvPlayerCulture::DoArchaeologyChoice (ArchaeologyChoiceType eChoice)
 
 	case ARCHAEOLOGY_ARTIFACT_WRITING:
 	{
-		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv())
-		{
-			if (pUnit && pPlot->getTeam() != pUnit->getTeam() && GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->IsWaitingForDigChoice())
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(pUnit->getOwner(), 1);
-			}
-			else
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNumWaitingForDigChoice(-1);
-			}
-		}
+		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv() && pPlot->getTeam() != m_pPlayer->getTeam())
+			GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(m_pPlayer->GetID(), 1);
+
 		pHousingCity = m_pPlayer->GetCulture()->GetClosestAvailableGreatWorkSlot(pPlot->getX(), pPlot->getY(), eWritingSlot, eBuildingToHouse, iSlot);
 		int iGWindex = pCulture->CreateGreatWork(eGreatArtifact, (GreatWorkClass)GC.getInfoTypeForString("GREAT_WORK_LITERATURE"), pPlot->GetArchaeologicalRecord().m_ePlayer1, pPlot->GetArchaeologicalRecord().m_eEra, "");
 		pHousingCity->GetCityBuildings()->SetBuildingGreatWork(eBuildingToHouse, iSlot, iGWindex);
@@ -2907,17 +2980,8 @@ void CvPlayerCulture::DoArchaeologyChoice (ArchaeologyChoiceType eChoice)
 
 	case ARCHAEOLOGY_CULTURE_BOOST:
 	{
-		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv())
-		{
-			if (pUnit && pPlot->getTeam() != pUnit->getTeam() && GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->IsWaitingForDigChoice())
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(pUnit->getOwner(), 1);
-			}
-			else
-			{
-				GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNumWaitingForDigChoice(-1);
-			}
-		}
+		if (pPlot->getOwner() != NO_PLAYER && GET_PLAYER(pPlot->getOwner()).isMajorCiv() && pPlot->getTeam() != m_pPlayer->getTeam())
+			GET_PLAYER(pPlot->getOwner()).GetDiplomacyAI()->ChangeNegativeArchaeologyPoints(m_pPlayer->GetID(), 1);
 
 		// Culture boost based on 8 previous turns; same as GREAT_WRITER; move to XML?
 		int iValue = m_pPlayer->getYieldPerTurnHistory(YIELD_CULTURE, 8 /*iPreviousTurnsToCount */);

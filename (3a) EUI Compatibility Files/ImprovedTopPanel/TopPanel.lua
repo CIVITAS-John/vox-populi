@@ -840,7 +840,7 @@ local function UpdateTopPanelNow()
 			else
 				Controls.InternationalTradeRoutes:SetText( S( "%i/%i [ICON_INTERNATIONAL_TRADE]", activeRoutes, availableRoutes ) )
 			end
-			Controls.TourismString:SetText( S( "%+i [ICON_TOURISM]", g_activePlayer:GetTourism() / 100 ) )
+			Controls.TourismString:SetText( S( "%+s [ICON_TOURISM]", FormatIntegerTimes100(g_activePlayer:GetTourism()) ) )
 		end
 	else
 		-----------------------------
@@ -1625,7 +1625,7 @@ if civ5_mode then
 			local totalGreatWorks = g_activePlayer:GetNumGreatWorks()
 			local totalSlots = g_activePlayer:GetNumGreatWorkSlots()
 
-			local tipText = L("TXT_KEY_TP_TOURISM_PER_TURN", FormatDecimal(g_activePlayer:GetTourism()))
+			local tipText = L("TXT_KEY_TP_TOURISM_PER_TURN", FormatDecimalTimes100(g_activePlayer:GetTourism()))
 					.. "[NEWLINE][NEWLINE]"
 					.. L( "TXT_KEY_TOP_PANEL_TOURISM_TOOLTIP_1", totalGreatWorks )
 					.. "[NEWLINE]"

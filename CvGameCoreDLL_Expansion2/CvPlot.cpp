@@ -4778,7 +4778,7 @@ bool CvPlot::isCoastalCityOrPassableImprovement(PlayerTypes ePlayer, bool bCityM
 	// Good enough
 	if (isCity())
 	{
-		if (isCoastalLand())
+		if (!isCoastalLand())
 			return false;
 
 		if (bCityMustBeFriendly)
@@ -7628,15 +7628,6 @@ void CvPlot::setResourceType(ResourceTypes eNewValue, int iResourceNum, bool bFo
 						GET_PLAYER(eOwner).removeResourcesOnPlotFromUnimproved(this);
 					}
 				}
-			}
-		}
-
-		// Dig cleared? To circumvent Firaxis hardcoding we need to mark whether a diplo penalty might apply now.
-		if (eNewValue == NO_RESOURCE && getOwner() != NO_PLAYER && GET_PLAYER(getOwner()).isMajorCiv() && GET_PLAYER(getOwner()).isAlive())
-		{
-			if (m_eResourceType == GD_INT_GET(ARTIFACT_RESOURCE) || m_eResourceType == GD_INT_GET(HIDDEN_ARTIFACT_RESOURCE))
-			{
-				GET_PLAYER(getOwner()).GetDiplomacyAI()->ChangeNumWaitingForDigChoice(1);
 			}
 		}
 
