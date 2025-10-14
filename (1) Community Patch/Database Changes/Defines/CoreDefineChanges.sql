@@ -97,7 +97,7 @@ VALUES
 	('BALANCE_SCOUT_XP_BASE', 1),
 -- "Too early for agreement" turn buffers
 	('JUST_MET_TURN_BUFFER', 10), -- Hard floor for below two
-	('SHARE_OPINION_TURN_BUFFER', 20), -- How many turns after we meet a civilization must we wait before they'll share their opinion?
+	('SHARE_APPROACH_TURN_BUFFER', 20), -- How many turns after we meet a civilization must we wait before they'll share their opinion?
 	('DOF_TURN_BUFFER', 50), -- How many turns after we meet a civilization must we wait before they'll accept friendship?
 	('DOF_TURN_BUFFER_REDUCTION_PER_ERA', -5),
 -- Help requests
@@ -1069,7 +1069,7 @@ VALUES
 -- Number of Units Spawned
 -- Encampment Creation
 	('BARBARIAN_NUM_UNITS_INITIAL_ENCAMPMENT_CREATION_SPAWN', 1), -- The number of units an encampment spawns when created (first spawning turn only).
-	('BARBARIAN_NUM_UNITS_INITIAL_ENCAMPMENT_CREATION_SPAWN_CHILL', -1), -- Change if Chill Barbarians is enabled.
+	('BARBARIAN_NUM_UNITS_INITIAL_ENCAMPMENT_CREATION_SPAWN_CHILL', 0), -- Change if Chill Barbarians is enabled.
 	('BARBARIAN_NUM_UNITS_INITIAL_ENCAMPMENT_CREATION_SPAWN_RAGING', 0), -- Change if Raging Barbarians is enabled.
 	('BARBARIAN_NUM_UNITS_INITIAL_ENCAMPMENT_CREATION_SPAWN_PER_ERA', 0), -- Extra units added per era (first spawning turn only). Number of extra units = this value * (era #) / 100, rounded down.
 	('BARBARIAN_NUM_UNITS_ENCAMPMENT_CREATION_SPAWN', 1), -- The number of units an encampment spawns when created.
