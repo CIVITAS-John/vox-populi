@@ -586,6 +586,9 @@ void CvCity::init(int iID, PlayerTypes eOwner, int iX, int iY, bool bBumpUnits, 
 
 	pPlot->SetPlayerThatDestroyedCityHere(NO_PLAYER);
 
+	pPlot->SetImprovementPillaged(false, false);
+	pPlot->SetRoutePillaged(false, false);
+
 	// Plot Ownership
 	pPlot->setOwner(eOwner, m_iID, bBumpUnits, true, true);
 
@@ -596,9 +599,6 @@ void CvCity::init(int iID, PlayerTypes eOwner, int iX, int iY, bool bBumpUnits, 
 
 	//only after the owner is set!
 	pPlot->setIsCity(true, m_iID, getWorkPlotDistance());
-
-	pPlot->SetImprovementPillaged(false, false);
-	pPlot->SetRoutePillaged(false, false);
 
 	//clear the first ring
 	int iRange = min(1, /*1*/ GD_INT_GET(CITY_STARTING_RINGS));
@@ -988,21 +988,32 @@ void CvCity::init(int iID, PlayerTypes eOwner, int iX, int iY, bool bBumpUnits, 
 	}
 
 	// Stuff for Pioneers and Colonists
-	if (bInitialFounding && pkSettlerUnitEntry != NULL)
+	if (bInitialFounding && pkSettlerUnitEntry)
 	{
 		if (pkSettlerUnitEntry->GetNumColonyFound() > 0)
 		{
-			kPlayer.cityBoost(getX(), getY(), pkSettlerUnitEntry, /*3*/ GD_INT_GET(PIONEER_EXTRA_PLOTS), /*3*/ GD_INT_GET(PIONEER_POPULATION_CHANGE), 1);
+			InitBoost(/*3*/ GD_INT_GET(PIONEER_EXTRA_PLOTS), /*3*/ GD_INT_GET(PIONEER_POPULATION_CHANGE), 1);
 			DoCreatePuppet();
 		}
-
 		if (pkSettlerUnitEntry->IsFoundMid())
 		{
-			kPlayer.cityBoost(getX(), getY(), pkSettlerUnitEntry, /*3*/ GD_INT_GET(PIONEER_EXTRA_PLOTS), /*3*/ GD_INT_GET(PIONEER_POPULATION_CHANGE), /*25*/ GD_INT_GET(PIONEER_FOOD_PERCENT));
+			InitBoost(/*3*/ GD_INT_GET(PIONEER_EXTRA_PLOTS), /*3*/ GD_INT_GET(PIONEER_POPULATION_CHANGE), /*25*/ GD_INT_GET(PIONEER_FOOD_PERCENT));
 		}
 		if (pkSettlerUnitEntry->IsFoundLate())
 		{
-			kPlayer.cityBoost(getX(), getY(), pkSettlerUnitEntry, /*5*/ GD_INT_GET(COLONIST_EXTRA_PLOTS), /*5*/ GD_INT_GET(COLONIST_POPULATION_CHANGE), /*50*/ GD_INT_GET(COLONIST_FOOD_PERCENT));
+			InitBoost(/*5*/ GD_INT_GET(COLONIST_EXTRA_PLOTS), /*5*/ GD_INT_GET(COLONIST_POPULATION_CHANGE), /*50*/ GD_INT_GET(COLONIST_FOOD_PERCENT));
+		}
+
+		const int iNumBuildingClassInfos = GC.getNumBuildingClassInfos();
+		const CvCivilizationInfo& kCivInfo = getCivilizationInfo();
+		for (set<int>::const_iterator it = pkSettlerUnitEntry->GetBuildOnFound().begin(); it != pkSettlerUnitEntry->GetBuildOnFound().end(); ++it)
+		{
+			const BuildingClassTypes eBuildingClass = static_cast<BuildingClassTypes>(*it);
+			const BuildingTypes eFreeBuilding = static_cast<BuildingTypes>(kCivInfo.getCivilizationBuildings(eBuildingClass));
+			if (isValidBuildingLocation(eFreeBuilding))
+			{
+				GetCityBuildings()->SetNumRealBuilding(eFreeBuilding, 1, true);
+			}
 		}
 	}
 
@@ -2250,6 +2261,26 @@ void CvCity::AcquireWaywardPlots()
 
 		if (!bAnyCloserCity)
 			pLoopPlot->setOwner(eOwner, m_iID);
+	}
+}
+
+// Add random plots, population, and food to this city
+void CvCity::InitBoost(int iExtraPlots, int iPopChange, int iFoodPercent)
+{
+	// Extra population for advanced settlers
+	changePopulation(iPopChange, true, true);
+
+	// Additional food to prevent instant-starvation
+	changeFood(growthThreshold() * iFoodPercent / 100);
+
+	// And a little territory to boot
+	for (int i = 0; i < iExtraPlots; i++)
+	{
+		CvPlot* pPlotToAcquire = GetNextBuyablePlot(false);
+		if (pPlotToAcquire)
+		{
+			DoAcquirePlot(pPlotToAcquire->getX(), pPlotToAcquire->getY());
+		}
 	}
 }
 
@@ -15795,75 +15826,80 @@ void CvCity::CheckForOperationUnits()
 	{
 		if (eBestUnit != NO_UNIT)
 		{
-			int iGoldCost = GetPurchaseCost(eBestUnit);
-			CvUnitEntry* pkUnitEntry = GC.getUnitInfo(eBestUnit);
-			if (pkUnitEntry && kPlayer.GetEconomicAI()->CanWithdrawMoneyForPurchase(PURCHASE_TYPE_UNIT, iGoldCost) && IsCanPurchase(/*bTestPurchaseCost*/ true, /*bTestTrainable*/ true, eBestUnit, NO_BUILDING, NO_PROJECT, YIELD_GOLD))
+			int iTempWeight = 100;
+			iTempWeight = GetCityStrategyAI()->GetUnitProductionAI()->CheckUnitBuildSanity(eBestUnit, true, iTempWeight, true);
+			if (iTempWeight > 0)
 			{
-				//Log it
-				CvString strLogString;
-				strLogString.Format("MOD - Buying unit for sneak attack from City root function: %s in %s. Cost: %d, Balance (before buy): %d",
-					pkUnitEntry->GetDescription(), getName().c_str(), iGoldCost, GET_PLAYER(getOwner()).GetTreasury()->GetGold());
-				kPlayer.GetHomelandAI()->LogHomelandMessage(strLogString);
-
-				bool bInvest = MOD_BALANCE_UNIT_INVESTMENTS || (MOD_BALANCE_VP && pkUnitEntry->GetSpaceshipProject() != NO_PROJECT);
-				if (bInvest)
+				int iGoldCost = GetPurchaseCost(eBestUnit);
+				CvUnitEntry* pkUnitEntry = GC.getUnitInfo(eBestUnit);
+				if (pkUnitEntry && kPlayer.GetEconomicAI()->CanWithdrawMoneyForPurchase(PURCHASE_TYPE_UNIT, iGoldCost) && IsCanPurchase(/*bTestPurchaseCost*/ true, /*bTestTrainable*/ true, eBestUnit, NO_BUILDING, NO_PROJECT, YIELD_GOLD))
 				{
-					//take the money...
-					kPlayer.GetTreasury()->ChangeGold(-iGoldCost);
+					//Log it
+					CvString strLogString;
+					strLogString.Format("MOD - Buying unit for sneak attack from City root function: %s in %s. Cost: %d, Balance (before buy): %d",
+						pkUnitEntry->GetDescription(), getName().c_str(), iGoldCost, GET_PLAYER(getOwner()).GetTreasury()->GetGold());
+					kPlayer.GetHomelandAI()->LogHomelandMessage(strLogString);
 
-					const UnitClassTypes eUnitClass = (UnitClassTypes)(pkUnitEntry->GetUnitClassType());
-					if (eUnitClass != NO_UNITCLASS)
+					bool bInvest = MOD_BALANCE_UNIT_INVESTMENTS || (MOD_BALANCE_VP && pkUnitEntry->GetSpaceshipProject() != NO_PROJECT);
+					if (bInvest)
 					{
-						SetUnitInvestment(eUnitClass, true);
-						if (CityStrategyAIHelpers::IsTestCityStrategy_IsPuppetAndAnnexable(this))
+						//take the money...
+						kPlayer.GetTreasury()->ChangeGold(-iGoldCost);
+
+						const UnitClassTypes eUnitClass = (UnitClassTypes)(pkUnitEntry->GetUnitClassType());
+						if (eUnitClass != NO_UNITCLASS)
 						{
-							if (getProductionProcess() != NO_PROCESS)
+							SetUnitInvestment(eUnitClass, true);
+							if (CityStrategyAIHelpers::IsTestCityStrategy_IsPuppetAndAnnexable(this))
 							{
-								clearOrderQueue();
+								if (getProductionProcess() != NO_PROCESS)
+								{
+									clearOrderQueue();
+								}
+								pushOrder(ORDER_TRAIN, eBestUnit, -1, false, false, true, false);
 							}
-							pushOrder(ORDER_TRAIN, eBestUnit, -1, false, false, true, false);
-						}
-						else if (!GET_PLAYER(getOwner()).isHuman(ISHUMAN_AI_CITY_PRODUCTION) && !IsPuppet())
-						{
-							if (getProductionProcess() != NO_PROCESS)
+							else if (!GET_PLAYER(getOwner()).isHuman(ISHUMAN_AI_CITY_PRODUCTION) && !IsPuppet())
 							{
-								clearOrderQueue();
+								if (getProductionProcess() != NO_PROCESS)
+								{
+									clearOrderQueue();
+								}
+								pushOrder(ORDER_TRAIN, eBestUnit, -1, false, false, true, false);
 							}
-							pushOrder(ORDER_TRAIN, eBestUnit, -1, false, false, true, false);
 						}
 					}
+					else
+					{
+						//and train it!
+						CvUnit* pUnit = PurchaseUnit(eBestUnit, YIELD_GOLD);
+						if (pUnit)
+						{
+							CleanUpQueue();
+
+							kPlayer.GetMilitaryAI()->ResetNumberOfTimesOpsBuildSkippedOver();
+						}
+					}
+					return;
 				}
 				else
 				{
-					//and train it!
-					CvUnit* pUnit = PurchaseUnit(eBestUnit, YIELD_GOLD);
-					if (pUnit)
+					CvUnitEntry* pkUnitEntry = GC.getUnitInfo(eBestUnit);
+					if (pkUnitEntry)
 					{
-						CleanUpQueue();
+						UnitAITypes eUnitAI = pkUnitEntry->GetDefaultUnitAIType();
+						pushOrder(ORDER_TRAIN, eBestUnit, eUnitAI, false, false, bAppend, false /*bRush*/);
+						if (GC.getLogging() && GC.getAILogging())
+						{
+							CvString strLogString;
+							strLogString.Format("MOD - Building unit for sneak attack (or at war) from City root function: %s in %s. Turns: %d",
+								pkUnitEntry->GetDescription(), getName().c_str(), getProductionTurnsLeft(eBestUnit, 0));
+							kPlayer.GetHomelandAI()->LogHomelandMessage(strLogString);
+						}
 
 						kPlayer.GetMilitaryAI()->ResetNumberOfTimesOpsBuildSkippedOver();
 					}
+					return;
 				}
-				return;
-			}
-			else
-			{
-				CvUnitEntry* pkUnitEntry = GC.getUnitInfo(eBestUnit);
-				if (pkUnitEntry)
-				{
-					UnitAITypes eUnitAI = pkUnitEntry->GetDefaultUnitAIType();
-					pushOrder(ORDER_TRAIN, eBestUnit, eUnitAI, false, false, bAppend, false /*bRush*/);
-					if (GC.getLogging() && GC.getAILogging())
-					{
-						CvString strLogString;
-						strLogString.Format("MOD - Building unit for sneak attack (or at war) from City root function: %s in %s. Turns: %d",
-							pkUnitEntry->GetDescription(), getName().c_str(), getProductionTurnsLeft(eBestUnit, 0));
-						kPlayer.GetHomelandAI()->LogHomelandMessage(strLogString);
-					}
-
-					kPlayer.GetMilitaryAI()->ResetNumberOfTimesOpsBuildSkippedOver();
-				}
-				return;
 			}
 		}
 	}
@@ -16379,6 +16415,10 @@ void CvCity::SetGarrison(CvUnit* pUnit)
 		if (!bPreviousGarrison)
 		{
 			ChangeBaseYieldRateFromPolicies(YIELD_CULTURE, GET_PLAYER(getOwner()).GetPlayerPolicies()->GetNumericModifier(POLICYMOD_CULTURE_FROM_GARRISON));
+			if(GET_PLAYER(getOwner()).IsGarrisonFreeMaintenance())
+			{
+				GET_PLAYER(getOwner()).changeExtraUnitCost(-pUnit->getUnitInfo().GetExtraMaintenanceCost());
+			}
 
 			if (pUnit != NULL && pUnit->GetReligiousPressureModifier() != 0)
 			{
@@ -16401,6 +16441,15 @@ void CvCity::SetGarrison(CvUnit* pUnit)
 				}
 			}
 		}
+		else
+		{
+			if(GET_PLAYER(getOwner()).IsGarrisonFreeMaintenance())
+			{
+				int iMaintenanceChange = -pUnit->getUnitInfo().GetExtraMaintenanceCost();
+				if(pOldGarrison != NULL) iMaintenanceChange += pOldGarrison->getUnitInfo().GetExtraMaintenanceCost();
+				GET_PLAYER(getOwner()).changeExtraUnitCost(iMaintenanceChange);
+			}
+		}
 	}
 	else
 	{
@@ -16410,6 +16459,10 @@ void CvCity::SetGarrison(CvUnit* pUnit)
 		if (bPreviousGarrison)
 		{
 			ChangeBaseYieldRateFromPolicies(YIELD_CULTURE, -GET_PLAYER(getOwner()).GetPlayerPolicies()->GetNumericModifier(POLICYMOD_CULTURE_FROM_GARRISON));
+			if(pOldGarrison != NULL && GET_PLAYER(pOldGarrison->getOwner()).IsGarrisonFreeMaintenance())
+			{
+				GET_PLAYER(pOldGarrison->getOwner()).changeExtraUnitCost(pOldGarrison->getUnitInfo().GetExtraMaintenanceCost());
+			}
 
 			if (pOldGarrison != NULL && pOldGarrison->GetReligiousPressureModifier() != 0)
 			{
@@ -23341,6 +23394,11 @@ int CvCity::getBaseYieldRateTimes100(const YieldTypes eYield, CvString* tooltipS
 	if (tooltipSink)
 		GC.getGame().BuildYieldTimes100HelpText(tooltipSink, "TXT_KEY_YIELD_FROM_MISC", iTempYield, szIconString);
 
+
+	iTempYield = GetYieldFromPreviousGoldenAges(eYield) * 100;
+	iYield += iTempYield;
+	if (tooltipSink)
+		GC.getGame().BuildYieldTimes100HelpText(tooltipSink, "TXT_KEY_YIELD_FROM_PREVIOUS_GOLDEN_AGES", iTempYield, szIconString);
 		
 	if (isCapital())
 	{
@@ -24004,7 +24062,6 @@ void CvCity::ChangeYieldFromPreviousGoldenAges(YieldTypes eIndex, int iChange)
 		m_aiYieldFromPreviousGoldenAges[eIndex] = m_aiYieldFromPreviousGoldenAges[eIndex] + iChange;
 		ASSERT(GetYieldFromPreviousGoldenAges(eIndex) >= 0);
 
-		ChangeBaseYieldRateFromMisc(eIndex, iChange);
 		UpdateAllNonPlotYields(false);
 	}
 }
@@ -31674,6 +31731,7 @@ void CvCity::Serialize(City& city, Visitor& visitor)
 	visitor(city.m_aiYieldFromBorderGrowth);
 	visitor(city.m_aiYieldFromPolicyUnlock);
 	visitor(city.m_aiYieldFromPurchase);
+	visitor(city.m_aiYieldFromPurchaseGlobal);
 	visitor(city.m_aiYieldFromFaithPurchase);
 	visitor(city.m_aiYieldFromUnitLevelUp);
 	visitor(city.m_aiYieldFromUnitLevelUpGlobal);
@@ -31717,6 +31775,7 @@ void CvCity::Serialize(City& city, Visitor& visitor)
 	visitor(city.m_iLocalUnhappinessMod);
 	visitor(city.m_iExperiencePerGoldenAge);
 	visitor(city.m_iExperiencePerGoldenAgeCap);
+	visitor(city.m_iExperienceFromPreviousGoldenAges);
 	visitor(city.m_bNoWarmonger);
 	visitor(city.m_iEmpireSizeModifierReduction);
 	visitor(city.m_iNoStarvationNonSpecialist);

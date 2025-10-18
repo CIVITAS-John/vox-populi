@@ -432,6 +432,8 @@ CvPlayer::CvPlayer() :
 	, m_iCachedCurrentWarValue()
 	, m_iLastSliceMoved() // not serialized
 	, m_viCoreCitiesForSpaceshipProduction()
+	, m_playersWeAreAtWarWith()
+	, m_playersAtWarWithInFuture()
 	, m_eEndTurnBlockingType(NO_ENDTURN_BLOCKING_TYPE)
 	, m_iEndTurnBlockingNotificationIndex(0)
 	, m_activeWaitingForEndTurnMessage(false)
@@ -1589,6 +1591,8 @@ void CvPlayer::uninit()
 	m_iNumFreeTenets = 0;
 	m_iEmpireSizeModifierPerCityMod = 0;
 	m_iNumFreeGreatPeople = 0;
+	m_playersWeAreAtWarWith.clear();
+	m_playersAtWarWithInFuture.clear();
 	m_iNumMayaBoosts = 0;
 	m_iNumFaithGreatPeople = 0;
 	m_iNumArchaeologyChoices = 0;
@@ -13766,56 +13770,6 @@ void CvPlayer::foundCity(int iX, int iY, ReligionTypes eReligion, bool bForce, C
 
 		bool bResult = false;
 		LuaSupport::CallHook(pkScriptSystem, "PlayerCityFounded", args.get(), bResult);
-	}
-}
-
-void CvPlayer::cityBoost(int iX, int iY, CvUnitEntry* pkUnitEntry, int iExtraPlots, int iPopChange, int iFoodPercent)
-{
-	//Advanced Settler Buildings
-	if(pkUnitEntry && !isMinorCiv() && !isBarbarian())
-	{
-		CvPlot* pPlot = GC.getMap().plot(iX, iY);
-		CvCity* pCity = pPlot ? pPlot->getPlotCity() : NULL;
-
-		if(!pCity)
-			return;
-
-		const int iNumBuildingClassInfos = GC.getNumBuildingClassInfos();
-		const CvCivilizationInfo& thisCivilization = getCivilizationInfo();
-		for(int iBuildingClassLoop = 0; iBuildingClassLoop < iNumBuildingClassInfos; iBuildingClassLoop++)
-		{
-			const BuildingClassTypes eBuildingClass = (BuildingClassTypes) iBuildingClassLoop;
-			CvBuildingClassInfo* pkBuildingClassInfo = GC.getBuildingClassInfo(eBuildingClass);
-			if(!pkBuildingClassInfo)
-			{
-				continue;
-			}
-			if(pkUnitEntry->GetBuildOnFound(eBuildingClass))
-			{
-				const BuildingTypes eFreeBuilding = (BuildingTypes)(thisCivilization.getCivilizationBuildings(eBuildingClass));
-				if(pCity->isValidBuildingLocation(eFreeBuilding))
-				{
-					pCity->GetCityBuildings()->SetNumRealBuilding(eFreeBuilding, 1, true);
-				}
-			}
-		}
-
-		pCity->changePopulation(iPopChange, true, true);
-
-		//additional food to prevent instant-starvation
-		pCity->changeFood((pCity->growthThreshold() * iFoodPercent / 100));
-
-		//And a little territory to boot
-		for (int i = 0; i < iExtraPlots; i++)
-		{
-			CvPlot* pPlotToAcquire = pCity->GetNextBuyablePlot(false);
-
-			// maybe the player owns ALL of the plots or there are none available?
-			if(pPlotToAcquire)
-			{
-				pCity->DoAcquirePlot(pPlotToAcquire->getX(), pPlotToAcquire->getY());
-			}
-		}
 	}
 }
 
@@ -33640,7 +33594,6 @@ void CvPlayer::setLeaderType(LeaderHeadTypes eNewLeader)
 		setPersonalityType(eNewLeader);
 
 		// Update the player's traits (Leader_Traits)
-		GetPlayerTraits()->Reset();
 		GetPlayerTraits()->InitPlayerTraits();
 		recomputePolicyCostModifier();
 
@@ -41901,6 +41854,7 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 	CvCity* pCapital = getCapitalCity();
 
 	GetPlayerTraits()->InitPlayerTraits();
+	bool bGarrisonFreeMaintenancePre = IsGarrisonFreeMaintenance();
 
 	ChangeCulturePerWonder(pkPolicyInfo->GetCulturePerWonder() * iChange);
 	ChangeCultureWonderMultiplier(pkPolicyInfo->GetCultureWonderMultiplier() * iChange);
@@ -42282,6 +42236,10 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 		if (pLoopCity->HasGarrison())
 		{
 			iCityCultureChange += pkPolicyInfo->GetCulturePerGarrisonedUnit() * iChange;
+			if(IsGarrisonFreeMaintenance() != bGarrisonFreeMaintenancePre)
+			{
+				changeExtraUnitCost(-pLoopCity->GetGarrisonedUnit()->getUnitInfo().GetExtraMaintenanceCost() * iChange);
+			}
 		}
 		pLoopCity->ChangeBaseYieldRateFromPolicies(YIELD_CULTURE, iCityCultureChange);
 
@@ -42677,16 +42635,6 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 						for (int iUnitLoop = 0; iUnitLoop < iNumFreeUnits; iUnitLoop++)
 						{
 							pCapital->SpawnFreeUnit(eUnit);
-						}
-
-						// If a human player chooses this policy to get a worker and it is their first worker, we need to figure out what it can do
-						if (isHuman(ISHUMAN_AI_POLICY_CHOICE))
-						{
-							int iNumUnits = GetNumUnitsOfType(eUnit);
-							if (iNumUnits == iNumFreeUnits && (pkUnitInfo->GetDefaultUnitAIType() == UNITAI_WORKER || pkUnitInfo->GetDefaultUnitAIType() == UNITAI_WORKER_SEA))
-							{
-								GetBuilderTaskingAI()->UpdateImprovementPlots();
-							}
 						}
 					}
 
