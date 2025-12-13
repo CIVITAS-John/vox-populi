@@ -719,7 +719,19 @@ void CvConnectionService::ProcessMessages()
 		
 		// If we are pausing, sleep for 20ms before checking again
 		if (!ShouldPauseGameCore()) break;
+
+		// We need to release the game lock to prevent clogging
+		bool bHadLock = gDLL->HasGameCoreLock();
+		if (bHadLock)
+		{
+			gDLL->ReleaseGameCoreLock();
+		}
 		Sleep(20);
+		// Restore game core lock if we had it
+		if (bHadLock)
+		{
+			gDLL->GetGameCoreLock();
+		}
 	}
 
 	// Check memory usage every 60 seconds (debug)
