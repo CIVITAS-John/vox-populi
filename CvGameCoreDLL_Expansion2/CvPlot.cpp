@@ -2917,7 +2917,7 @@ BuildTypes CvPlot::GetBuildTypeFromImprovement(ImprovementTypes eImprovement) co
 bool CvPlot::canBuild(BuildTypes eBuild, PlayerTypes ePlayer, bool bTestVisible, bool bTestPlotOwner, bool bTestXAdjacent) const
 {
 	static const ImprovementTypes eFeitoria = (ImprovementTypes)GC.getInfoTypeForString("IMPROVEMENT_FEITORIA");
-	TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+	TeamTypes eTeam = ePlayer != NO_PLAYER ? GET_PLAYER(ePlayer).getTeam() : NO_TEAM;
 
 	ImprovementTypes eImprovement;
 	ImprovementTypes eFinalImprovementType;
@@ -7975,7 +7975,7 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 		}
 	}
 
-	if (eBuilder != NO_PLAYER && eNewValue != NO_IMPROVEMENT && getOwner() != NO_PLAYER && GET_PLAYER(getOwner()).isMinorCiv() && GET_PLAYER(eBuilder).isMajorCiv() && !GC.getImprovementInfo(eNewValue)->IsCreatedByGreatPerson())
+	if (eBuilder != NO_PLAYER && eNewValue != NO_IMPROVEMENT && getOwner() != NO_PLAYER && GET_PLAYER(getOwner()).isMinorCiv() && GET_PLAYER(eBuilder).isMajorCiv() && !GC.getImprovementInfo(eNewValue)->IsCreatedByGreatPerson() && !GC.getImprovementInfo(eNewValue)->IsRemovesResource())
 	{
 		bNewImprovementGiftFromMajor = true;
 	}
@@ -8391,7 +8391,22 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 										CvResourceInfo* pSelectedResourceInfo = GC.getResourceInfo(eSelectedResource);
 										ASSERT(pSelectedResourceInfo);
 										NotificationTypes eNotificationType = NO_NOTIFICATION_TYPE;
-										strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_RESOURCE", pSelectedResourceInfo->GetTextKey());
+
+										ResourceTypes eArtifactResource = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_ARTIFACTS", true);
+										ResourceTypes eHiddenArtifactResource = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_HIDDEN_ARTIFACTS", true);
+
+										if (eSelectedResource == eArtifactResource)
+										{
+											strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_ARTIFACTS");
+										}
+										else if (eSelectedResource == eHiddenArtifactResource)
+										{
+											strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_HIDDEN_ARTIFACTS");
+										}
+										else
+										{
+											strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_RESOURCE", pSelectedResourceInfo->GetTextKey());
+										}
 
 										CvString strSummary = GetLocalizedText("TXT_KEY_NOTIFICATION_SUMMARY_FOUND_RESOURCE", pSelectedResourceInfo->GetTextKey());
 
@@ -9855,7 +9870,7 @@ int CvPlot::calculateNatureYield(YieldTypes eYield, PlayerTypes ePlayer, Feature
 	{
 		CvResourceInfo* pkResourceInfo = GC.getResourceInfo(eResource);
 		CvImprovementEntry* pkImprovementInfo = eImprovement != NO_IMPROVEMENT ? GC.getImprovementInfo(eImprovement) : NULL;
-		if (pkResourceInfo && (!BALANCE_NO_RESOURCE_YIELDS_FROM_GP_IMPROVEMENT || !pkImprovementInfo || !pkImprovementInfo->ConnectsAllResources()))
+		if (pkResourceInfo && (!MOD_BALANCE_NO_RESOURCE_YIELDS_FROM_GP_IMPROVEMENT || !pkImprovementInfo || !pkImprovementInfo->ConnectsAllResources()))
 			iYield += pkResourceInfo->getYieldChange(eYield);
 	}
 
@@ -15732,6 +15747,14 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 	if (eImprovement == NO_IMPROVEMENT)
 		return 0;
 
+	bool bExistingImprovement = eBuild == NO_BUILD;
+	if (!bExistingImprovement)
+	{
+		CvBuildInfo* pkBuildInfo = GC.getBuildInfo(eBuild);
+		if (pkBuildInfo && pkBuildInfo->isRepair())
+			bExistingImprovement = true;
+	}
+
 	CvImprovementEntry* pkImprovementInfo = GC.getImprovementInfo(eImprovement);
 	int iImprovementDefenseModifier = pkImprovementInfo->GetDefenseModifier();
 	int iImprovementDamage = pkImprovementInfo->GetNearbyEnemyDamage();
@@ -15796,7 +15819,7 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 						ImprovementTypes eAdjacentImprovement = it != sState.mChangedPlotImprovements.end() ? it->second.second : NO_IMPROVEMENT;
 
 						// If we are not planning on building an improvement here, use the one that exists already
-						if (eAdjacentImprovement == NO_IMPROVEMENT && !pLoopAdjacentAdjacentPlot->IsImprovementPillaged())
+						if (eAdjacentImprovement == NO_IMPROVEMENT)
 							eAdjacentImprovement = pLoopAdjacentAdjacentPlot->getImprovementType();
 
 						if (eAdjacentImprovement == NO_IMPROVEMENT)
@@ -15819,7 +15842,7 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 				ImprovementTypes eAdjacentImprovement = it != sState.mChangedPlotImprovements.end() ? it->second.second : NO_IMPROVEMENT;
 
 				// If we are not planning on building an improvement here, use the one that exists already
-				if (eAdjacentImprovement == NO_IMPROVEMENT && !pAdjacentPlot->IsImprovementPillaged())
+				if (eAdjacentImprovement == NO_IMPROVEMENT)
 					eAdjacentImprovement = pAdjacentPlot->getImprovementType();
 
 				if (eAdjacentImprovement != NO_IMPROVEMENT)
@@ -15832,24 +15855,25 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 			}
 			else if (pAdjacentPlot->isOwned() && pAdjacentPlot->getTeam() != eTeam && GET_PLAYER(pAdjacentPlot->getOwner()).isMajorCiv())
 			{
-				iAdjacentOtherPlayerLand++;
+
+				if (iCultureBombRadius >= iRingID && !bExistingImprovement && !pAdjacentPlot->isCity() && !pAdjacentPlot->IsStealBlockedByImprovement())
+					iAdjacentOwnedLand++;
+				else
+					iAdjacentOtherPlayerLand++;
 
 				CivApproachTypes eApproach = pDiplomacyAI->GetCivApproach(pAdjacentPlot->getOwner());
 				StrengthTypes eStrength = pDiplomacyAI->GetMilitaryStrengthComparedToUs(pAdjacentPlot->getOwner());
 
 				iMaxAdjacentThreat = max(iMaxAdjacentThreat, GetDefensiveApproachMultiplierTimes100(eApproach) * GetDefensiveStrengthMultiplierTimes100(eStrength) / 100);
-
-				if (iCultureBombRadius >= iRingID && eBuild != NO_BUILD && !pAdjacentPlot->isCity() && !pAdjacentPlot->IsStealBlockedByImprovement())
-					iAdjacentOwnedLand++;
 			}
 		}
 	}
 
 	// No defensive utility from building here
-	if (iMaxAdjacentThreat == 0 || iAdjacentOtherPlayerLand<3)
+	if (!bExistingImprovement && (iMaxAdjacentThreat == 0 || iAdjacentOtherPlayerLand < 3))
 		return 0;
 
-	bool bIgnoreFeature = eBuild != NO_BUILD && getFeatureType() != NO_FEATURE && GC.getBuildInfo(eBuild)->isFeatureRemove(getFeatureType());
+	bool bIgnoreFeature = !bExistingImprovement && getFeatureType() != NO_FEATURE && GC.getBuildInfo(eBuild)->isFeatureRemove(getFeatureType());
 
 	int iDefenseModifier = defenseModifier(eTeam, true, bIgnoreFeature) + iImprovementDefenseModifier;
 

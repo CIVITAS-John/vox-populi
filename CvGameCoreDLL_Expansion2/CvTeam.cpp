@@ -32,6 +32,7 @@
 #include "CvPlayerManager.h"
 #include "CvCitySpecializationAI.h"
 #include "CvEnumMapSerialization.h"
+#include "CvDllNetMessageExt.h"
 
 #include "CvDllUnit.h"
 
@@ -1202,6 +1203,9 @@ bool CvTeam::canDeclareWar(TeamTypes eTeam, PlayerTypes eOriginatingPlayer)
 //	-----------------------------------------------------------------------------------------------
 void CvTeam::declareWar(TeamTypes eTeam, bool bDefensivePact, PlayerTypes eOriginatingPlayer)
 {
+	if (GET_TEAM(eTeam).getNumMembers() == 0)
+		return;
+
 	DoDeclareWar(eOriginatingPlayer, true, eTeam, bDefensivePact);
 
 	CvPlayerManager::Refresh(true);
@@ -6226,18 +6230,13 @@ void CvTeam::setHasTech(TechTypes eIndex, bool bNewValue, PlayerTypes ePlayer, b
 										pLoopPlot->updateSymbols();
 									}
 
-									for (int iI = 0; iI < MAX_PLAYERS; iI++)
+									if (pLoopPlot->getTeam() == GetID())
 									{
-										const PlayerTypes eLoopPlayer = static_cast<PlayerTypes>(iI);
-										CvPlayerAI& kLoopPlayer = GET_PLAYER(eLoopPlayer);
-										if (kLoopPlayer.isAlive() && kLoopPlayer.getTeam() == GetID() && pLoopPlot->getOwner() == eLoopPlayer)
+										// slewis - added in so resources wouldn't be double counted when the minor civ researches the technology
+										if (!(GET_PLAYER(pLoopPlot->getOwner()).isMinorCiv() && pLoopPlot->IsImprovedByGiftFromMajor()))
 										{
-											// slewis - added in so resources wouldn't be double counted when the minor civ researches the technology
-											if (!(kLoopPlayer.isMinorCiv() && pLoopPlot->IsImprovedByGiftFromMajor()))
-											{
-												// revealed resources are unimproved unless this tech also makes the resource improvable, which is checked later
-												kLoopPlayer.addResourcesOnPlotToUnimproved(pLoopPlot);
-											}
+											// revealed resources are unimproved unless this tech also makes the resource improvable, which is checked later
+											GET_PLAYER(pLoopPlot->getOwner()).addResourcesOnPlotToUnimproved(pLoopPlot);
 										}
 									}
 
@@ -9431,19 +9430,19 @@ void CvTeam::DoEndVassal(TeamTypes eTeam, bool bPeaceful, bool bSuppressNotifica
 			pOurPlayer->GetDiplomacyAI()->DoWeEndedVassalageWithSomeone(eTeam);
 			GET_TEAM(eTeam).SetVassalTax(eOurPlayer, 0);
 			GET_TEAM(eTeam).SetNumTurnsSinceVassalTaxSet(eOurPlayer, -1);
-		}
 
-		// remove spies as diplomats
-		if (!GC.getGame().isOption(GAMEOPTION_NO_ESPIONAGE))
-		{
-			for (int iMasterPlayerLoop = 0; iMasterPlayerLoop < MAX_CIV_PLAYERS; iMasterPlayerLoop++)
+			// remove spies as diplomats
+			if (!GC.getGame().isOption(GAMEOPTION_NO_ESPIONAGE))
 			{
-				PlayerTypes eMasterPlayer = (PlayerTypes)iMasterPlayerLoop;
-				CvPlayer* pMasterPlayer = &GET_PLAYER(eMasterPlayer);
-				if (pMasterPlayer->isAlive() && pMasterPlayer->getTeam() == eTeam)
+				for (int iMasterPlayerLoop = 0; iMasterPlayerLoop < MAX_CIV_PLAYERS; iMasterPlayerLoop++)
 				{
-					CvPlayerEspionage* pMasterEspionage = pMasterPlayer->GetEspionage();
-					pMasterEspionage->DeleteDiplomatForVassal(eOurPlayer);
+					PlayerTypes eMasterPlayer = (PlayerTypes)iMasterPlayerLoop;
+					CvPlayer* pMasterPlayer = &GET_PLAYER(eMasterPlayer);
+					if (pMasterPlayer->isAlive() && pMasterPlayer->getTeam() == eTeam)
+					{
+						CvPlayerEspionage* pMasterEspionage = pMasterPlayer->GetEspionage();
+						pMasterEspionage->DeleteDiplomatForVassal(eOurPlayer);
+					}
 				}
 			}
 		}
@@ -9607,21 +9606,7 @@ void CvTeam::DoEndVassal(TeamTypes eTeam, bool bPeaceful, bool bSuppressNotifica
 // We liberate eTeam, if we can
 void CvTeam::DoLiberateVassal(TeamTypes eTeam)
 {
-	if (!CanLiberateVassal(eTeam))
-		return;
-
-	// End our vassalage peacefully
-	GET_TEAM(eTeam).DoEndVassal(GetID(), true, false);
-
-	// Find our vassals
-	for (int iVassalPlayer = 0; iVassalPlayer < MAX_MAJOR_CIVS; iVassalPlayer++)
-	{
-		PlayerTypes eVassalPlayer = (PlayerTypes) iVassalPlayer;
-		if (GET_PLAYER(eVassalPlayer).isAlive() && GET_PLAYER(eVassalPlayer).getTeam() == eTeam)
-		{
-			GET_PLAYER(eVassalPlayer).GetDiplomacyAI()->DoLiberatedFromVassalage(GetID(), false);
-		}
-	}
+	NetMessageExt::Send::DoLiberateVassal(GetID(), eTeam);
 }
 //	----------------------------------------------------------------------------------------------
 // Update vassal war/peace relationships for one team
@@ -10168,43 +10153,7 @@ bool CvTeam::CanSetVassalTax(PlayerTypes ePlayer) const
 // We apply a vassal tax to ePlayer
 void CvTeam::DoApplyVassalTax(PlayerTypes ePlayer, int iPercent)
 {
-	if (!CanSetVassalTax(ePlayer))
-		return;
-
-	iPercent = max(iPercent, /*0*/ GD_INT_GET(VASSALAGE_VASSAL_TAX_PERCENT_MINIMUM));
-	iPercent = min(iPercent, /*25*/ GD_INT_GET(VASSALAGE_VASSAL_TAX_PERCENT_MAXIMUM));
-
-	int iCurrentTaxRate = GetVassalTax(ePlayer);
-	
-	SetNumTurnsSinceVassalTaxSet(ePlayer, 0);
-	SetVassalTax(ePlayer, iPercent);
-
-	// Note: using EspionageScreen dirty for this.
-	GC.GetEngineUserInterface()->setDirty(EspionageScreen_DIRTY_BIT, true);
-
-	// notify diplo AI if there was some change		
-	if(iPercent != iCurrentTaxRate)
-	{
-		GET_PLAYER(ePlayer).GetDiplomacyAI()->DoVassalTaxChanged(GetID(), (iPercent < iCurrentTaxRate));	
-
-		// send a notification if there was some change
-		Localization::String locString;
-		Localization::String summaryString;
-		if(iPercent > iCurrentTaxRate)
-		{
-			locString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_INCREASED");
-			summaryString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_INCREASED_SUMMARY");
-		}
-		else
-		{
-			locString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_DECREASED");
-			summaryString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_DECREASED_SUMMARY");
-		}
-
-		locString << getName().GetCString() << iCurrentTaxRate << iPercent;
-
-		GET_PLAYER(ePlayer).GetNotifications()->Add(NOTIFICATION_GENERIC, locString.toUTF8(), summaryString.toUTF8(), -1, -1, this->getLeaderID());
-	}
+	NetMessageExt::Send::DoApplyVassalTax(GetID(), ePlayer, iPercent);
 }
 
 //	--------------------------------------------------------------------------------

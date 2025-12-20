@@ -446,6 +446,7 @@ CvPlayer::CvPlayer() :
 	, m_iNumArchaeologyChoices()
 	, m_eFaithPurchaseType(NO_AUTOMATIC_FAITH_PURCHASE)
 	, m_iFaithPurchaseIndex()
+	, m_bDisableAutomaticFaithPurchase()
 	, m_bProcessedAutoMoves(false)
 #pragma warning(push)
 #pragma warning(disable:4355 )
@@ -1599,6 +1600,7 @@ void CvPlayer::uninit()
 	m_iCachedCurrentWarValue = 0;
 	m_eFaithPurchaseType = NO_AUTOMATIC_FAITH_PURCHASE;
 	m_iFaithPurchaseIndex = 0;
+	m_bDisableAutomaticFaithPurchase = false;
 	m_iLastSliceMoved = 0;
 	m_viCoreCitiesForSpaceshipProduction.clear();
 
@@ -3879,7 +3881,7 @@ CvCity* CvPlayer::acquireCity(CvCity* pCity, bool bConquest, bool bGift, bool bO
 						kData.m_bTransferred = false;
 						vcGreatWorkData.push_back(kData);
 
-						CvPlayer &kOldOwner = GET_PLAYER(eOldOwner); // Recursive: shouldn't this be eOldOwner?
+						CvPlayer &kOldOwner = GET_PLAYER(eOldOwner);
 						if (kOldOwner.GetCulture()->GetSwappableWritingIndex() == iGreatWork)
 							kOldOwner.GetCulture()->SetSwappableWritingIndex(-1);
 
@@ -6761,7 +6763,7 @@ void CvPlayer::DoCancelEventChoice(EventChoiceTypes eChosenEventChoice)
 					iBonus *= -1;
 					if(iBonus != 0)
 					{
-						changeNumResourceTotal(eResource, iBonus);
+						changeNumResourceTotal(eResource, iBonus, true);
 						bChanged = true;
 					}
 				}
@@ -8080,7 +8082,7 @@ void CvPlayer::DoEventChoice(EventChoiceTypes eEventChoice, EventTypes eEvent, b
 					int iBonus = pkEventChoiceInfo->getEventResourceChange(eResource);
 					if(iBonus != 0)
 					{
-						changeNumResourceTotal(eResource, iBonus);
+						changeNumResourceTotal(eResource, iBonus, true);
 					}
 				}
 			}
@@ -8481,6 +8483,12 @@ void CvPlayer::DoLiberatePlayer(PlayerTypes ePlayer, int iOldCityID, bool bForce
 		}
 	}
 
+	// Removing a Sphere of Influence doesn't count as conquering the city
+	if (bSphereRemoval)
+	{
+		kPlayer.SetEverConqueredBy(GetID(), false);
+	}
+
 	// Diplo bonus for returning the city
 	if (!bForced && isMajorCiv() && kPlayer.isMajorCiv())
 	{
@@ -8602,7 +8610,7 @@ void CvPlayer::DoLiberatePlayer(PlayerTypes ePlayer, int iOldCityID, bool bForce
 
 				if (pMemberDiploAI->GetCoopWarAgreementScore(ePlayer) < 0)
 				{
-					pDiploAI->SetCoopWarAgreementScore(ePlayer, 0);
+					pMemberDiploAI->SetCoopWarAgreementScore(ePlayer, 0);
 				}
 
 				// Forget war history
@@ -26207,7 +26215,7 @@ void CvPlayer::doInstantYield(InstantYieldType iType, bool bCityFaith, GreatPers
 					{
 						continue;
 					}
-					iValue += (pUnit->getYieldFromScouting(eYield) * pUnit->GetNumTilesRevealedThisTurn());
+					iValue += pUnit->getYieldFromScouting(eYield) * iPassYield;
 					break;
 				}
 				case INSTANT_YIELD_TYPE_ANCIENT_RUIN:
@@ -26756,7 +26764,7 @@ void CvPlayer::doInstantYield(InstantYieldType iType, bool bCityFaith, GreatPers
 	CvNotifications* pNotifications = GetNotifications();
 	if(!bSuppress && pNotifications && !totalyieldString.empty())
 	{
-		if (!MOD_NOTIFICATION_SETTINGS || !IsInstantYieldNotificationDisabled(iType))
+		if (!IsInstantYieldNotificationDisabled(iType))
 		{
 			Localization::String strSummary = Localization::Lookup("TXT_KEY_NOTIFICATION_SUMMARY_INSTANT_YIELD");
 			if(pCity != NULL)
@@ -32842,6 +32850,65 @@ void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default
 	if(!GC.getGame().isNetworkMultiPlayer() && m_eID==GC.getGame().getFirstAlivePlayer() && !bNewValue)
 		gDLL->AutoSave(false, true);
 
+	if (!bNewValue)
+	{
+		// check if resource numbers are stored correctly. there were a few issues with the calculations in the past
+		for (int iJ = 0; iJ < GC.getNumResourceInfos(); iJ++)
+		{
+			int iCntImproved = 0;
+			int iCntUnimproved = 0;
+			for (int iI = 0; iI < GC.getMap().numPlots(); iI++)
+			{
+				CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(iI);
+				if (pLoopPlot->getOwner() == GetID())
+				{
+					ResourceTypes eRes = pLoopPlot->getResourceType(getTeam());
+					if (eRes == (ResourceTypes)iJ)
+					{
+						CvResourceInfo* pResourceInfo = GC.getResourceInfo(eRes);
+						int iNumExtraLuxury = 0;
+						if (pResourceInfo->getResourceUsage() == RESOURCEUSAGE_LUXURY)
+						{
+							CvCity* pCity = pLoopPlot->getOwningCity();
+							if (pCity && pCity->IsExtraLuxuryResources())
+							{
+								iNumExtraLuxury = 1;
+							}
+						}
+						int iNumResource = pLoopPlot->getNumResource();
+						if (pResourceInfo->getResourceUsage() == RESOURCEUSAGE_STRATEGIC)
+						{
+							int iQuantityMod = GetPlayerTraits()->GetStrategicResourceQuantityModifier(pLoopPlot->getTerrainType());
+							iNumResource *= 100 + iQuantityMod;
+							iNumResource /= 100;
+						}
+
+						if (GetPlayerTraits()->GetResourceQuantityModifier(eRes) > 0)
+						{
+							int iQuantityMod = GetPlayerTraits()->GetResourceQuantityModifier(eRes);
+							iNumResource *= 100 + iQuantityMod;
+							iNumResource /= 100;
+						}
+
+						if (pLoopPlot->IsResourceImprovedForOwner())
+						{
+							iCntImproved += iNumResource;
+							// ExtraLuxury resources are stored in m_paiNumResourceFromBuildings, but we can't compare it with the counted value because it also contains resources from other sources
+						}
+						else
+						{
+							iCntUnimproved += iNumResource + iNumExtraLuxury;
+
+						}
+					}
+				}
+			}
+			const char* szResName = GC.getResourceInfo((ResourceTypes)iJ)->GetText();
+			ASSERT(m_paiNumResourceFromTiles[iJ] == iCntImproved, "Mismatch m_paiNumResourceFromTiles for Resource %s. Stored: %d, counted: %d.", szResName, m_paiNumResourceFromTiles[iJ], iCntImproved);
+			ASSERT(m_paiNumResourceUnimproved[iJ] == iCntUnimproved, "Mismatch m_paiNumResourceUnimproved for Resource %s. Stored: %d, counted: %d.", szResName, m_paiNumResourceUnimproved[iJ], iCntUnimproved);
+		}
+	}
+
 	if(isTurnActive() != bNewValue)
 	{
 		CvGame& kGame = GC.getGame();
@@ -37229,15 +37296,15 @@ void CvPlayer::changeNumResourceTotal(ResourceTypes eIndex, int iChange, bool bF
 
 				if(eUsage == RESOURCEUSAGE_STRATEGIC || eUsage == RESOURCEUSAGE_LUXURY)
 				{
-					GET_PLAYER(eBestRelationsPlayer).changeResourceFromMinors(eIndex, iChange);
-					changeResourceExport(eIndex, iChange);
-
 					// Someone new is getting the bonus - but do they have the tech to see it?
 					CvResourceInfo* pResource = GC.getResourceInfo(eIndex);
 					if (pResource)
 					{
-						if (IsResourceRevealed(eIndex))
+						if (GET_PLAYER(eBestRelationsPlayer).IsResourceRevealed(eIndex))
 						{
+							GET_PLAYER(eBestRelationsPlayer).changeResourceFromMinors(eIndex, iChange);
+							changeResourceExport(eIndex, iChange);
+
 							CvNotifications* pNotifications = GET_PLAYER(eBestRelationsPlayer).GetNotifications();
 							if (pNotifications && !GetMinorCivAI()->IsDisableNotifications())
 							{
@@ -38683,6 +38750,10 @@ void CvPlayer::changeImprovementCount(ImprovementTypes eIndex, int iChange, bool
 			pLoopCity->UpdateYieldPerXImprovement(((YieldTypes)iI), eIndex);
 		}
 	}
+	if (GetCorporations()->GetFranchisesPerImprovement(eIndex) > 0)
+	{
+		GetCorporations()->RecalculateNumFranchises();
+	}
 }
 
 int CvPlayer::getTotalImprovementsBuilt(ImprovementTypes eIndex) const
@@ -39050,7 +39121,7 @@ bool CvPlayer::isBuildingMaxedOut(BuildingTypes eIndex, int iExtra) const
 
 	int iMaxInstances = getMaxPlayerInstances(eIndex);
 
-	PRECONDITION(getBuildingClassCount(eBuildingClass) <= iMaxInstances, "BuildingClassCount is expected to be less than or match the number of max player instances plus extra player instances");
+	ASSERT(getBuildingClassCount(eBuildingClass) <= iMaxInstances, "BuildingClassCount is expected to be less than or match the number of max player instances plus extra player instances");
 
 	return ((getBuildingClassCount(eBuildingClass) + iExtra) >= iMaxInstances);
 }
@@ -42087,6 +42158,7 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_FAITH_COST_MODIFIER, pkPolicyInfo->GetFaithCostModifier() * iChange);
 	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_CULTURAL_PLUNDER_MULTIPLIER, pkPolicyInfo->GetCulturalPlunderMultiplier() * iChange);
 	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_STEAL_TECH_SLOWER_MODIFIER, pkPolicyInfo->GetStealTechSlowerModifier() * iChange);
+	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_STEAL_TECH_FASTER_MODIFIER, pkPolicyInfo->GetStealTechFasterModifier() * iChange);
 	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_CATCH_SPIES_MODIFIER, pkPolicyInfo->GetCatchSpiesModifier() * iChange);
 	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_BUILDING_PURCHASE_COST_MODIFIER, pkPolicyInfo->GetBuildingPurchaseCostModifier() * iChange);
 	GetPlayerPolicies()->ChangesNumericModifier(POLICYMOD_LAND_TRADE_GOLD_CHANGE, pkPolicyInfo->GetLandTradeRouteGoldChange() * iChange);
@@ -42756,12 +42828,68 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 				continue;
 
 			CvResourceInfo* pkResourceInfo = GC.getResourceInfo(eResource);
-			if (pkResourceInfo->getPolicyReveal() == ePolicy)
+			if (pkResourceInfo->getPolicyReveal() == ePolicy && IsResourceRevealed(eResource))
 			{
 				pLoopPlot->updateYield();
 				if (pLoopPlot->isRevealed(getTeam()))
 				{
 					pLoopPlot->setLayoutDirty(true);
+				}
+
+				if (pLoopPlot->getOwner() == GetID())
+				{
+					if (pLoopPlot->IsResourceImprovedForOwner(false))
+					{
+						addResourcesOnPlotToTotal(pLoopPlot);
+					}
+					else
+					{
+						addResourcesOnPlotToUnimproved(pLoopPlot);
+					}
+
+					// Notifications
+
+					CvNotifications* pNotifications = GetNotifications();
+					if (pNotifications)
+					{
+						CvString strBuffer;
+						CvString strSummary;
+						ResourceUsageTypes eResourceUsage = pkResourceInfo->getResourceUsage();
+						NotificationTypes eNotificationType = NO_NOTIFICATION_TYPE;
+
+						ResourceTypes eArtifactResource = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_ARTIFACTS", true);
+						ResourceTypes eHiddenArtifactResource = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_HIDDEN_ARTIFACTS", true);
+
+						if (eResource == eArtifactResource)
+						{
+							strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_ARTIFACTS");
+						}
+						else if (eResource == eHiddenArtifactResource)
+						{
+							strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_HIDDEN_ARTIFACTS");
+						}
+						else
+						{
+							strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_RESOURCE", pkResourceInfo->GetTextKey());
+						}
+
+						strSummary = GetLocalizedText("TXT_KEY_NOTIFICATION_SUMMARY_FOUND_RESOURCE", pkResourceInfo->GetTextKey());
+
+						switch (eResourceUsage)
+						{
+						case RESOURCEUSAGE_LUXURY:
+							eNotificationType = NOTIFICATION_DISCOVERED_LUXURY_RESOURCE;
+							break;
+						case RESOURCEUSAGE_STRATEGIC:
+							eNotificationType = NOTIFICATION_DISCOVERED_STRATEGIC_RESOURCE;
+							break;
+						case RESOURCEUSAGE_BONUS:
+							eNotificationType = NOTIFICATION_DISCOVERED_BONUS_RESOURCE;
+							break;
+						}
+
+						pNotifications->Add(eNotificationType, strBuffer, strSummary, pLoopPlot->getX(), pLoopPlot->getY(), eResource);
+					}
 				}
 			}
 		}
@@ -43655,6 +43783,7 @@ void CvPlayer::Serialize(Player& player, Visitor& visitor)
 	visitor(player.m_iNumArchaeologyChoices);
 	visitor(player.m_eFaithPurchaseType);
 	visitor(player.m_iFaithPurchaseIndex);
+	visitor(player.m_bDisableAutomaticFaithPurchase);
 	visitor(player.m_iFractionOriginalCapitalsUnderControl);
 	visitor(player.m_iAvgUnitExp100);
 	visitor(player.m_iNumMilitarySeaUnits);
@@ -45242,7 +45371,7 @@ int CvPlayer::GetAreaEffectModifier(AreaEffectType eType, DomainTypes eDomain, c
 		{
 			case AE_GREAT_GENERAL:
 			{
-				if (pUnit->IsGreatGeneral() || pUnit->IsGreatAdmiral())
+				if (pUnit->getUnitInfo().GetUnitAIType(UNITAI_GENERAL) || pUnit->GetGreatGeneralCount() > 0 || pUnit->getUnitInfo().GetUnitAIType(UNITAI_ADMIRAL) || pUnit->GetGreatAdmiralCount() > 0)
 					iResult = max(iResult, GetGreatGeneralCombatBonus() + GetPlayerTraits()->GetGreatGeneralExtraBonus() + pUnit->GetAuraEffectChange());
 				break;
 			}
@@ -46261,7 +46390,10 @@ void CvPlayer::DoUpdateCoreCitiesForSpaceshipProduction()
 {
 	m_viCoreCitiesForSpaceshipProduction.clear();
 
-	if (isHuman(ISHUMAN_AI_CITY_PRODUCTION) || !GetDiplomacyAI()->IsGoingForSpaceshipVictory())
+	if (isHuman(ISHUMAN_AI_CITY_PRODUCTION))
+		return;
+		
+	if (!GetDiplomacyAI()->IsGoingForSpaceshipVictory() && !GetDiplomacyAI()->IsCloseToSpaceshipVictory())
 		return;
 
 	int iNumCitiesToConsider = GD_INT_GET(AI_NUM_CORE_CITIES_FOR_SPACESHIP);
@@ -46331,6 +46463,9 @@ const vector<int>& CvPlayer::GetCoreCitiesForSpaceshipProduction() const
 /// the number of aluminum still needed for buildings in the core cities for spaceship parts (GetCoreCitiesForSpaceshipProduction)
 int CvPlayer::GetNumAluminumStillNeededForCoreCities() const
 {
+	if (!GetDiplomacyAI()->IsGoingForSpaceshipVictory() && !GetDiplomacyAI()->IsCloseToSpaceshipVictory())
+		return 0;
+
 	ResourceTypes eAluminum = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_ALUMINUM", true);
 
 	int iTotal = 0;
@@ -46373,7 +46508,7 @@ int CvPlayer::GetNumAluminumStillNeededForSpaceship() const
 	if (isBarbarian() || isMinorCiv())
 		return 0;
 
-	if (!GetDiplomacyAI()->IsGoingForSpaceshipVictory())
+	if (!GetDiplomacyAI()->IsGoingForSpaceshipVictory() && !GetDiplomacyAI()->IsCloseToSpaceshipVictory())
 		return 0;
 
 	if (getCapitalCity() == NULL)
@@ -46901,6 +47036,21 @@ int CvPlayer::GetFaithPurchaseIndex() const
 void CvPlayer::SetFaithPurchaseIndex(int iIndex)
 {
 	m_iFaithPurchaseIndex = iIndex;
+}
+
+bool CvPlayer::IsDisableAutomaticFaithPurchase() const
+{
+	return m_bDisableAutomaticFaithPurchase;
+}
+
+void CvPlayer::SetDisableAutomaticFaithPurchase(bool bValue)
+{
+	m_bDisableAutomaticFaithPurchase = bValue;
+}
+
+void CvPlayer::DoSetDisableAutomaticFaithPurchase(bool bValue)
+{
+	NetMessageExt::Send::SetDisableAutomaticFaithPurchase(m_eID, bValue);
 }
 
 int CvPlayer::GetNumFreePoliciesEver() const

@@ -263,6 +263,7 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 	Method(SaveReplay);
 
 	Method(AddPlayer);
+	Method(ChangeMinorPlayer);
 
 	Method(SetPlotExtraYield);
 	Method(ChangePlotExtraCost);
@@ -1855,6 +1856,12 @@ int CvLuaGame::lSaveReplay(lua_State* L)
 int CvLuaGame::lAddPlayer(lua_State* L)
 {
 	return BasicLuaMethod(L, &CvGame::addPlayer);
+}
+//------------------------------------------------------------------------------
+//void changeMinorPlayer(PlayerTypes eNewPlayer, MinorCivTypes m);
+int CvLuaGame::lChangeMinorPlayer(lua_State* L)
+{
+	return BasicLuaMethod(L, &CvGame::changeMinorPlayer);
 }
 //------------------------------------------------------------------------------
 //void setPlotExtraYield(int iX, int iY, YieldTypes eYield, int iExtraYield);
