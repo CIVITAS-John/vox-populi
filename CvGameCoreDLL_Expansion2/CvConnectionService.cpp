@@ -16,6 +16,7 @@ Opens an IPC channel that exposes the game's internal state to external services
 #include <iomanip>
 #include <cmath>
 #include <climits>
+#include <algorithm>
 #include <psapi.h>
 
 // Note: Buffer allocation moved to Setup() to avoid unnecessary memory usage when IPC is disabled
@@ -318,7 +319,7 @@ FILogFile* CvConnectionService::GetLogFile()
 DWORD WINAPI CvConnectionService::NamedPipeServerThread(LPVOID lpParam)
 {
 	CvConnectionService* pService = static_cast<CvConnectionService*>(lpParam);
-	
+
 	// Get pipe name from environment variable, default to "vox-deorum-bridge"
 	char pipeNameBuffer[256];
 	const char* envPipeName = getenv("VOX_DEORUM_PIPE_NAME");
@@ -437,10 +438,13 @@ DWORD WINAPI CvConnectionService::NamedPipeServerThread(LPVOID lpParam)
 // Handle a single client connection
 void CvConnectionService::HandleClientConnection(HANDLE hPipe)
 {
+	// Define chunk size for message splitting (32KB chunks)
+	const size_t OUTGOING_CHUNK_SIZE = 32768;
+
 	// Dynamic message buffer to avoid repeated allocations
 	std::string messageBuffer;
 	messageBuffer.reserve(262144); // Reserve initial capacity
-	
+
 	// Temporary read buffer for pipe operations
 	char readBuffer[262144];
 	DWORD bytesRead, bytesWritten;
@@ -456,19 +460,35 @@ void CvConnectionService::HandleClientConnection(HANDLE hPipe)
 			{
 				// Add delimiter to the message
 				outgoingMessage += "!@#$%^!";
-				
-				// Send the message to the Bridge Service
-				BOOL success = WriteFile(
-					hPipe,
-					outgoingMessage.c_str(),
-					(DWORD)outgoingMessage.length(),
-					&bytesWritten,
-					NULL);
-				
+
+				// Send the message in chunks if it's too large
+				size_t messageLength = outgoingMessage.length();
+				size_t bytesSent = 0;
+				BOOL success = TRUE;
+
+				while (bytesSent < messageLength && success)
+				{
+					// Calculate chunk size (don't exceed CHUNK_SIZE)
+					size_t chunkSize = std::min(OUTGOING_CHUNK_SIZE, messageLength - bytesSent);
+
+					// Send the chunk
+					success = WriteFile(
+						hPipe,
+						outgoingMessage.c_str() + bytesSent,
+						(DWORD)chunkSize,
+						&bytesWritten,
+						NULL);
+
+					if (success)
+					{
+						bytesSent += bytesWritten;
+					}
+				}
+
 				if (!success)
 				{
 					DWORD error = GetLastError();
-					
+
 					// If pipe is busy, put the message back and break inner loop
 					if (error == ERROR_PIPE_BUSY || error == ERROR_NO_DATA)
 					{
@@ -490,7 +510,7 @@ void CvConnectionService::HandleClientConnection(HANDLE hPipe)
 				else
 				{
 					std::stringstream ss;
-					ss << "HandleClientConnection - Sent outgoing message: " << outgoingMessage;
+					ss << "HandleClientConnection - Sent outgoing message (" << bytesSent << " bytes)";
 					Log(LOG_DEBUG, ss.str().c_str());
 				}
 			}
