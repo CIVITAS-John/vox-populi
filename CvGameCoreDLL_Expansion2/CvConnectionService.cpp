@@ -336,8 +336,8 @@ DWORD WINAPI CvConnectionService::NamedPipeServerThread(LPVOID lpParam)
 			PIPE_READMODE_MESSAGE |    // message-read mode
 			PIPE_NOWAIT,               // non-blocking mode
 			1,                         // max instances (only one client - Bridge Service)
-			65536,                      // output buffer size
-			65536,                      // input buffer size
+			262144,                      // output buffer size
+			262144,                      // input buffer size
 			0,                         // client time-out
 			NULL);                     // default security attributes
 		
