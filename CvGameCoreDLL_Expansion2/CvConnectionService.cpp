@@ -510,7 +510,7 @@ void CvConnectionService::HandleClientConnection(HANDLE hPipe)
 				else
 				{
 					std::stringstream ss;
-					ss << "HandleClientConnection - Sent outgoing message (" << bytesSent << " bytes)";
+					ss << "HandleClientConnection - Sent outgoing message: " << outgoingMessage;
 					Log(LOG_DEBUG, ss.str().c_str());
 				}
 			}
