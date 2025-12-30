@@ -293,9 +293,9 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 			break;
 		}
 		
-		// Add the actual message with truncation at 1024 bytes
+		// Add the actual message with truncation at 4096 bytes
 		std::string msgStr(message);
-		const size_t maxBytes = 1024;
+		const size_t maxBytes = 4096;
 		if (msgStr.length() > maxBytes) {
 			size_t truncatedLen = msgStr.length() - maxBytes;
 			msgStr = msgStr.substr(0, maxBytes);
@@ -305,7 +305,16 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 		}
 		
 		// Write to log file
-		pLog->Msg(ss.str().c_str());
+		// Vox Deorum: Use SEH to catch crashes in the game's logging system
+		__try
+		{
+			pLog->Msg(ss.str().c_str());
+		}
+		__except(EXCEPTION_EXECUTE_HANDLER)
+		{
+			// Vox Deorum: If logging fails, try to log a simple failure message
+			pLog->Msg("[ERROR] Previous log message failed to write");
+		}
 	}
 }
 
@@ -1569,7 +1578,7 @@ void CvConnectionService::RegisterLuaFunction(const char* name, lua_State* L, in
 	SendMessage(message);
 	
 	char buffer[512];
-	sprintf_s(buffer, sizeof(buffer), "Registered Lua function: %s", name);
+	sprintf_s(buffer, sizeof(buffer), "Registered Lua function: %s (L=%p, ref=%d)", name, L, ref);
 	Log(LOG_INFO, buffer);
 }
 
