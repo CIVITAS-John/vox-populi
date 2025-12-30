@@ -108,6 +108,9 @@ private:
 	// Get the log file for writing
 	FILogFile* GetLogFile();
 
+	// Vox Deorum: Safe logging with SEH to avoid C2712 error
+	static void SafeLogMessage(FILogFile* pLog, const char* message);
+
 	// Named Pipe server thread function
 	static DWORD WINAPI NamedPipeServerThread(LPVOID lpParam);
 	

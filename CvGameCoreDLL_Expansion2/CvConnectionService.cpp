@@ -303,18 +303,24 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 		} else {
 			ss << msgStr;
 		}
-		
+
 		// Write to log file
-		// Vox Deorum: Use SEH to catch crashes in the game's logging system
-		__try
-		{
-			pLog->Msg(ss.str().c_str());
-		}
-		__except(EXCEPTION_EXECUTE_HANDLER)
-		{
-			// Vox Deorum: If logging fails, try to log a simple failure message
-			pLog->Msg("[ERROR] Previous log message failed to write");
-		}
+		// Vox Deorum: Call separate function to handle SEH without object unwinding issues
+		SafeLogMessage(pLog, ss.str().c_str());
+	}
+}
+
+// Vox Deorum: Separate function to handle SEH without C2712 error
+void CvConnectionService::SafeLogMessage(FILogFile* pLog, const char* message)
+{
+	__try
+	{
+		pLog->Msg(message);
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER)
+	{
+		// Vox Deorum: If logging fails, try to log a simple failure message
+		pLog->Msg("[ERROR] Previous log message failed to write");
 	}
 }
 
