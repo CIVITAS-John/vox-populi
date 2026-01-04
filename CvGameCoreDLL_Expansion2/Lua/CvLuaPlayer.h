@@ -1538,6 +1538,9 @@ protected:
 	// Vox Deorum: Tactical zone APIs
 	static int lGetNumTacticalZones(lua_State* L);
 	static int lGetTacticalZone(lua_State* L);
+
+	// Vox Deorum: Settlement analysis
+	static int lGetBestSettlementInfo(lua_State* L);
 };
 
 namespace CvLuaArgs

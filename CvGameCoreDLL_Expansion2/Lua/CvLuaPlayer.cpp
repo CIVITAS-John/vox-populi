@@ -1543,6 +1543,7 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 
 	Method(GetNumTacticalZones); // Vox Deorum: Get number of tactical zones
 	Method(GetTacticalZone);     // Vox Deorum: Get tactical zone information
+	Method(GetBestSettlementInfo); // Vox Deorum: Get best settlement location info
 }
 //------------------------------------------------------------------------------
 void CvLuaPlayer::HandleMissingInstance(lua_State* L)
@@ -19930,4 +19931,66 @@ int CvLuaPlayer::lGetTacticalZone(lua_State* L)
 
 	lua_pushnil(L);
 	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get best settlement location information
+// Returns: hasPlot (boolean), info (string)
+//------------------------------------------------------------------------------
+int CvLuaPlayer::lGetBestSettlementInfo(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	if (!pkPlayer)
+	{
+		lua_pushboolean(L, false);
+		lua_pushstring(L, "");
+		return 2;
+	}
+
+	// Get the best settle plot
+	CvPlot* pSettlePlot = pkPlayer->GetBestSettlePlot(NULL);
+	if (!pSettlePlot)
+	{
+		lua_pushboolean(L, false);
+		lua_pushstring(L, "");
+		return 2;
+	}
+
+	// Build the information string
+	CvString result;
+	int iX = pSettlePlot->getX();
+	int iY = pSettlePlot->getY();
+
+	// Get distance from our closest city
+	int iOurDist = pkPlayer->GetCityDistancePathLength(pSettlePlot);
+
+	// Check if we have a valid distance (INT_MAX means no cities)
+	if (iOurDist == INT_MAX || iOurDist < 0)
+	{
+		// No valid distance, return simplest form
+		result.Format("Best Settlement Location: %d, %d", iX, iY);
+	}
+	else
+	{
+		// Get closest city overall
+		CvCity* pClosestCity = GC.getGame().GetClosestCityByPathLength(pSettlePlot, true);
+
+		if (pClosestCity && pClosestCity->getOwner() != pkPlayer->GetID())
+		{
+			// Closest city is foreign
+			int iTheirDist = GC.getGame().GetClosestCityDistancePathLength(pSettlePlot, true);
+			CvPlayer& foreignPlayer = GET_PLAYER(pClosestCity->getOwner());
+			result.Format("Best Settlement Location: %d, %d (%d tiles from us; near %s, %d tiles away)",
+				iX, iY, iOurDist, foreignPlayer.getCivilizationShortDescription(), iTheirDist);
+		}
+		else
+		{
+			// Closest city is ours or no closest city
+			result.Format("Best Settlement Location: %d, %d (%d tiles from us)", iX, iY, iOurDist);
+		}
+	}
+
+	lua_pushboolean(L, true);
+	lua_pushstring(L, result.c_str());
+	return 2;
 }
