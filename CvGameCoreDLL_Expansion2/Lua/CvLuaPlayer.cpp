@@ -19968,7 +19968,7 @@ int CvLuaPlayer::lGetBestSettlementInfo(lua_State* L)
 	if (iOurDist == INT_MAX || iOurDist < 0)
 	{
 		// No valid distance, return simplest form
-		result.Format("Best Settlement Location: %d, %d", iX, iY);
+		result.Format("%d, %d", iX, iY);
 	}
 	else
 	{
@@ -19980,13 +19980,13 @@ int CvLuaPlayer::lGetBestSettlementInfo(lua_State* L)
 			// Closest city is foreign
 			int iTheirDist = GC.getGame().GetClosestCityDistancePathLength(pSettlePlot, true);
 			CvPlayer& foreignPlayer = GET_PLAYER(pClosestCity->getOwner());
-			result.Format("Best Settlement Location: %d, %d (%d tiles from us; near %s, %d tiles away)",
+			result.Format("%d, %d (%d tiles from us; near %s, %d tiles away)",
 				iX, iY, iOurDist, foreignPlayer.getCivilizationShortDescription(), iTheirDist);
 		}
 		else
 		{
 			// Closest city is ours or no closest city
-			result.Format("Best Settlement Location: %d, %d (%d tiles from us)", iX, iY, iOurDist);
+			result.Format("%d, %d (%d tiles from us)", iX, iY, iOurDist);
 		}
 	}
 
