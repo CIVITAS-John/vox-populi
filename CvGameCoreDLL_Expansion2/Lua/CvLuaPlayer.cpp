@@ -19957,38 +19957,45 @@ int CvLuaPlayer::lGetBestSettlementInfo(lua_State* L)
 	}
 
 	// Build the information string
-	CvString result;
 	int iX = pSettlePlot->getX();
 	int iY = pSettlePlot->getY();
 
-	// Get distance from our closest city
+	// Calculate quality measure (range -50 to +50, convert to 0-100%)
+	int iQualityMeasure = pkPlayer->GetSettlePlotQualityMeasure(pSettlePlot);
+	int iQualityPercent = iQualityMeasure + 50; // Convert -50 to +50 range into 0 to 100
+
+	// Build string: coordinates (Quality always present, then optional info)
+	CvString result;
+	result.Format("%d, %d (Quality: %d%%", iX, iY, iQualityPercent);
+
+	// Add distance from our closest city
 	int iOurDist = pkPlayer->GetCityDistancePathLength(pSettlePlot);
-
-	// Check if we have a valid distance (INT_MAX means no cities)
-	if (iOurDist == INT_MAX || iOurDist < 0)
+	if (iOurDist != INT_MAX && iOurDist >= 0)
 	{
-		// No valid distance, return simplest form
-		result.Format("%d, %d", iX, iY);
+		CvString temp;
+		temp.Format("; %d tiles from us", iOurDist);
+		result += temp;
 	}
-	else
-	{
-		// Get closest city overall
-		CvCity* pClosestCity = GC.getGame().GetClosestCityByPathLength(pSettlePlot, true);
 
-		if (pClosestCity && pClosestCity->getOwner() != pkPlayer->GetID())
-		{
-			// Closest city is foreign
-			int iTheirDist = GC.getGame().GetClosestCityDistancePathLength(pSettlePlot, true);
-			CvPlayer& foreignPlayer = GET_PLAYER(pClosestCity->getOwner());
-			result.Format("%d, %d (%d tiles from us; near %s, %d tiles away)",
-				iX, iY, iOurDist, foreignPlayer.getCivilizationShortDescription(), iTheirDist);
-		}
-		else
-		{
-			// Closest city is ours or no closest city
-			result.Format("%d, %d (%d tiles from us)", iX, iY, iOurDist);
-		}
+	// Check for nearby foreign city
+	CvCity* pClosestCity = GC.getGame().GetClosestCityByPathLength(pSettlePlot, true);
+	if (pClosestCity && pClosestCity->getOwner() != pkPlayer->GetID())
+	{
+		int iTheirDist = GC.getGame().GetClosestCityDistancePathLength(pSettlePlot, true);
+		CvPlayer& foreignPlayer = GET_PLAYER(pClosestCity->getOwner());
+		temp.Format("; near %s, %d tiles away", foreignPlayer.getCivilizationShortDescription(), iTheirDist);
+		result += temp;
 	}
+
+	// Check for new continent
+	const CvLandmass* pLandmass = GC.getMap().getLandmassById(pSettlePlot->getLandmass());
+	if (pLandmass && pLandmass->getCitiesPerPlayer(pkPlayer->GetID()) == 0 && pkPlayer->getNumCities() > 0)
+	{
+		result += "; New Continent";
+	}
+
+	// Close parentheses
+	result += ")";
 
 	lua_pushboolean(L, true);
 	lua_pushstring(L, result.c_str());
