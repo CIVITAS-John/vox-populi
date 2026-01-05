@@ -4485,6 +4485,17 @@ Firaxis::Array< int, NUM_YIELD_TYPES > CvPolicyAI::WeightPolicyAttributes(CvPlay
 				yield[eYield] += PolicyInfo->GetYieldFromTech(eYield) * 10;
 			}
 		}
+		if (PolicyInfo->GetYieldFromUnitProduction(eYield) != 0)
+		{
+			if (pPlayerTraits->IsWarmonger())
+			{
+				yield[eYield] += PolicyInfo->GetYieldFromUnitProduction(eYield) * 2;
+			}
+			else
+			{
+				yield[eYield] += PolicyInfo->GetYieldFromUnitProduction(eYield);
+			}
+		}
 		if (PolicyInfo->GetYieldFromBorderGrowth(eYield) != 0)
 		{
 			if (pPlayerTraits->IsExpansionist() && pPlayerTraits->GetExtraFoundedCityTerritoryClaimRange() == 0)

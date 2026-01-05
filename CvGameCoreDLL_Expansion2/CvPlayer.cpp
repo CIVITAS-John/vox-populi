@@ -689,6 +689,8 @@ CvPlayer::CvPlayer() :
 	, m_iFreeWCVotes()
 	, m_iVotesPerFollowingCityTimes100()
 	, m_iInfluenceGPExpend()
+	, m_iTradeRouteFromBuildings()
+	, m_iTradeRouteFromTechs()
 	, m_iFreeTradeRoute()
 	, m_iReligionDistance()
 	, m_iPressureMod()
@@ -1497,6 +1499,8 @@ void CvPlayer::uninit()
 	m_iFreeWCVotes = 0;
 	m_iVotesPerFollowingCityTimes100 = 0;
 	m_iInfluenceGPExpend = 0;
+	m_iTradeRouteFromBuildings = 0;
+	m_iTradeRouteFromTechs = 0;
 	m_iFreeTradeRoute = 0;
 	m_iReligionDistance = 0;
 	m_iPressureMod = 0;
@@ -15823,6 +15827,9 @@ void CvPlayer::processBuilding(BuildingTypes eBuilding, int iChange, bool bFirst
 	ChangeCityWorkingChange(pBuildingInfo->GetGlobalCityWorkingChange() * iChange);
 	ChangeCityAutomatonWorkersChange(pBuildingInfo->GetGlobalCityAutomatonWorkersChange() * iChange);
 
+	// Trade route num bonus
+	changeTradeRouteFromBuildings(pBuildingInfo->GetNumTradeRouteBonus() * iChange);
+
 	// Trade route gold modifier
 	GetTreasury()->ChangeCityConnectionTradeRouteGoldModifier(pBuildingInfo->GetCityConnectionTradeRouteModifier() * iChange);
 
@@ -26143,7 +26150,7 @@ void CvPlayer::doInstantYield(InstantYieldType iType, bool bCityFaith, GreatPers
 						}
 						if(pCity != NULL)
 						{
-							if(!pCity->GetCityReligions()->IsHolyCityForReligion(eReligion))
+							if (pCity->getOwner() != GetID())
 							{
 								iValue += pReligion->m_Beliefs.GetYieldFromSpread(eYield, GetID(), pLoopCity, true) * max(1, iPassYield+1);
 							}
@@ -34891,6 +34898,24 @@ void CvPlayer::changeInfluenceGPExpend(int iChange)
 	m_iInfluenceGPExpend += iChange;
 }
 
+int CvPlayer::GetTradeRouteFromBuildings() const
+{
+	return m_iTradeRouteFromBuildings;
+}
+void CvPlayer::changeTradeRouteFromBuildings(int iChange)
+{
+	m_iTradeRouteFromBuildings += iChange;
+}
+
+int CvPlayer::GetTradeRouteFromTechs() const
+{
+	return m_iTradeRouteFromTechs;
+}
+void CvPlayer::changeTradeRouteFromTechs(int iChange)
+{
+	m_iTradeRouteFromTechs += iChange;
+}
+
 int CvPlayer::GetFreeTradeRoute() const
 {
 	return m_iFreeTradeRoute;
@@ -42314,6 +42339,19 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 			}
 		}
 		pLoopCity->ChangeBaseYieldRateFromPolicies(YIELD_CULTURE, iCityCultureChange);
+		// Yield from training units
+		for (int iI = 0; iI < NUM_YIELD_TYPES; iI++)
+		{
+			YieldTypes eYield = (YieldTypes)iI;
+			if (eYield == NO_YIELD)
+				continue;
+
+			//Simplification - errata yields not worth considering.
+			if ((YieldTypes)iI > YIELD_CULTURE_LOCAL && !MOD_BALANCE_CORE_JFD)
+				break;
+		
+			pLoopCity->ChangeYieldFromUnitProduction(eYield, pkPolicyInfo->GetYieldFromUnitProduction(eYield));
+		}
 
 		// Cities being razed aren't affected by below effects
 		if (pLoopCity->IsRazing())
@@ -43429,6 +43467,8 @@ void CvPlayer::Serialize(Player& player, Visitor& visitor)
 	visitor(player.m_iFreeWCVotes);
 	visitor(player.m_iVotesPerFollowingCityTimes100);
 	visitor(player.m_iInfluenceGPExpend);
+	visitor(player.m_iTradeRouteFromBuildings);
+	visitor(player.m_iTradeRouteFromTechs);
 	visitor(player.m_iFreeTradeRoute);
 	visitor(player.m_iReligionDistance);
 	visitor(player.m_iPressureMod);
