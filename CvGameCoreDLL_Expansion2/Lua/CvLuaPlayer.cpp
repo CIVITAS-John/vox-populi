@@ -19981,6 +19981,7 @@ int CvLuaPlayer::lGetBestSettlementInfo(lua_State* L)
 	CvCity* pClosestCity = GC.getGame().GetClosestCityByPathLength(pSettlePlot, true);
 	if (pClosestCity && pClosestCity->getOwner() != pkPlayer->GetID())
 	{
+		CvString temp;
 		int iTheirDist = GC.getGame().GetClosestCityDistancePathLength(pSettlePlot, true);
 		CvPlayer& foreignPlayer = GET_PLAYER(pClosestCity->getOwner());
 		temp.Format("; near %s, %d tiles away", foreignPlayer.getCivilizationShortDescription(), iTheirDist);
