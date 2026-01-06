@@ -1679,6 +1679,7 @@ int CvImprovementEntry::GetAccomplishmentYieldChanges(int i, int j) const
 	PRECONDITION(i > -1, "Index out of bounds");
 	PRECONDITION(j < NUM_YIELD_TYPES, "Index out of bounds");
 	PRECONDITION(j > -1, "Index out of bounds");
+	if (i < 0 || i >= NUM_ACCOMPLISHMENTS_TYPES) return 0;
 	return m_ppiAccomplishmentYieldChanges[i][j];
 }
 
