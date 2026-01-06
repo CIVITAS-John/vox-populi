@@ -57,6 +57,7 @@ class CvTradeAI;
 class CvLeagueAI;
 class CvPlayerCulture;
 struct SPath;
+struct SPlotWithScore;
 
 typedef std::list<CvPopupInfo*> CvPopupQueue;
 
