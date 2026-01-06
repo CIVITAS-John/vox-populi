@@ -2537,6 +2537,7 @@ public:
 
 	int GetMinAcceptableSettleQuality() const;
 	bool HaveGoodSettlePlot(int iAreaID);
+	std::vector<SPlotWithScore> GetBestSettlePlots(CvUnit* pUnit, CvAIOperation* pOpToIgnore=NULL, bool bForceLogging=false, int iMaxPlots=0) const;
 	CvPlot* GetBestSettlePlot(CvUnit* pUnit, CvAIOperation* pOpToIgnore=NULL, bool bForceLogging=false) const;
 	PlayerTypes GetPlayerWhoStoleMyFavoriteCitySite();
 	int GetSettlePlotQualityMeasure(CvPlot* pPlot);

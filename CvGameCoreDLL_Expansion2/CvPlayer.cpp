@@ -45740,7 +45740,7 @@ ostream& operator<<(ostream& os, const CvPlot* pPlot)
 	return os;
 }
 
-CvPlot* CvPlayer::GetBestSettlePlot(CvUnit* pUnit, CvAIOperation* pOpToIgnore, bool bForceLogging) const
+std::vector<SPlotWithScore> CvPlayer::GetBestSettlePlots(CvUnit* pUnit, CvAIOperation* pOpToIgnore, bool bForceLogging, int iMaxPlots) const
 {
 	std::vector<SPlotWithScore> vSettlePlots;
 
@@ -45937,20 +45937,42 @@ CvPlot* CvPlayer::GetBestSettlePlot(CvUnit* pUnit, CvAIOperation* pOpToIgnore, b
 		pLog->Close();
 	}
 
-	if (vSettlePlots.empty())
-		return 0;
-
 	//order by increasing score
 	std::stable_sort( vSettlePlots.begin(), vSettlePlots.end() );
-	int iFlags = CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY | CvUnit::MOVEFLAG_PRETEND_ALL_REVEALED;
-	for (vector<SPlotWithScore>::reverse_iterator it = vSettlePlots.rbegin(); it != vSettlePlots.rend(); ++it)
-	{
-		if (pUnit && !pUnit->GeneratePath(it->pPlot, iFlags, 23))
-			continue;
 
-		return it->pPlot;
+	//filter by reachability if we have a unit
+	if (pUnit)
+	{
+		int iFlags = CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY | CvUnit::MOVEFLAG_PRETEND_ALL_REVEALED;
+		std::vector<SPlotWithScore> vReachablePlots;
+		for (vector<SPlotWithScore>::reverse_iterator it = vSettlePlots.rbegin(); it != vSettlePlots.rend(); ++it)
+		{
+			if (pUnit->GeneratePath(it->pPlot, iFlags, 23))
+			{
+				vReachablePlots.push_back(*it);
+				if (iMaxPlots > 0 && (int)vReachablePlots.size() >= iMaxPlots)
+					break;
+			}
+		}
+		return vReachablePlots;
 	}
-	return NULL;
+
+	//trim to max plots if requested
+	if (iMaxPlots > 0 && (int)vSettlePlots.size() > iMaxPlots)
+		vSettlePlots.erase(vSettlePlots.begin(), vSettlePlots.end() - iMaxPlots);
+
+	return vSettlePlots;
+}
+
+CvPlot* CvPlayer::GetBestSettlePlot(CvUnit* pUnit, CvAIOperation* pOpToIgnore, bool bForceLogging) const
+{
+	std::vector<SPlotWithScore> vSettlePlots = GetBestSettlePlots(pUnit, pOpToIgnore, bForceLogging, 1);
+
+	if (vSettlePlots.empty())
+		return NULL;
+
+	//return the best plot (last element since sorted by increasing score)
+	return vSettlePlots.back().pPlot;
 }
 
 PlayerTypes CvPlayer::GetPlayerWhoStoleMyFavoriteCitySite()
