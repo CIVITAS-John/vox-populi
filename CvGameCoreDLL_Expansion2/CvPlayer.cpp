@@ -18254,6 +18254,8 @@ void CvPlayer::DoFreeGreatWorkOnConquest(CvCity* pCity)
 
 void CvPlayer::DoWarVictoryBonuses()
 {
+	CompleteAccomplishment(ACCOMPLISHMENT_WARS_WON);
+	
 	int iTurns = GetPlayerTraits()->GetGoldenAgeFromVictory();
 	if(iTurns > 0)
 	{
