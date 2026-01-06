@@ -3108,7 +3108,7 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_GoodGPCity(CvCity* pCity)
 				if (eMajority != NO_RELIGION)
 				{
 					const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eMajority, pCity->getOwner());
-					if (pReligion)
+					if (pReligion && GetGreatPersonFromSpecialist(eSpecialist) != NO_GREATPERSON)
 					{
 						iGPPChange += pReligion->m_Beliefs.GetGreatPersonPoints(GetGreatPersonFromSpecialist(eSpecialist), pCity->getOwner(), pCity, true) * 100;
 					}
@@ -3429,7 +3429,7 @@ int CityStrategyAIHelpers::GetBuildingYieldValue(CvCity *pCity, BuildingTypes eB
 	}
 	if (pkBuildingInfo->GetYieldChangeEraScalingTimes100(eYield) > 0)
 	{
-		iFlatYield += pkBuildingInfo->GetYieldChangeEraScalingTimes100(eYield) * iEra / 100;
+		iFlatYield += pkBuildingInfo->GetYieldChangeEraScalingTimes100(eYield) * max(1, iEra) / 100;
 	}
 	if (pkBuildingInfo->GetYieldChangesPerLocalTheme(eYield) > 0)
 	{
@@ -4175,6 +4175,11 @@ int CityStrategyAIHelpers::GetBuildingYieldValue(CvCity *pCity, BuildingTypes eB
 	if (pkBuildingInfo->GetYieldFromProcessModifier(eYield) > 0)
 	{
 		iModifier += (pkBuildingInfo->GetYieldFromProcessModifier(eYield) * 2);
+	}
+
+	if (pkBuildingInfo->GetYieldModifierEraScaling(eYield) > 0)
+	{
+		iModifier += pkBuildingInfo->GetYieldModifierEraScaling(eYield) * max(1, iEra);
 	}
 
 	if (pkBuildingInfo->GetYieldModifier(eYield) > 0)
@@ -5315,21 +5320,21 @@ int CityStrategyAIHelpers::GetBuildingBasicValue(CvCity *pCity, BuildingTypes eB
     {
 		iValue += kPlayer.GetPlayerTraits()->GetWonderProductionToBuildingDiscount(eBuilding);
     }
-	if (pkBuildingInfo->GetExtraMissionarySpreads() > 0)
+	if (kPlayer.isMajorCiv() && pkBuildingInfo->GetExtraMissionarySpreads() > 0)
 	{
 		int iNumNearbyCities = kPlayer.GetReligionAI()->GetNumCitiesWithReligionCalculator(kPlayer.GetReligions()->GetStateReligion());
 
 		iValue += (iNumNearbyCities / 25);
 	}
 
-	if (pkBuildingInfo->GetExtraMissionarySpreadsGlobal() > 0)
+	if (kPlayer.isMajorCiv() && pkBuildingInfo->GetExtraMissionarySpreadsGlobal() > 0)
 	{
 		int iNumNearbyCities = kPlayer.GetReligionAI()->GetNumCitiesWithReligionCalculator(kPlayer.GetReligions()->GetStateReligion());
 
 		iValue += (iNumNearbyCities / 10);
 	}
 
-	if (pkBuildingInfo->GetExtraMissionaryStrength() > 0)
+	if (kPlayer.isMajorCiv() && pkBuildingInfo->GetExtraMissionaryStrength() > 0)
 	{
 		int iNumNearbyCities = kPlayer.GetReligionAI()->GetNumCitiesWithReligionCalculator(kPlayer.GetReligions()->GetStateReligion());
 

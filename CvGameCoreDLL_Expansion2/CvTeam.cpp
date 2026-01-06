@@ -32,6 +32,7 @@
 #include "CvPlayerManager.h"
 #include "CvCitySpecializationAI.h"
 #include "CvEnumMapSerialization.h"
+#include "CvDllNetMessageExt.h"
 
 #include "CvDllUnit.h"
 
@@ -196,6 +197,7 @@ void CvTeam::uninit()
 	m_iNumLandmarksBuilt = 0;
 	m_iBestPossibleRoute = NO_ROUTE;
 	m_iNumMinorCivsAttacked = 0;
+	m_iBuildingDefenseModifier = 0;
 
 	m_bMapCentering = false;
 	m_bHasTechForWorldCongress = false;
@@ -750,21 +752,7 @@ void CvTeam::processBuilding(BuildingTypes eBuilding, int iChange)
 		}
 	}
 
-	// Effects in every City on this Team
-	for(int iPlayerLoop = 0; iPlayerLoop < MAX_CIV_PLAYERS; iPlayerLoop++)
-	{
-		CvPlayerAI& kPlayer = GET_PLAYER((PlayerTypes) iPlayerLoop);
-		if(kPlayer.getTeam() == m_eID && kPlayer.isAlive())
-		{
-			CvCity* pLoopCity = NULL;
-			int iLoop = 0;
-
-			for(pLoopCity = kPlayer.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kPlayer.nextCity(&iLoop))
-			{
-				pLoopCity->GetCityBuildings()->ChangeBuildingDefenseMod(pBuildingInfo->GetGlobalDefenseModifier() * iChange);
-			}
-		}
-	}
+	ChangeBuildingDefenseModifier(pBuildingInfo->GetGlobalDefenseModifier() * iChange);
 }
 
 
@@ -1202,6 +1190,9 @@ bool CvTeam::canDeclareWar(TeamTypes eTeam, PlayerTypes eOriginatingPlayer)
 //	-----------------------------------------------------------------------------------------------
 void CvTeam::declareWar(TeamTypes eTeam, bool bDefensivePact, PlayerTypes eOriginatingPlayer)
 {
+	if (GET_TEAM(eTeam).getNumMembers() == 0)
+		return;
+
 	DoDeclareWar(eOriginatingPlayer, true, eTeam, bDefensivePact);
 
 	CvPlayerManager::Refresh(true);
@@ -5848,6 +5839,29 @@ void CvTeam::changeVictoryPoints(int iChange)
 }
 
 //	--------------------------------------------------------------------------------
+int CvTeam::GetBuildingDefenseModifier() const
+{
+	return m_iBuildingDefenseModifier;
+}
+
+//	--------------------------------------------------------------------------------
+void CvTeam::ChangeBuildingDefenseModifier(int iChange)
+{
+	m_iBuildingDefenseModifier += iChange;
+
+	// Also update all cities immediately
+	for (CivsList::const_iterator it = getPlayers().begin(); it != getPlayers().end(); ++it)
+	{
+		CvPlayer& kPlayer = GET_PLAYER(*it);
+		int iLoop = 0;
+		for (CvCity* pLoopCity = kPlayer.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kPlayer.nextCity(&iLoop))
+		{
+			pLoopCity->GetCityBuildings()->ChangeBuildingDefenseMod(iChange);
+		}
+	}
+}
+
+//	--------------------------------------------------------------------------------
 /// See if there are any Small Awards we've just accomplished
 void CvTeam::DoTestSmallAwards()
 {
@@ -6226,18 +6240,13 @@ void CvTeam::setHasTech(TechTypes eIndex, bool bNewValue, PlayerTypes ePlayer, b
 										pLoopPlot->updateSymbols();
 									}
 
-									for (int iI = 0; iI < MAX_PLAYERS; iI++)
+									if (pLoopPlot->getTeam() == GetID())
 									{
-										const PlayerTypes eLoopPlayer = static_cast<PlayerTypes>(iI);
-										CvPlayerAI& kLoopPlayer = GET_PLAYER(eLoopPlayer);
-										if (kLoopPlayer.isAlive() && kLoopPlayer.getTeam() == GetID() && pLoopPlot->getOwner() == eLoopPlayer)
+										// slewis - added in so resources wouldn't be double counted when the minor civ researches the technology
+										if (!(GET_PLAYER(pLoopPlot->getOwner()).isMinorCiv() && pLoopPlot->IsImprovedByGiftFromMajor()))
 										{
-											// slewis - added in so resources wouldn't be double counted when the minor civ researches the technology
-											if (!(kLoopPlayer.isMinorCiv() && pLoopPlot->IsImprovedByGiftFromMajor()))
-											{
-												// revealed resources are unimproved unless this tech also makes the resource improvable, which is checked later
-												kLoopPlayer.addResourcesOnPlotToUnimproved(pLoopPlot);
-											}
+											// revealed resources are unimproved unless this tech also makes the resource improvable, which is checked later
+											GET_PLAYER(pLoopPlot->getOwner()).addResourcesOnPlotToUnimproved(pLoopPlot);
 										}
 									}
 
@@ -7901,6 +7910,7 @@ void CvTeam::processTech(TechTypes eTech, int iChange, bool bNoBonus)
 			kPlayer.changeWorkerSpeedModifier(pTech->GetWorkerSpeedModifier() * iChange);
 			kPlayer.ChangeInfluenceSpreadModifier(pTech->GetInfluenceSpreadModifier() * iChange);
 			kPlayer.ChangeExtraVotesPerDiplomat(pTech->GetExtraVotesPerDiplomat() * iChange);
+			kPlayer.changeTradeRouteFromTechs(pTech->GetNumInternationalTradeRoutesChange() * iChange);
 
 			if (kPlayer.isMajorCiv())
 			{
@@ -7923,25 +7933,16 @@ void CvTeam::processTech(TechTypes eTech, int iChange, bool bNoBonus)
 				{
 					kPlayer.ChangeFreePromotionCount(ePromotion, iChange);
 					
-					// Loop through existing units, because they have no way to earn it later
-					CivsList veMembers = getPlayers();
-					for (CivsList::iterator it = veMembers.begin(); it != veMembers.end(); ++it)
+					int iLoop = 0;
+					for (CvUnit* pLoopUnit = kPlayer.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = kPlayer.nextUnit(&iLoop))
 					{
-						CvPlayer& kPlayer = GET_PLAYER(*it);
-						if (!kPlayer.isAlive())
-							continue;
-
-						int iLoop = 0;
-						for (CvUnit* pLoopUnit = kPlayer.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = kPlayer.nextUnit(&iLoop))
+						// If we're in friendly territory and we can embark, give the promotion for free
+						if (pLoopUnit->plot()->IsFriendlyTerritory((PlayerTypes)iI)) 
 						{
-							// If we're in friendly territory and we can embark, give the promotion for free
-							if (pLoopUnit->plot()->IsFriendlyTerritory(*it))
+							// Civilian unit or the unit can acquire this promotion
+							if (IsPromotionValidForUnitCombatType(ePromotion, pLoopUnit->getUnitType()) || IsPromotionValidForCivilianUnitType(ePromotion, pLoopUnit->getUnitType()))
 							{
-								// Civilian unit or the unit can acquire this promotion
-								if (IsPromotionValidForUnitCombatType(ePromotion, pLoopUnit->getUnitType()) || IsPromotionValidForCivilianUnitType(ePromotion, pLoopUnit->getUnitType()))
-								{
-									pLoopUnit->setHasPromotion(ePromotion, true);
-								}
+								pLoopUnit->setHasPromotion(ePromotion, true);
 							}
 						}
 					}
@@ -7952,8 +7953,33 @@ void CvTeam::processTech(TechTypes eTech, int iChange, bool bNoBonus)
 						kPlayer.SetWorkersIgnoreImpassable(true);
 					}
 				}
-			}
+				// What about if the promotion comes through Trait_FreePromotionUnitCombats?
+				if (GC.getPromotionInfo(ePromotion)->GetTechPrereq() == pTech->GetID())
+				{
+				    // loop unit combat classes for the table check
+				    for (int iCombat = 0; iCombat < GC.getNumUnitCombatClassInfos(); iCombat++)
+				    {
+				        UnitCombatTypes eUnitCombat = (UnitCombatTypes)iCombat;
+				
+				        if (!kPlayer.GetPlayerTraits()->HasFreePromotionUnitCombat(ePromotion, eUnitCombat))
+				            continue;
 
+						// now loop all the units for that player that have this combat, and assign them the promo
+				        int iLoop = 0;
+				        for (CvUnit* pLoopUnit = kPlayer.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = kPlayer.nextUnit(&iLoop))
+				        {
+				            if (pLoopUnit->getUnitCombatType() != eUnitCombat)
+				                continue;
+
+				            if (pLoopUnit->isHasPromotion(ePromotion))
+				                continue;
+				
+				            pLoopUnit->setHasPromotion(ePromotion, true);
+				        }
+				    }
+				}
+			}
+			
 			// Update our traits (some may have become obsolete)
 			kPlayer.GetPlayerTraits()->InitPlayerTraits();
 			kPlayer.recomputePolicyCostModifier();
@@ -9055,6 +9081,7 @@ void CvTeam::Serialize(Team& team, Visitor& visitor)
 	visitor(team.m_iNumLandmarksBuilt);
 	visitor(team.m_iBestPossibleRoute);
 	visitor(team.m_iNumMinorCivsAttacked);
+	visitor(team.m_iBuildingDefenseModifier);
 
 	visitor(team.m_bMapCentering);
 	visitor(team.m_bHasTechForWorldCongress);
@@ -9431,19 +9458,19 @@ void CvTeam::DoEndVassal(TeamTypes eTeam, bool bPeaceful, bool bSuppressNotifica
 			pOurPlayer->GetDiplomacyAI()->DoWeEndedVassalageWithSomeone(eTeam);
 			GET_TEAM(eTeam).SetVassalTax(eOurPlayer, 0);
 			GET_TEAM(eTeam).SetNumTurnsSinceVassalTaxSet(eOurPlayer, -1);
-		}
 
-		// remove spies as diplomats
-		if (!GC.getGame().isOption(GAMEOPTION_NO_ESPIONAGE))
-		{
-			for (int iMasterPlayerLoop = 0; iMasterPlayerLoop < MAX_CIV_PLAYERS; iMasterPlayerLoop++)
+			// remove spies as diplomats
+			if (!GC.getGame().isOption(GAMEOPTION_NO_ESPIONAGE))
 			{
-				PlayerTypes eMasterPlayer = (PlayerTypes)iMasterPlayerLoop;
-				CvPlayer* pMasterPlayer = &GET_PLAYER(eMasterPlayer);
-				if (pMasterPlayer->isAlive() && pMasterPlayer->getTeam() == eTeam)
+				for (int iMasterPlayerLoop = 0; iMasterPlayerLoop < MAX_CIV_PLAYERS; iMasterPlayerLoop++)
 				{
-					CvPlayerEspionage* pMasterEspionage = pMasterPlayer->GetEspionage();
-					pMasterEspionage->DeleteDiplomatForVassal(eOurPlayer);
+					PlayerTypes eMasterPlayer = (PlayerTypes)iMasterPlayerLoop;
+					CvPlayer* pMasterPlayer = &GET_PLAYER(eMasterPlayer);
+					if (pMasterPlayer->isAlive() && pMasterPlayer->getTeam() == eTeam)
+					{
+						CvPlayerEspionage* pMasterEspionage = pMasterPlayer->GetEspionage();
+						pMasterEspionage->DeleteDiplomatForVassal(eOurPlayer);
+					}
 				}
 			}
 		}
@@ -9607,21 +9634,7 @@ void CvTeam::DoEndVassal(TeamTypes eTeam, bool bPeaceful, bool bSuppressNotifica
 // We liberate eTeam, if we can
 void CvTeam::DoLiberateVassal(TeamTypes eTeam)
 {
-	if (!CanLiberateVassal(eTeam))
-		return;
-
-	// End our vassalage peacefully
-	GET_TEAM(eTeam).DoEndVassal(GetID(), true, false);
-
-	// Find our vassals
-	for (int iVassalPlayer = 0; iVassalPlayer < MAX_MAJOR_CIVS; iVassalPlayer++)
-	{
-		PlayerTypes eVassalPlayer = (PlayerTypes) iVassalPlayer;
-		if (GET_PLAYER(eVassalPlayer).isAlive() && GET_PLAYER(eVassalPlayer).getTeam() == eTeam)
-		{
-			GET_PLAYER(eVassalPlayer).GetDiplomacyAI()->DoLiberatedFromVassalage(GetID(), false);
-		}
-	}
+	NetMessageExt::Send::DoLiberateVassal(GetID(), eTeam);
 }
 //	----------------------------------------------------------------------------------------------
 // Update vassal war/peace relationships for one team
@@ -10168,43 +10181,7 @@ bool CvTeam::CanSetVassalTax(PlayerTypes ePlayer) const
 // We apply a vassal tax to ePlayer
 void CvTeam::DoApplyVassalTax(PlayerTypes ePlayer, int iPercent)
 {
-	if (!CanSetVassalTax(ePlayer))
-		return;
-
-	iPercent = max(iPercent, /*0*/ GD_INT_GET(VASSALAGE_VASSAL_TAX_PERCENT_MINIMUM));
-	iPercent = min(iPercent, /*25*/ GD_INT_GET(VASSALAGE_VASSAL_TAX_PERCENT_MAXIMUM));
-
-	int iCurrentTaxRate = GetVassalTax(ePlayer);
-	
-	SetNumTurnsSinceVassalTaxSet(ePlayer, 0);
-	SetVassalTax(ePlayer, iPercent);
-
-	// Note: using EspionageScreen dirty for this.
-	GC.GetEngineUserInterface()->setDirty(EspionageScreen_DIRTY_BIT, true);
-
-	// notify diplo AI if there was some change		
-	if(iPercent != iCurrentTaxRate)
-	{
-		GET_PLAYER(ePlayer).GetDiplomacyAI()->DoVassalTaxChanged(GetID(), (iPercent < iCurrentTaxRate));	
-
-		// send a notification if there was some change
-		Localization::String locString;
-		Localization::String summaryString;
-		if(iPercent > iCurrentTaxRate)
-		{
-			locString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_INCREASED");
-			summaryString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_INCREASED_SUMMARY");
-		}
-		else
-		{
-			locString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_DECREASED");
-			summaryString = Localization::Lookup("TXT_KEY_MISC_VASSAL_TAX_DECREASED_SUMMARY");
-		}
-
-		locString << getName().GetCString() << iCurrentTaxRate << iPercent;
-
-		GET_PLAYER(ePlayer).GetNotifications()->Add(NOTIFICATION_GENERIC, locString.toUTF8(), summaryString.toUTF8(), -1, -1, this->getLeaderID());
-	}
+	NetMessageExt::Send::DoApplyVassalTax(GetID(), ePlayer, iPercent);
 }
 
 //	--------------------------------------------------------------------------------

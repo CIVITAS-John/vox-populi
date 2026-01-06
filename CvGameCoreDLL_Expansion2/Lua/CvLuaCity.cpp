@@ -1639,20 +1639,6 @@ int CvLuaCity::lGetBuildingYieldRateTimes100(lua_State* L)
 	iYieldTimes100 += pkBuildingInfo->GetYieldChangePerMonopoly(eYield) * kPlayer.GetNumGlobalMonopolies() * 100;
 	iYieldTimes100 += (pkBuildingInfo->GetYieldChangePerBuilding(eYield) * pCity->GetCityBuildings()->GetNumBuildings() * 100).Truncate();
 
-	std::map<int, std::map<int, int>> m_BuildingYieldsFromAccomplishments = pkBuildingInfo->GetYieldChangesFromAccomplishments();
-	for (std::map<int, std::map<int, int>>::const_iterator it2 = m_BuildingYieldsFromAccomplishments.begin(); it2 != m_BuildingYieldsFromAccomplishments.end(); ++it2)
-	{
-		int iNumTimesAccomplishmentCompleted = kPlayer.GetNumTimesAccomplishmentCompleted((AccomplishmentTypes)(*it2).first);
-		if (iNumTimesAccomplishmentCompleted > 0)
-		{
-			std::map<int, int>::const_iterator it3 = (it2->second).find(eYield);
-			if (it3 != (it2->second).end())
-			{
-				iYieldTimes100 += iNumTimesAccomplishmentCompleted * (*it3).second * 100;
-			}
-		}
-	}
-
 	int iYieldPerReligion = pkBuildingInfo->GetYieldChangePerReligion(eYield);
 	if (iYieldPerReligion != 0)
 	{
@@ -1688,8 +1674,10 @@ int CvLuaCity::lGetBuildingYieldModifier(lua_State* L)
 	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
 	CvBuildingEntry* pkBuildingInfo = GC.getBuildingInfo(eBuilding);
 	BuildingClassTypes eBuildingClass = pkBuildingInfo->GetBuildingClassType();
+	int iEraScaler = max(1, static_cast<int>(kPlayer.GetCurrentEra()));
 
 	int iModifier = pkBuildingInfo->GetYieldModifier(eYield);
+	iModifier += pkBuildingInfo->GetYieldModifierEraScaling(eYield) * iEraScaler;
 	iModifier += kPlayer.GetPlayerPolicies()->GetBuildingClassYieldModifier(eBuildingClass, eYield);
 	iModifier += pCity->GetEventBuildingClassCityYieldModifier(eBuildingClass, eYield);
 
@@ -5204,7 +5192,7 @@ int CvLuaCity::lGetExtraSpecialistPoints(lua_State* L)
 		if (eMajority != NO_RELIGION)
 		{
 			const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eMajority, pkCity->getOwner());
-			if (pReligion)
+			if (pReligion && GetGreatPersonFromSpecialist(eSpecialist) != NO_GREATPERSON)
 			{
 				lua_pushinteger(L, pReligion->m_Beliefs.GetGreatPersonPoints(GetGreatPersonFromSpecialist(eSpecialist), pkCity->getOwner(), pkCity, true));
 				return 1;

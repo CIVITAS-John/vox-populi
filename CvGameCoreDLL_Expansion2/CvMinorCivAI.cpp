@@ -2027,7 +2027,7 @@ bool CvMinorCivQuest::IsExpired()
 			if (pkUnitInfo->GetUpgradeUnitClass(iI))
 			{
 				UnitTypes eUpgradeUnit = GET_PLAYER(m_eAssignedPlayer).GetSpecificUnitType(eUnitClass);
-				if (GET_PLAYER(m_eAssignedPlayer).canTrainUnit(eUpgradeUnit, false, false, false, false))
+				if (eUpgradeUnit != NO_UNIT && GET_PLAYER(m_eAssignedPlayer).canTrainUnit(eUpgradeUnit, false, false, false, false))
 				{
 					bCanUpgrade = true;
 					break;
@@ -4937,7 +4937,7 @@ void CvMinorCivAI::DoFirstContactWithMajor(PlayerTypes eMeetingPlayer, bool bSup
 
 	int iGiftData = 0;
 	char const* szTxtKeySuffix = "UNKNOWN";
-	bool bFirstMajorCiv = GET_TEAM(GetPlayer()->getTeam()).getHasMetCivCount(true) == 0;
+	bool bFirstMajorCiv = GET_TEAM(GetPlayer()->getTeam()).getHasMetCivCount(true) == GET_TEAM(m_pPlayer->getTeam()).getNumMembers();
 	bool bNoGifts = GET_TEAM(eTeam).IsMinorCivAggressor() || GET_TEAM(eTeam).isAtWar(m_pPlayer->getTeam());
 
 	// If this guy has been mean or we're at war already, then no gifts
@@ -5610,9 +5610,6 @@ void CvMinorCivAI::AddQuestNotification(CvString sString, const CvString& sSumma
 	CvNotifications* pNotifications = GET_PLAYER(ePlayer).GetNotifications();
 	if(pNotifications)
 	{
-		sString += "[NEWLINE][NEWLINE]";
-		sString += Localization::Lookup("TXT_KEY_MINOR_QUEST_BLOCKING_TT").toUTF8();
-
 		if (bNewQuest)
 			pNotifications->Add(NOTIFICATION_MINOR_QUEST, sString, sSummaryString, iX, iY, GetPlayer()->GetID(), 1);
 		else
@@ -10960,7 +10957,7 @@ UnitTypes CvMinorCivAI::GetBestUnitGiftFromPlayer(PlayerTypes ePlayer)
 			if (pkUnitInfo->GetUpgradeUnitClass(iI))
 			{
 				UnitTypes eUpgradeUnit = GET_PLAYER(ePlayer).GetSpecificUnitType(eUnitClass);
-				if (GET_PLAYER(ePlayer).canTrainUnit(eUpgradeUnit, false, false, false, false))
+				if (eUpgradeUnit != NO_UNIT && GET_PLAYER(ePlayer).canTrainUnit(eUpgradeUnit, false, false, false, false))
 				{
 					bValid = false;
 					break;
@@ -17720,7 +17717,7 @@ void CvMinorCivAI::DoTileImprovementGiftFromMajor(PlayerTypes eMajor, int iPlotX
 			return;
 	}
 
-	pPlot->setImprovementType(eImprovement, eMajor);
+	pPlot->setImprovementType(eImprovement, eMajor, true);
 
 	if (pPlot->getFeatureType() != NO_FEATURE)
 	{

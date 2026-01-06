@@ -836,7 +836,11 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 			const PromotionTypes promotionID = (PromotionTypes)iJ;
 			if(kPlayer.GetPlayerTraits()->HasFreePromotionUnitCombat(promotionID, unitCombatType))
 			{
-				setHasPromotion(promotionID, true);
+				TechTypes ePrereqTech = static_cast<TechTypes>(GC.getPromotionInfo(promotionID)->GetTechPrereq());
+				if (ePrereqTech == NO_TECH || kPlayer.HasTech(ePrereqTech))
+				{
+					setHasPromotion(promotionID, true);
+				}
 			}
 		}
 	}
@@ -1196,7 +1200,7 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 		CvUnit* pLoopUnit = NULL;
 		for (pLoopUnit = kPlayer.firstUnit(&iLoop); pLoopUnit; pLoopUnit = kPlayer.nextUnit(&iLoop))
 		{
-			if (pLoopUnit && pLoopUnit->IsCombatUnit() && pLoopUnit->getDomainType() == DOMAIN_LAND)
+			if (pLoopUnit && pLoopUnit->IsCombatUnit())
 			{
 				pLoopUnit->changeExperienceTimes100(kPlayer.GetPlayerTraits()->GetXPBonusFromGreatPersonBirth() * 100);
 			}
@@ -1208,7 +1212,7 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 		CvUnit* pLoopUnit = NULL;
 		for (pLoopUnit = kPlayer.firstUnit(&iLoop); pLoopUnit; pLoopUnit = kPlayer.nextUnit(&iLoop))
 		{
-			if (pLoopUnit && pLoopUnit->IsCombatUnit() && pLoopUnit->getDomainType() == DOMAIN_LAND)
+			if (pLoopUnit && pLoopUnit->IsCombatUnit())
 			{
 				pLoopUnit->changeDamage(-kPlayer.GetPlayerTraits()->GetUnitHealFromGreatPersonBirth());
 			}
@@ -4590,15 +4594,19 @@ bool CvUnit::canEnterTerritory(TeamTypes eTeam, bool bEndTurn) const
 
 	if (MOD_GLOBAL_CS_OVERSEAS_TERRITORY && eMyTeam != eTeam && kTheirTeam.isMinorCiv())
 	{
-		PlayerTypes eMinor = kTheirTeam.getLeaderID();
-		ASSERT(eMinor != NO_PLAYER);
-		if (eMinor != NO_PLAYER)
+		CvUnitEntry* pkUnitEntry = GC.getUnitInfo(getUnitType());
+		if (pkUnitEntry->GetDefaultUnitAIType() != UNITAI_MESSENGER)
 		{
-			PlayerTypes eAlly = GET_PLAYER(eMinor).GetMinorCivAI()->GetAlly();
-			if (eAlly != NO_PLAYER && GET_PLAYER(eAlly).getTeam() != eMyTeam)
+			PlayerTypes eMinor = kTheirTeam.getLeaderID();
+			ASSERT(eMinor != NO_PLAYER);
+			if (eMinor != NO_PLAYER)
 			{
-				if (!canEnterTerritory(GET_PLAYER(eAlly).getTeam(), bEndTurn))
-					return false;
+				PlayerTypes eAlly = GET_PLAYER(eMinor).GetMinorCivAI()->GetAlly();
+				if (eAlly != NO_PLAYER && GET_PLAYER(eAlly).getTeam() != eMyTeam)
+				{
+					if (!canEnterTerritory(GET_PLAYER(eAlly).getTeam(), bEndTurn))
+						return false;
+				}
 			}
 		}
 	}
@@ -9053,6 +9061,7 @@ bool CvUnit::changeAdmiralPort(int iX, int iY)
 //	--------------------------------------------------------------------------------
 bool CvUnit::canPlunderTradeRoute(const CvPlot* pPlot, bool bOnlyTestVisibility) const
 {
+	// If you change anything here, make sure to also update CvLuaPlayer::lGetReasonPlunderTradeRouteDisabled and CvPlayerTrade::PlunderTradeRoute
 	if (!IsCombatUnit())
 	{
 		return false;
@@ -9076,8 +9085,9 @@ bool CvUnit::canPlunderTradeRoute(const CvPlot* pPlot, bool bOnlyTestVisibility)
 	if (GET_PLAYER(m_eOwner).GetTrade()->ContainsOpposingPlayerTradeUnit(pPlot))
 	{
 		std::vector<int> aiTradeUnitsAtPlot;
-		aiTradeUnitsAtPlot = GET_PLAYER(m_eOwner).GetTrade()->GetOpposingTradeUnitsAtPlot(pPlot, true);
+		aiTradeUnitsAtPlot = GET_PLAYER(m_eOwner).GetTrade()->GetOpposingTradeUnitsAtPlot(pPlot, false);
 
+		bool bShowTooltip = false;
 		for (uint uiTradeRoute = 0; uiTradeRoute < aiTradeUnitsAtPlot.size(); uiTradeRoute++)
 		{
 			PlayerTypes eTradeUnitOwner = GC.getGame().GetGameTrade()->GetOwnerFromID(aiTradeUnitsAtPlot[uiTradeRoute]);
@@ -9087,61 +9097,37 @@ bool CvUnit::canPlunderTradeRoute(const CvPlot* pPlot, bool bOnlyTestVisibility)
 				continue;
 			}
 
+			bool bCorporationInvulnerable = false;
 			CorporationTypes eCorporation = GET_PLAYER(eTradeUnitOwner).GetCorporations()->GetFoundedCorporation();
 			if (eCorporation != NO_CORPORATION)
 			{
 				CvCorporationEntry* pkCorporation = GC.getCorporationInfo(eCorporation);
 				if (pkCorporation && pkCorporation->IsTradeRoutesInvulnerable())
 				{
-					return false;
+					bCorporationInvulnerable = true;
 				}
 			}
 
-			TeamTypes eTeam = GET_PLAYER(eTradeUnitOwner).getTeam();
-			if (!GET_TEAM(GET_PLAYER(m_eOwner).getTeam()).isAtWar(eTeam) && !GET_PLAYER(m_eOwner).GetPlayerTraits()->IsCanPlunderWithoutWar())
-				continue;
-
-			if (GET_PLAYER(m_eOwner).GetPlayerTraits()->IsCanPlunderWithoutWar())
+			if (!bCorporationInvulnerable)
 			{
-				PlayerTypes eTradeUnitDest = GC.getGame().GetGameTrade()->GetDestFromID(aiTradeUnitsAtPlot[uiTradeRoute]);
-				if (eTradeUnitDest == m_eOwner && !GET_TEAM(GET_PLAYER(m_eOwner).getTeam()).isAtWar(eTeam))
+				TeamTypes eTeam = GET_PLAYER(eTradeUnitOwner).getTeam();
+				if (GET_TEAM(GET_PLAYER(m_eOwner).getTeam()).isAtWar(eTeam))
+					return true;
+
+				if (GET_PLAYER(m_eOwner).GetPlayerTraits()->IsCanPlunderWithoutWar())
 				{
-					return false;
-				}
-			}
-		}
-		if (!bOnlyTestVisibility)
-		{
-			if (aiTradeUnitsAtPlot.size() <= 0)
-			{
-				return false;
-			}
-
-			PlayerTypes eTradeUnitOwner = GC.getGame().GetGameTrade()->GetOwnerFromID(aiTradeUnitsAtPlot[0]);
-			if (eTradeUnitOwner == NO_PLAYER)
-			{
-				// invalid TradeUnit
-				return false;
-			}
-
-
-			CorporationTypes eCorporation = GET_PLAYER(eTradeUnitOwner).GetCorporations()->GetFoundedCorporation();
-			if (eCorporation != NO_CORPORATION)
-			{
-				CvCorporationEntry* pkCorporation = GC.getCorporationInfo(eCorporation);
-				if (pkCorporation && pkCorporation->IsTradeRoutesInvulnerable())
-				{
-					return false;
+					PlayerTypes eTradeUnitDest = GC.getGame().GetGameTrade()->GetDestFromID(aiTradeUnitsAtPlot[uiTradeRoute]);
+					if (eTradeUnitDest != m_eOwner)
+					{
+						return true;
+					}
 				}
 			}
 
-			TeamTypes eTeam = GET_PLAYER(eTradeUnitOwner).getTeam();
-			if (!GET_TEAM(GET_PLAYER(m_eOwner).getTeam()).isAtWar(eTeam) && !GET_PLAYER(m_eOwner).GetPlayerTraits()->IsCanPlunderWithoutWar())
-			{
-				return false;
-			}
+			// this TR cannot be plundered because we're not at war with the player or because of their corporation. The action button should be displayed with a tooltip explaining why the TR can't be plundered (unless there's another trade route here that can be plundered)
+			bShowTooltip = true;
 		}
-		return true;
+		return bOnlyTestVisibility && bShowTooltip;
 	}
 	else
 	{
@@ -9186,7 +9172,20 @@ bool CvUnit::plunderTradeRoute()
 			}
 		}
 		TeamTypes eTeam = GET_PLAYER(eTradeUnitOwner).getTeam();
-		if (GET_TEAM(GET_PLAYER(m_eOwner).getTeam()).isAtWar(eTeam) || GET_PLAYER(m_eOwner).GetPlayerTraits()->IsCanPlunderWithoutWar())
+		bool bValidTarget = false;
+
+		if (GET_TEAM(GET_PLAYER(m_eOwner).getTeam()).isAtWar(eTeam))
+			bValidTarget = true;
+
+		if (GET_PLAYER(m_eOwner).GetPlayerTraits()->IsCanPlunderWithoutWar())
+		{
+			PlayerTypes eTradeUnitDest = GC.getGame().GetGameTrade()->GetDestFromID(aiTradeUnitsAtPlot[uiTradeRoute]);
+			if (eTradeUnitDest != m_eOwner)
+			{
+				bValidTarget = true;
+			}
+		}
+		if (bValidTarget)
 		{
 			pTrade->PlunderTradeRoute(aiTradeUnitsAtPlot[uiTradeRoute], this);
 			bSuccess = true;
@@ -11176,7 +11175,7 @@ bool CvUnit::DoSpreadReligion()
 
 			int iPostFollowers = pCity->GetCityReligions()->GetNumFollowers(eReligion);
 			
-			kPlayer.doInstantYield(INSTANT_YIELD_TYPE_SPREAD, false, NO_GREATPERSON, NO_BUILDING, iPostFollowers - iPreSpreadFollowers, false, pCity->getOwner(), plot());
+			kPlayer.doInstantYield(INSTANT_YIELD_TYPE_SPREAD, false, NO_GREATPERSON, NO_BUILDING, iPostFollowers - iPreSpreadFollowers, false, NO_PLAYER, plot());
 
 			if (pCity->plot() && pCity->plot()->GetActiveFogOfWarMode() == FOGOFWARMODE_OFF)
 			{
@@ -13395,6 +13394,11 @@ bool CvUnit::canPromote(PromotionTypes ePromotion, int iLeaderUnitId) const
 		return false;
 	}
 
+	if (IsPromotionBlocked(ePromotion))
+	{
+		return false;
+	}
+
 	CvPromotionEntry* pkPromotionInfo = GC.getPromotionInfo(ePromotion);
 	if(pkPromotionInfo == NULL)
 	{
@@ -13496,8 +13500,8 @@ void CvUnit::promote(PromotionTypes ePromotion, int iLeaderUnitId)
 				GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_LEVEL_UP, false, NO_GREATPERSON, NO_BUILDING, (getLevel() - 1), false, NO_PLAYER, NULL, false, pCapital, getDomainType()==DOMAIN_SEA, true, false, NO_YIELD, this);
 			}
 		}
-		// global yields, scaling with era
-		GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_LEVEL_UP, false, NO_GREATPERSON, NO_BUILDING, (getLevel() - 1), true, NO_PLAYER, NULL, false, NULL, getDomainType() == DOMAIN_SEA, true, false, NO_YIELD, this);
+		// global yields
+		GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_LEVEL_UP, false, NO_GREATPERSON, NO_BUILDING, (getLevel() - 1), false, NO_PLAYER, NULL, false, NULL, getDomainType() == DOMAIN_SEA, true, false, NO_YIELD, this);
 
 		if (MOD_EVENTS_UNIT_UPGRADES)
 		{
@@ -13949,9 +13953,9 @@ int CvUnit::upgradePrice(UnitTypes eUnit) const
 
 	// Upgrades for later units are more expensive
 	const TechTypes eTech = (TechTypes) pkUnitInfo->GetPrereqAndTech();
-	CvTechEntry* pkTechInfo = GC.getTechInfo(eTech);
-	if(pkTechInfo)
+	if (eTech != NO_TECH)
 	{
+		CvTechEntry* pkTechInfo = GC.getTechInfo(eTech);
 		const EraTypes eUpgradeEra = (EraTypes) pkTechInfo->GetEra();
 
 		double fMultiplier = 1.0f;
@@ -14958,6 +14962,121 @@ CvPlot* CvUnit::GetSquadCenterOfMass()
 	return pCOM;
 }
 
+void CvUnit::DoSquadPlotAssignmentsByDomain(std::vector<CvUnit*> eligibleUnits, CvPlot* pDestPlot, std::map<CvUnit*, CvPlot*> &unitToPlotMap)
+{
+	bool isDestWater = pDestPlot->isWater();
+
+	std::vector<ScoredUnit> unitsToMoveByDistance;
+	for (std::vector<CvUnit*>::iterator it = eligibleUnits.begin(); it != eligibleUnits.end(); ++it)
+	{
+		CvUnit* pLoopUnit = *it;
+		int dist = plotDistance(*pLoopUnit->plot(), *pDestPlot);
+		unitsToMoveByDistance.push_back(ScoredUnit(dist, pLoopUnit));
+	}
+
+	// Give priority to furthest units so they won't have to walk around closer units
+	// that arrive to shortest distance plots first
+	std::stable_sort(unitsToMoveByDistance.begin(), unitsToMoveByDistance.end(), greater<ScoredUnit>());
+
+	// Generate a list of eligible plots for these units, only adding another
+	// ring when there are still insufficient plots for the current selection
+	std::vector<CvPlot*> eligiblePlots;
+	int currRingEndIdx = 0;
+	for (int targetPlotIdx = 0; targetPlotIdx < RING_PLOTS[currRingEndIdx]; targetPlotIdx++)
+	{
+		CvPlot* pLoopPlot = iterateRingPlots(pDestPlot, targetPlotIdx);
+		if (!pLoopPlot)
+			continue;
+
+		bool isCandidateSameTypeAsDest = isDestWater == pLoopPlot->isWater();
+
+		if (isCandidateSameTypeAsDest && eligibleUnits.size() > 0 && eligibleUnits.front()->canMoveInto(*pLoopPlot))
+		{
+			eligiblePlots.push_back(pLoopPlot);
+		}
+
+		if (targetPlotIdx == (RING_PLOTS[currRingEndIdx] - 1) && eligiblePlots.size() < eligibleUnits.size())
+		{
+			currRingEndIdx++;
+		}
+	}
+
+	// Trim the list of eligible plots to the number of unique plots required by removing those 
+	// furthest from the squad COM in the outermost ring
+	CvPlot* squadCenterOfMass = GetSquadCenterOfMass();
+	if (squadCenterOfMass)
+	{
+		std::vector<ScoredPlot> scoredPlots;
+		for (std::vector<CvPlot*>::iterator it = eligiblePlots.begin(); it != eligiblePlots.end(); ++it)
+		{
+			CvPlot* pLoopPlot = *it;
+			int ring = plotDistance(*pDestPlot, *pLoopPlot);
+			int dist = plotDistance(*squadCenterOfMass, *pLoopPlot) + (ring + 1) * (ring + 1);
+			scoredPlots.push_back(ScoredPlot(dist, pLoopPlot));
+		}
+		std::stable_sort(scoredPlots.begin(), scoredPlots.end(), less<ScoredPlot>());
+
+		size_t numEligiblePlots = eligiblePlots.size();
+		eligiblePlots.clear();
+		for (uint i = 0; i < min(numEligiblePlots, scoredPlots.size()); i++)
+		{
+			eligiblePlots.push_back(scoredPlots[i].plot);
+		}
+	}
+
+	// Assign destination plots for combat units
+	int numUnitsAssigned = 0;
+	for (std::vector<ScoredUnit>::iterator it = unitsToMoveByDistance.begin(); it != unitsToMoveByDistance.end(); ++it)
+	{
+		CvUnit* pLoopUnit = (*it).unit;
+
+		// Special case for destination plot: If the number of units to move is less than half of the ring area, the closest plots may
+		// be closer which causes the destination plot to go unfilled. If the destination plot is not already filled by the time the median
+		// distance unit is processed, assign it to the destination plot
+		if (numUnitsAssigned == unitsToMoveByDistance.size() / 2
+			&& std::find(eligiblePlots.begin(), eligiblePlots.end(), pDestPlot) != eligiblePlots.end())
+		{
+			unitToPlotMap.insert(std::make_pair(pLoopUnit, pDestPlot));
+			eligiblePlots.erase(std::find(eligiblePlots.begin(), eligiblePlots.end(), pDestPlot));
+			numUnitsAssigned++;
+
+			continue;
+		}
+
+		CvPlot* closestPlot = NULL;
+		int closestDistance = INT_MAX;
+
+		for (std::vector<CvPlot*>::iterator it = eligiblePlots.begin(); it != eligiblePlots.end(); ++it)
+		{
+			CvPlot* pLoopPlot = *it;
+
+			if (closestPlot)
+			{
+				int dist = plotDistance(*pLoopUnit->plot(), *pLoopPlot);
+				if (dist < closestDistance && pLoopUnit->canMoveInto(*pLoopPlot) && (isDestWater == pLoopPlot->isWater())) 
+				{
+					closestDistance = dist;
+					closestPlot = pLoopPlot;
+				}
+			}
+			else
+			{
+				closestPlot = pLoopPlot;
+				closestDistance = plotDistance(*pLoopUnit->plot(), *pLoopPlot);
+			}
+		}
+
+		if (closestPlot)
+		{
+			// Insert into a map and move all at once instead of moving one by one so a unit doesn't
+			// occupy a valid tile as an intermediate step to a further tile
+			unitToPlotMap.insert(std::make_pair(pLoopUnit, closestPlot));
+			eligiblePlots.erase(std::find(eligiblePlots.begin(), eligiblePlots.end(), closestPlot));
+			numUnitsAssigned++;
+		}
+	}
+}
+
 //! Logic for determining which units should go to which plots for squad movement
 //! @param pDestPlot The plot the squad is moving to
 //! @param escort If true, escort non-combat units with combat units starting on the same plot by linking them to a combat unit
@@ -14975,8 +15094,6 @@ std::map<CvUnit*, CvPlot*> CvUnit::DoSquadPlotAssignments(CvPlot* pDestPlot, boo
 	}
 
 	CvPlayer* pPlayer = &GET_PLAYER(getOwner());
-
-	bool isDestWater = pDestPlot->isWater();
 
 	// First, construct a list of all units in squad eligible to go to target tile
 	std::vector<CvUnit*> stackingUnits;
@@ -15011,7 +15128,6 @@ std::map<CvUnit*, CvPlot*> CvUnit::DoSquadPlotAssignments(CvPlot* pDestPlot, boo
 			}
 		}
 	}
-	uint unique_plots_required = max(eligibleLandUnits.size(), eligibleSeaUnits.size());
 
 	// If enabled, for each stacking unit: if a non-stacking unit in the squad is on the same plot, make it an escort
 	if (!computeOnly && escort)
@@ -15048,73 +15164,6 @@ std::map<CvUnit*, CvPlot*> CvUnit::DoSquadPlotAssignments(CvPlot* pDestPlot, boo
 		}
 	}
 
-	// Generate a list of units to move and their distance to the destination plot by domain
-	std::vector<ScoredUnit> landUnitsToMoveByDistance;
-	for (std::vector<CvUnit*>::iterator it = eligibleLandUnits.begin(); it != eligibleLandUnits.end(); ++it)
-	{
-		CvUnit* pLoopUnit = *it;
-		int dist = plotDistance(*pLoopUnit->plot(), *pDestPlot);
-		landUnitsToMoveByDistance.push_back(ScoredUnit(dist, pLoopUnit));
-	}
-	// Give priority to furthest units so they won't have to walk around closer units
-	// that arrive to shortest distance plots first
-	std::stable_sort(landUnitsToMoveByDistance.begin(), landUnitsToMoveByDistance.end(), greater<ScoredUnit>());
-
-	std::vector<ScoredUnit> seaUnitsToMoveByDistance;
-    for (std::vector<CvUnit*>::iterator it = eligibleSeaUnits.begin(); it != eligibleSeaUnits.end(); ++it)
-    {
-    	CvUnit* pLoopUnit = *it;
-    	int dist = plotDistance(*pLoopUnit->plot(), *pDestPlot);
-    	seaUnitsToMoveByDistance.push_back(ScoredUnit(dist, pLoopUnit));
-    }
-    std::stable_sort(seaUnitsToMoveByDistance.begin(), seaUnitsToMoveByDistance.end(), greater<ScoredUnit>());
-
-	// Generate a list of eligible plots for these units, only adding another
-	// ring when there are still insufficient plots for the current selection
-	std::vector<CvPlot*> eligiblePlots;
-	int currRingEndIdx = 1;
-	for (int targetPlotIdx = 0; targetPlotIdx < RING_PLOTS[currRingEndIdx]; targetPlotIdx++)
-	{
-		CvPlot* pLoopPlot = iterateRingPlots(pDestPlot, targetPlotIdx);
-		if (!pLoopPlot)
-			continue;
-
-		if (canMoveInto(*pLoopPlot) && (isDestWater == pLoopPlot->isWater()))
-		{
-			eligiblePlots.push_back(pLoopPlot);
-		}
-
-		if (targetPlotIdx == (RING_PLOTS[currRingEndIdx] - 1) && static_cast<int>(eligiblePlots.size()) < unique_plots_required)
-		{
-			currRingEndIdx++;
-		}
-	}
-
-	// Trim the list of eligible plots to the number of unique plots required by removing those 
-	// furthest from the squad COM in the outermost ring
-	CvPlot* squadCenterOfMass = GetSquadCenterOfMass();
-	if (squadCenterOfMass)
-	{
-		std::vector<ScoredPlot> scoredPlots;
-		for (std::vector<CvPlot*>::iterator it = eligiblePlots.begin(); it != eligiblePlots.end(); ++it)
-		{
-			CvPlot* pLoopPlot = *it;
-			int ring = plotDistance(*pDestPlot, *pLoopPlot);
-			int dist = plotDistance(*squadCenterOfMass, *pLoopPlot) + (ring + 1) * (ring + 1);
-			scoredPlots.push_back(ScoredPlot(dist, pLoopPlot));
-		}
-		std::stable_sort(scoredPlots.begin(), scoredPlots.end(), less<ScoredPlot>());
-
-		eligiblePlots.clear();
-		for (uint i = 0; i < min(unique_plots_required, scoredPlots.size()); i++)
-		{
-			eligiblePlots.push_back(scoredPlots[i].plot);
-		}
-	}
-
-	// Make a copy for sea domain units since they can occupy the same tile as embarked land domain units
-	std::vector<CvPlot*> eligiblePlotsSea(eligiblePlots);
-
 	// For stacking units, the assignment is simply the destination plot since they can all fit there
 	for (std::vector<CvUnit*>::iterator it = stackingUnits.begin(); it != stackingUnits.end(); ++it)
 	{
@@ -15122,101 +15171,8 @@ std::map<CvUnit*, CvPlot*> CvUnit::DoSquadPlotAssignments(CvPlot* pDestPlot, boo
 		unitToPlotMap.insert(std::make_pair(pLoopUnit, pDestPlot));
 	}
 
-	// Assign destination plots for combat units
-	int numUnitsAssigned = 0;
-	for (std::vector<ScoredUnit>::iterator it = landUnitsToMoveByDistance.begin(); it != landUnitsToMoveByDistance.end(); ++it)
-	{
-		CvUnit* pLoopUnit = (*it).unit;
-
-		// Special case for destination plot: If the number of units to move is less than half of the ring area, the closest plots may
-		// be closer which causes the destination plot to go unfilled. If the destination plot is not already filled by the time the median
-		// distance unit is processed, assign it to the destination plot
-		if (numUnitsAssigned == landUnitsToMoveByDistance.size() / 2
-			&& std::find(eligiblePlots.begin(), eligiblePlots.end(), pDestPlot) != eligiblePlots.end())
-		{
-			unitToPlotMap.insert(std::make_pair(pLoopUnit, pDestPlot));
-			eligiblePlots.erase(std::find(eligiblePlots.begin(), eligiblePlots.end(), pDestPlot));
-			numUnitsAssigned++;
-			continue;
-		}
-
-		CvPlot* closestPlot = NULL;
-		int closestDistance = INT_MAX;
-
-		for (std::vector<CvPlot*>::iterator it = eligiblePlots.begin(); it != eligiblePlots.end(); ++it)
-		{
-			CvPlot* pLoopPlot = *it;
-
-			if (closestPlot)
-			{
-				int dist = plotDistance(*pLoopUnit->plot(), *pLoopPlot);
-				if (dist < closestDistance && pLoopUnit->canMoveInto(*pLoopPlot) && (isDestWater == pLoopPlot->isWater()))
-				{
-					closestDistance = dist;
-					closestPlot = pLoopPlot;
-				}
-			}
-			else
-			{
-				closestPlot = pLoopPlot;
-			}
-		}
-
-		if (closestPlot)
-		{
-			// Insert into a map and move all at once instead of moving one by one so a unit doesn't
-			// occupy a valid tile as an intermediate step to a further tile
-			unitToPlotMap.insert(std::make_pair(pLoopUnit, closestPlot));
-			eligiblePlots.erase(std::find(eligiblePlots.begin(), eligiblePlots.end(), closestPlot));
-			numUnitsAssigned++;
-		}
-	}
-	numUnitsAssigned = 0;
-	for (std::vector<ScoredUnit>::iterator it = seaUnitsToMoveByDistance.begin(); it != seaUnitsToMoveByDistance.end(); ++it)
-	{
-		CvUnit* pLoopUnit = (*it).unit;
-
-		// Special case for destination plot: If the number of units to move is less than half of the ring area, the closest plots may
-		// be closer which causes the destination plot to go unfilled. If the destination plot is not already filled by the time the median
-		// distance unit is processed, assign it to the destination plot
-		if (numUnitsAssigned == seaUnitsToMoveByDistance.size() / 2
-			&& std::find(eligiblePlotsSea.begin(), eligiblePlotsSea.end(), pDestPlot) != eligiblePlotsSea.end())
-		{
-			unitToPlotMap.insert(std::make_pair(pLoopUnit, pDestPlot));
-			eligiblePlotsSea.erase(std::find(eligiblePlotsSea.begin(), eligiblePlotsSea.end(), pDestPlot));
-			numUnitsAssigned++;
-			continue;
-		}
-
-		CvPlot* closestPlot = NULL;
-		int closestDistance = INT_MAX;
-
-		for (std::vector<CvPlot*>::iterator it = eligiblePlotsSea.begin(); it != eligiblePlotsSea.end(); ++it)
-		{
-			CvPlot* pLoopPlot = *it;
-
-			if (closestPlot)
-			{
-				int dist = plotDistance(*pLoopUnit->plot(), *pLoopPlot);
-				if (dist < closestDistance && pLoopUnit->canMoveInto(*pLoopPlot) && (isDestWater == pLoopPlot->isWater()))
-				{
-					closestDistance = dist;
-					closestPlot = pLoopPlot;
-				}
-			}
-			else
-			{
-				closestPlot = pLoopPlot;
-			}
-		}
-
-		if (closestPlot)
-		{
-			unitToPlotMap.insert(std::make_pair(pLoopUnit, closestPlot));
-			eligiblePlotsSea.erase(std::find(eligiblePlotsSea.begin(), eligiblePlotsSea.end(), closestPlot));
-			numUnitsAssigned++;
-		}
-	}
+	DoSquadPlotAssignmentsByDomain(eligibleLandUnits, pDestPlot, unitToPlotMap);
+	DoSquadPlotAssignmentsByDomain(eligibleSeaUnits, pDestPlot, unitToPlotMap);
 
 	return unitToPlotMap;
 }
@@ -15228,7 +15184,6 @@ void CvUnit::DoSquadMovement(CvPlot* pDestPlot, bool escort)
 	std::map<CvUnit*, CvPlot*> unitToPlotMap = DoSquadPlotAssignments(pDestPlot, escort, false);
 
 	SetSquadDestination(pDestPlot);
-
 
 	// Now that we have all the units to move and tiles for them, send the move missions
 	for (std::map<CvUnit*, CvPlot*>::iterator it = unitToPlotMap.begin(); it != unitToPlotMap.end(); ++it)
@@ -20405,42 +20360,24 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 		}
 #endif
 
-		bool bZero = false;
-		if(IsGainsXPFromScouting())
+		if (IsGainsXPFromScouting() && GetNumTilesRevealedThisTurn() > 0)
 		{
-			int iExperience = /*1*/ GD_INT_GET(BALANCE_SCOUT_XP_BASE);
-			iExperience += GetNumTilesRevealedThisTurn();
-			iExperience /= 6;
-			if(iExperience > 0)
-			{
-				//Up to max barb value - rest has to come through combat!
-				changeExperienceTimes100(iExperience * 100);
-				bZero = true;
-			}
+			changeExperienceTimes100(GetNumTilesRevealedThisTurn() * 100 / /*10*/ GD_INT_GET(BALANCE_SCOUT_XP_DENOMINATOR));
 		}
-		if(IsGainsYieldFromScouting())
+		if (IsGainsYieldFromScouting())
 		{
-			bool bSea = false;
-			if(getDomainType() == DOMAIN_SEA)
-			{
-				bSea = true;
-			}
+			bool bSea = (getDomainType() == DOMAIN_SEA);
 			CvCity* pCity = GC.getMap().findCity(getX(), getY(), getOwner(), getTeam());
+			if (!pCity)
+				pCity = kPlayer.getCapitalCity();
 
-			if(pCity == NULL)
+			if (pCity)
 			{
-				pCity = GET_PLAYER(getOwner()).getCapitalCity();
-			}
-			if(pCity != NULL)
-			{
-				GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_SCOUTING, false, NO_GREATPERSON, NO_BUILDING, 0, false, NO_PLAYER, NULL, false, pCity, bSea, true, false, NO_YIELD, this);
-				bZero = true;
+				kPlayer.doInstantYield(INSTANT_YIELD_TYPE_SCOUTING, false, NO_GREATPERSON, NO_BUILDING, GetNumTilesRevealedThisTurn(), false, NO_PLAYER, NULL, false, pCity, bSea, true, false, NO_YIELD, this);
 			}
 		}
-		if(bZero)
-		{
-			SetNumTilesRevealedThisTurn(0);
-		}
+
+		SetNumTilesRevealedThisTurn(0);
 
 		// if I was invisible to the active team but won't be any more or vice versa
 		InvisibleTypes eInvisoType = getInvisibleType();

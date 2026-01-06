@@ -1530,7 +1530,7 @@ void CvActiveResolution::DoEffects(PlayerTypes ePlayer)
 	if (GetEffects()->iResourceQuantity != 0)
 	{
 		PRECONDITION(eTargetLuxury != NO_RESOURCE, "Adding NO_RESOURCE for a player.");
-		pPlayer->changeNumResourceTotal(eTargetLuxury, GetEffects()->iResourceQuantity);
+		pPlayer->changeNumResourceTotal(eTargetLuxury, GetEffects()->iResourceQuantity, true);
 	}
 	if (GetEffects()->bEmbargoCityStates)
 	{	
@@ -1792,7 +1792,7 @@ void CvActiveResolution::RemoveEffects(PlayerTypes ePlayer)
 	if (GetEffects()->iResourceQuantity != 0)
 	{
 		PRECONDITION(eTargetLuxury != NO_RESOURCE, "Subtracting NO_RESOURCE for a player.");
-		pPlayer->changeNumResourceTotal(eTargetLuxury, -1 * GetEffects()->iResourceQuantity);
+		pPlayer->changeNumResourceTotal(eTargetLuxury, -1 * GetEffects()->iResourceQuantity, true);
 	}
 	if (GetEffects()->bEmbargoCityStates)
 	{
@@ -11319,21 +11319,21 @@ int CvLeagueAI::EvaluateVoteForOtherPlayerKnowledge(CvLeague* pLeague, PlayerTyp
 		}
 	case KNOWLEDGE_PARTIAL:
 		{	
-		// What is our preferred choice on this proposal?
-		int iTopChoice = LeagueHelpers::CHOICE_NONE;
-		int iTopChoiceScore = MIN_INT;
-		std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetVoterDecision()->GetType(), GetPlayer()->GetID());
-		for (uint i = 0; i < vChoices.size(); i++)
-		{
-			int iChoice = vChoices[i];
-			int iChoiceScore = ScoreVoteChoice(pProposal, iChoice, /*bConsiderGlobal*/ true);
-			if (iChoiceScore > iTopChoiceScore)
+			// What is our preferred choice on this proposal?
+			int iTopChoice = LeagueHelpers::CHOICE_NONE;
+			int iTopChoiceScore = MIN_INT;
+			std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetVoterDecision()->GetType(), GetPlayer()->GetID());
+			for (uint i = 0; i < vChoices.size(); i++)
 			{
-				iTopChoice = iChoice;
-				iTopChoiceScore = iChoiceScore;
+				int iChoice = vChoices[i];
+				int iChoiceScore = ScoreVoteChoice(pProposal, iChoice, /*bConsiderGlobal*/ true);
+				if (iChoiceScore > iTopChoiceScore)
+				{
+					iTopChoice = iChoice;
+					iTopChoiceScore = iChoiceScore;
+				}
 			}
-		}
-		ASSERT(iTopChoice != LeagueHelpers::CHOICE_NONE);
+			ASSERT(iTopChoice != LeagueHelpers::CHOICE_NONE);
 			iRevealedChoice = iTopChoice;
 			if (sTooltipSink != NULL)
 			{
@@ -11346,21 +11346,21 @@ int CvLeagueAI::EvaluateVoteForOtherPlayerKnowledge(CvLeague* pLeague, PlayerTyp
 		}
 	case KNOWLEDGE_INTIMATE:
 		{
-		// What is our preferred choice on this proposal?
-		int iTopChoice = LeagueHelpers::CHOICE_NONE;
-		int iTopChoiceScore = MIN_INT;
-		std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetVoterDecision()->GetType(), GetPlayer()->GetID());
-		for (uint i = 0; i < vChoices.size(); i++)
-		{
-			int iChoice = vChoices[i];
-			int iChoiceScore = ScoreVoteChoice(pProposal, iChoice, /*bConsiderGlobal*/ true);
-			if (iChoiceScore > iTopChoiceScore)
+			// What is our preferred choice on this proposal?
+			int iTopChoice = LeagueHelpers::CHOICE_NONE;
+			int iTopChoiceScore = MIN_INT;
+			std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetVoterDecision()->GetType(), GetPlayer()->GetID());
+			for (uint i = 0; i < vChoices.size(); i++)
 			{
-				iTopChoice = iChoice;
-				iTopChoiceScore = iChoiceScore;
+				int iChoice = vChoices[i];
+				int iChoiceScore = ScoreVoteChoice(pProposal, iChoice, /*bConsiderGlobal*/ true);
+				if (iChoiceScore > iTopChoiceScore)
+				{
+					iTopChoice = iChoice;
+					iTopChoiceScore = iChoiceScore;
+				}
 			}
-		}
-		ASSERT(iTopChoice != LeagueHelpers::CHOICE_NONE);
+			ASSERT(iTopChoice != LeagueHelpers::CHOICE_NONE);
 			iRevealedChoice = iTopChoice;
 			if (sTooltipSink != NULL)
 			{
@@ -11404,20 +11404,20 @@ int CvLeagueAI::EvaluateVoteForOtherPlayerKnowledge(CvLeague* pLeague, PlayerTyp
 		}
 	case KNOWLEDGE_PARTIAL:
 		{	
-		// What is our preferred choice on this proposal?
-		int iTopChoice = LeagueHelpers::CHOICE_NONE;
-		int iTopChoiceScore = 0;
-		std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetRepealDecision()->GetType(), GetPlayer()->GetID());
-		for (uint i = 0; i < vChoices.size(); i++)
-		{
-			int iChoice = vChoices[i];
-			int iChoiceScore = ScoreVoteChoice(pProposal, iChoice,/*bConsiderGlobal*/ true);
-			if (iChoiceScore > iTopChoiceScore)
+			// What is our preferred choice on this proposal?
+			int iTopChoice = LeagueHelpers::CHOICE_NONE;
+			int iTopChoiceScore = MIN_INT;
+			std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetRepealDecision()->GetType(), GetPlayer()->GetID());
+			for (uint i = 0; i < vChoices.size(); i++)
 			{
-				iTopChoice = iChoice;
-				iTopChoiceScore = iChoiceScore;
+				int iChoice = vChoices[i];
+				int iChoiceScore = ScoreVoteChoice(pProposal, iChoice,/*bConsiderGlobal*/ true);
+				if (iChoiceScore > iTopChoiceScore)
+				{
+					iTopChoice = iChoice;
+					iTopChoiceScore = iChoiceScore;
+				}
 			}
-		}
 
 			iRevealedChoice = iTopChoice;
 			if (sTooltipSink != NULL)
@@ -11431,19 +11431,19 @@ int CvLeagueAI::EvaluateVoteForOtherPlayerKnowledge(CvLeague* pLeague, PlayerTyp
 		}
 	case KNOWLEDGE_INTIMATE:
 		{	// What is our preferred choice on this proposal?
-		int iTopChoice = LeagueHelpers::CHOICE_NONE;
-		int iTopChoiceScore = 0;
-		std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetRepealDecision()->GetType(), GetPlayer()->GetID());
-		for (uint i = 0; i < vChoices.size(); i++)
-		{
-			int iChoice = vChoices[i];
-			int iChoiceScore = ScoreVoteChoice(pProposal, iChoice,/*bConsiderGlobal*/ true);
-			if (iChoiceScore > iTopChoiceScore)
+			int iTopChoice = LeagueHelpers::CHOICE_NONE;
+			int iTopChoiceScore = MIN_INT;
+			std::vector<int> vChoices = pLeague->GetChoicesForDecision(pProposal->GetRepealDecision()->GetType(), GetPlayer()->GetID());
+			for (uint i = 0; i < vChoices.size(); i++)
 			{
-				iTopChoice = iChoice;
-				iTopChoiceScore = iChoiceScore;
+				int iChoice = vChoices[i];
+				int iChoiceScore = ScoreVoteChoice(pProposal, iChoice,/*bConsiderGlobal*/ true);
+				if (iChoiceScore > iTopChoiceScore)
+				{
+					iTopChoice = iChoice;
+					iTopChoiceScore = iChoiceScore;
+				}
 			}
-		}
 
 			iRevealedChoice = iTopChoice;
 			if (sTooltipSink != NULL)

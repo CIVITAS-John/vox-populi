@@ -2670,6 +2670,7 @@ public:
 	GD_INT_MEMBER(BALANCE_MINOR_PROTECTION_MINIMUM_DURATION); // VP
 	GD_INT_MEMBER(BALANCE_SCOUT_XP_BASE); // VP
 	GD_INT_MEMBER(BALANCE_SCOUT_XP_RANDOM_VALUE); // VP
+	GD_INT_MEMBER(BALANCE_SCOUT_XP_DENOMINATOR); // VP
 	GD_INT_MEMBER(BALANCE_WORLD_WONDER_SAME_ERA_COST_MODIFIER); // VP
 	GD_INT_MEMBER(BALANCE_WORLD_WONDER_PREVIOUS_ERA_COST_MODIFIER); // VP
 	GD_INT_MEMBER(BALANCE_WORLD_WONDER_SECOND_PREVIOUS_ERA_COST_MODIFIER); // VP
@@ -2993,6 +2994,10 @@ public:
 	inline const GameDataHash& getGameDataHash() const { return m_gameDataHash; }
 	inline uint32 getSaveVersion() const { return m_saveVersion; }
 	inline void setSaveVersion(uint32 version) { m_saveVersion = version; }
+
+	// Caches for faster lookups
+	std::map<SpecialistTypes, GreatPersonTypes> m_specialistToGreatPersonCache;
+	std::map<UnitClassTypes, GreatPersonTypes> m_unitClassToGreatPersonCache;
 
 protected:
 

@@ -13,6 +13,20 @@ nullOffset = Vector2(0,0);
 questionOffset, questionTextureSheet = IconLookup( 23, 64, "CIV_COLOR_ATLAS" );
 unknownString = Locale.ConvertTextKey( "TXT_KEY_MISC_UNKNOWN" );
 
+-------------------------------------------------
+-- Pedia Callback Setup
+-------------------------------------------------
+local getPedia;
+local function getPediaB( ... )
+	Events.SearchForPediaEntry( ... )
+end
+local function getPediaA( ... )
+	UIManager:QueuePopup( LookUpControl( CivilopediaControl ), PopupPriority.eUtmost );
+	getPedia = getPediaB;
+	getPedia( ... )
+end
+getPedia = CivilopediaControl and getPediaA;
+
 ------------------------------------------------------------------
 ------------------------------------------------------------------
 function AdjustArtOnUniqueUnitButton( thisButton, thisFrame, thisUnitInfo, textureSize, extendedTooltip, noTooltip)
@@ -37,7 +51,6 @@ function AdjustArtOnUniqueUnitButton( thisButton, thisFrame, thisUnitInfo, textu
 		thisButton:SetTextureOffset( textureOffset );
 		thisButton:SetHide( false );
 		thisFrame:SetHide( false );
-
 	end
 end
 
@@ -61,7 +74,7 @@ function AdjustArtOnUniqueBuildingButton( thisButton, thisFrame, thisBuildingInf
 			textureSheet = defaultErrorTextureSheet;
 			textureOffset = nullOffset;
 		end
-		
+
 		thisButton:SetTexture( textureSheet );
 		thisButton:SetTextureOffset( textureOffset );
 		thisButton:SetHide( false );
@@ -89,7 +102,7 @@ function AdjustArtOnUniqueImprovementButton( thisButton, thisFrame, thisImprovme
 			textureSheet = defaultErrorTextureSheet;
 			textureOffset = nullOffset;
 		end
-		
+
 		thisButton:SetTexture( textureSheet );
 		thisButton:SetTextureOffset( textureOffset );
 		thisButton:SetHide( false );
@@ -102,7 +115,7 @@ function AdjustArtOnUniqueProjectButton( thisButton, thisFrame, thisProjectInfo,
 	if thisButton then
 		if(noTooltip ~= true) then
 			if (extendedTooltip) then
-				thisButton:SetToolTipString( Locale.ConvertTextKey(GetHelpTextForProject(thisProjectInfo.ID, false, false, false)));
+				thisButton:SetToolTipString( Locale.ConvertTextKey(GetHelpTextForProject(thisProjectInfo.ID)));
 			else
 				thisButton:SetToolTipString( Locale.ConvertTextKey( thisProjectInfo.Description ) );
 			end
@@ -116,7 +129,7 @@ function AdjustArtOnUniqueProjectButton( thisButton, thisFrame, thisProjectInfo,
 			textureSheet = defaultErrorTextureSheet;
 			textureOffset = nullOffset;
 		end
-		
+
 		thisButton:SetTexture( textureSheet );
 		thisButton:SetTextureOffset( textureOffset );
 		thisButton:SetHide( false );
@@ -140,7 +153,7 @@ function PopulateUniqueBonuses( controlTable, civ, _, extendedTooltip, noTooltip
 
 		for row in DB.Query([[SELECT ID, Description, PortraitIndex, IconAtlas from Units INNER JOIN 
 							Civilization_UnitClassOverrides ON Units.Type = Civilization_UnitClassOverrides.UnitType 
-							WHERE Civilization_UnitClassOverrides.CivilizationType = ? AND
+							WHERE Units.ShowInPedia = 1 AND Civilization_UnitClassOverrides.CivilizationType = ? AND
 							Civilization_UnitClassOverrides.UnitType IS NOT NULL]], civ.Type) do
 			AdjustArtOnUniqueUnitButton(button, buttonFrame, row, textureSize, extendedTooltip, noTooltip);
  			button, buttonFrame = coroutine.yield(row.Description);	
@@ -148,7 +161,7 @@ function PopulateUniqueBonuses( controlTable, civ, _, extendedTooltip, noTooltip
 		
 		for row in DB.Query([[SELECT ID, Description, PortraitIndex, IconAtlas from Buildings INNER JOIN 
 							Civilization_BuildingClassOverrides ON Buildings.Type = Civilization_BuildingClassOverrides.BuildingType 
-							WHERE Civilization_BuildingClassOverrides.CivilizationType = ? AND
+							WHERE Buildings.ShowInPedia = 1 AND Civilization_BuildingClassOverrides.CivilizationType = ? AND
 							Civilization_BuildingClassOverrides.BuildingType IS NOT NULL]], civ.Type) do
 			AdjustArtOnUniqueBuildingButton(button, buttonFrame, row, textureSize, extendedTooltip, noTooltip);
  			button, buttonFrame = coroutine.yield(row.Description);	
@@ -179,6 +192,11 @@ function PopulateUniqueBonuses( controlTable, civ, _, extendedTooltip, noTooltip
 			buttonFrame:SetHide(true);
 			local _, text = coroutine.resume(co, button, buttonFrame);
 			table.insert(BonusText, text);
+
+			-- Register pedia callback after button is populated
+			if CivilopediaControl and text and button then
+				button:RegisterCallback( Mouse.eRClick, function() getPedia( text ) end );
+			end
 		end
 	end
     
@@ -194,12 +212,12 @@ function PopulateUniqueBonuses_CreateCached()
 	
 	local uniqueUnitsQuery = DB.CreateQuery([[SELECT ID, Description, PortraitIndex, IconAtlas from Units INNER JOIN 
 								Civilization_UnitClassOverrides ON Units.Type = Civilization_UnitClassOverrides.UnitType 
-								WHERE Civilization_UnitClassOverrides.CivilizationType = ? AND
+								WHERE Units.ShowInPedia = 1 AND Civilization_UnitClassOverrides.CivilizationType = ? AND
 								Civilization_UnitClassOverrides.UnitType IS NOT NULL]]);
 								
 	local uniqueBuildingsQuery = DB.CreateQuery([[SELECT ID, Description, PortraitIndex, IconAtlas from Buildings INNER JOIN 
 								Civilization_BuildingClassOverrides ON Buildings.Type = Civilization_BuildingClassOverrides.BuildingType 
-								WHERE Civilization_BuildingClassOverrides.CivilizationType = ? AND
+								WHERE Buildings.ShowInPedia = 1 AND Civilization_BuildingClassOverrides.CivilizationType = ? AND
 								Civilization_BuildingClassOverrides.BuildingType IS NOT NULL]]);
 								
 	local uniqueImprovementsQuery = DB.CreateQuery([[SELECT ID, Description, PortraitIndex, IconAtlas from Improvements where CivilizationType = ?]]);
@@ -261,6 +279,11 @@ function PopulateUniqueBonuses_CreateCached()
 				buttonFrame:SetHide(true);
 				local text = buttonFuncs[buttonNum](button, buttonFrame);
 				table.insert(BonusText, text);
+
+				-- Register pedia callback after button is populated
+				if CivilopediaControl and text and button then
+					button:RegisterCallback( Mouse.eRClick, function() getPedia( text ) end );
+				end
 			end
 		end
 	    

@@ -136,6 +136,9 @@ protected:
 	static int lSetFaithPurchaseType(lua_State* L);
 	static int lGetFaithPurchaseIndex(lua_State* L);
 	static int lSetFaithPurchaseIndex(lua_State* L);
+	static int lIsDisableAutomaticFaithPurchase(lua_State* L);
+	static int lSetDisableAutomaticFaithPurchase(lua_State* L);
+	static int lDoSetDisableAutomaticFaithPurchase(lua_State* L);
 
 	static int lIsProductionMaxedUnitClass(lua_State* L);
 	static int lIsProductionMaxedBuildingClass(lua_State* L);
@@ -1007,6 +1010,7 @@ protected:
 	static int lGetIndustryHistory(lua_State* L);
 	static int lGetAgricultureHistory(lua_State* L);
 	static int lGetPowerHistory(lua_State* L);
+	static int lGetReasonPlunderTradeRouteDisabled(lua_State* L);
 	static int lGetReplayData(lua_State* L);
 	static int lSetReplayDataValue(lua_State* L);
 

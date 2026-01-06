@@ -455,16 +455,16 @@ void CvPlot::doImprovementUpgrade()
 {
 	if(getImprovementType() != NO_IMPROVEMENT)
 	{
-		ImprovementTypes eImprovementUpdrade = (ImprovementTypes)GC.getImprovementInfo(getImprovementType())->GetImprovementUpgrade();
-		if(eImprovementUpdrade != NO_IMPROVEMENT)
+		ImprovementTypes eImprovementUpgrade = (ImprovementTypes)GC.getImprovementInfo(getImprovementType())->GetImprovementUpgrade();
+		if(eImprovementUpgrade != NO_IMPROVEMENT)
 		{
-			if(isBeingWorked() || GC.getImprovementInfo(eImprovementUpdrade)->IsOutsideBorders())
+			if(isBeingWorked() || GC.getImprovementInfo(eImprovementUpgrade)->IsOutsideBorders())
 			{
 				changeUpgradeProgress(GET_PLAYER(getOwner()).getImprovementUpgradeRate());
 
 				if(getUpgradeProgress() >= (GC.getGame().getImprovementUpgradeTime(getImprovementType(), this)) * 100)
 				{
-					setImprovementType(eImprovementUpdrade, GetPlayerThatBuiltImprovement());
+					setImprovementType(eImprovementUpgrade, GetPlayerThatBuiltImprovement());
 				}
 			}
 		}
@@ -2917,7 +2917,7 @@ BuildTypes CvPlot::GetBuildTypeFromImprovement(ImprovementTypes eImprovement) co
 bool CvPlot::canBuild(BuildTypes eBuild, PlayerTypes ePlayer, bool bTestVisible, bool bTestPlotOwner, bool bTestXAdjacent) const
 {
 	static const ImprovementTypes eFeitoria = (ImprovementTypes)GC.getInfoTypeForString("IMPROVEMENT_FEITORIA");
-	TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+	TeamTypes eTeam = ePlayer != NO_PLAYER ? GET_PLAYER(ePlayer).getTeam() : NO_TEAM;
 
 	ImprovementTypes eImprovement;
 	ImprovementTypes eFinalImprovementType;
@@ -6787,7 +6787,6 @@ void CvPlot::setOwner(PlayerTypes eNewValue, int iAcquiringCityID, bool bCheckUn
 					ChangeRestoreMovesCount(1);
 				}
 
-				//Resource from improvement - change ownership if needed.
 				ResourceTypes eResourceFromImprovement = (ResourceTypes)pImprovementInfo->GetResourceFromImprovement();
 				int iQuantity = pImprovementInfo->GetResourceQuantityFromImprovement();
 				if(iQuantity <= 0)
@@ -7327,8 +7326,16 @@ void CvPlot::setTerrainType(TerrainTypes eNewValue, bool bRecalculate, bool bReb
 				if ((YieldTypes)iI > YIELD_CULTURE_LOCAL && !MOD_BALANCE_CORE_JFD)
 					break;
 
-				pOwningCity->UpdateYieldPerXTerrain((YieldTypes)iI, getTerrainType());
-				pOwningCity->UpdateYieldPerXTerrainFromReligion((YieldTypes)iI, getTerrainType());
+				pOwningCity->UpdateYieldPerXTerrain((YieldTypes)iI, eOldValue);
+				pOwningCity->UpdateYieldPerXTerrain((YieldTypes)iI, eNewValue);
+				pOwningCity->UpdateYieldPerXTerrainFromReligion((YieldTypes)iI, eOldValue);
+				pOwningCity->UpdateYieldPerXTerrainFromReligion((YieldTypes)iI, eNewValue);
+			}
+
+			if (!isCity() && pOwningCity->GetCityCitizens()->IsWorkingPlot(this))
+			{
+				pOwningCity->ChangeNumTerrainWorked(eOldValue, -1);
+				pOwningCity->ChangeNumTerrainWorked(eNewValue, 1);
 			}
 		}
 
@@ -7942,11 +7949,10 @@ void CvPlot::setIsCity(bool bValue, int iCityID, int iWorkRange)
 }
 
 //	--------------------------------------------------------------------------------
-void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder)
+void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder, bool bGiftFromMajor)
 {
 	int iI = 0;
 	ImprovementTypes eOldImprovement = getImprovementType();
-	bool bNewImprovementGiftFromMajor = false; // If it is a gift from a major civ, our tech limitations do not apply
 
 	if (eNewValue < NO_IMPROVEMENT) return;
 	if (eNewValue > NO_IMPROVEMENT && GC.getImprovementInfo(eNewValue) == NULL) return;
@@ -7973,11 +7979,6 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 		if (eResourceType == (ResourceTypes)GC.getInfoTypeForString("RESOURCE_MAIZE", true) && iContinentType != 1) {
 			SetContinentType(1);
 		}
-	}
-
-	if (eBuilder != NO_PLAYER && eNewValue != NO_IMPROVEMENT && getOwner() != NO_PLAYER && GET_PLAYER(getOwner()).isMinorCiv() && GET_PLAYER(eBuilder).isMajorCiv() && !GC.getImprovementInfo(eNewValue)->IsCreatedByGreatPerson())
-	{
-		bNewImprovementGiftFromMajor = true;
 	}
 
 	bool bArchaeologyChoicePending = false;
@@ -8140,17 +8141,6 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 					ChangeRestoreMovesCount(-1);
 				}
 
-				//Resource from improvement - change ownership if needed.
-				ResourceTypes eResourceFromImprovement = (ResourceTypes)oldImprovementEntry.GetResourceFromImprovement();
-				int iQuantity = oldImprovementEntry.GetResourceQuantityFromImprovement();
-				if (iQuantity <= 0)
-				{
-					iQuantity = 1;
-				}
-				if (eResourceFromImprovement != NO_RESOURCE && (getResourceType() != NO_RESOURCE && getResourceType() != eResourceFromImprovement))
-				{
-					setResourceType(eResourceFromImprovement, iQuantity);
-				}
 				// Embassy extra vote in WC mod
 				if (oldImprovementEntry.GetCityStateExtraVote() > 0 && eOldBuilder != NO_PLAYER)
 				{
@@ -8173,10 +8163,10 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 			SetPlayerResponsibleForImprovement(NO_PLAYER);
 		}
 
-		// destroy archaeological site (needs to be done before setting the improvement, otherwise the removed artifact will incorrectly be treated as improved, messing with the resource counters)
 		if (eNewValue != NO_IMPROVEMENT)
 		{
 			CvImprovementEntry& newImprovementEntry = *GC.getImprovementInfo(eNewValue);
+			// destroy archaeological site (needs to be done before setting the improvement, otherwise the removed artifact will incorrectly be treated as improved, messing with the resource counters)
 			if (newImprovementEntry.IsPermanent() || newImprovementEntry.IsCreatedByGreatPerson())
 			{
 				ResourceTypes eArtifact = static_cast<ResourceTypes>(GD_INT_GET(ARTIFACT_RESOURCE));
@@ -8185,6 +8175,13 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 				{
 					ClearArchaeologicalRecord();
 				}
+			}
+
+			// remove existing resource if this improvement places a new one (needs to be done before setting the improvement to make sure resource counts are updated correctly)
+			ResourceTypes eResourceFromImprovement = (ResourceTypes)newImprovementEntry.GetResourceFromImprovement();
+			if (eResourceFromImprovement != NO_RESOURCE && getResourceType() != NO_RESOURCE)
+			{
+				setResourceType(NO_RESOURCE, 0);
 			}
 		}
 
@@ -8391,7 +8388,22 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 										CvResourceInfo* pSelectedResourceInfo = GC.getResourceInfo(eSelectedResource);
 										ASSERT(pSelectedResourceInfo);
 										NotificationTypes eNotificationType = NO_NOTIFICATION_TYPE;
-										strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_RESOURCE", pSelectedResourceInfo->GetTextKey());
+
+										ResourceTypes eArtifactResource = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_ARTIFACTS", true);
+										ResourceTypes eHiddenArtifactResource = (ResourceTypes)GC.getInfoTypeForString("RESOURCE_HIDDEN_ARTIFACTS", true);
+
+										if (eSelectedResource == eArtifactResource)
+										{
+											strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_ARTIFACTS");
+										}
+										else if (eSelectedResource == eHiddenArtifactResource)
+										{
+											strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_HIDDEN_ARTIFACTS");
+										}
+										else
+										{
+											strBuffer = GetLocalizedText("TXT_KEY_NOTIFICATION_FOUND_RESOURCE", pSelectedResourceInfo->GetTextKey());
+										}
 
 										CvString strSummary = GetLocalizedText("TXT_KEY_NOTIFICATION_SUMMARY_FOUND_RESOURCE", pSelectedResourceInfo->GetTextKey());
 
@@ -8524,16 +8536,14 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 					ChangeRestoreMovesCount(1);
 				}
 
-				//Resource from improvement - change ownership if needed.
 				ResourceTypes eResourceFromImprovement = (ResourceTypes)newImprovementEntry.GetResourceFromImprovement();
-				int iQuantity = newImprovementEntry.GetResourceQuantityFromImprovement();
-				if(iQuantity <= 0)
+				if (eResourceFromImprovement != NO_RESOURCE)
 				{
-					iQuantity = 1;
-				}
-
-				if(eResourceFromImprovement != NO_RESOURCE)
-				{
+					int iQuantity = newImprovementEntry.GetResourceQuantityFromImprovement();
+					if (iQuantity <= 0)
+					{
+						iQuantity = 1;
+					}
 					setResourceType(eResourceFromImprovement, iQuantity);
 					bResourcesOnPlotChanged = true;
 				}
@@ -8545,7 +8555,7 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 					ResourceTypes eResource = getResourceType(getTeam()); // can we see the resource?
 					if (eResource != NO_RESOURCE)
 					{
-						if (IsResourceImprovedForOwner(bNewImprovementGiftFromMajor) && !isCity())
+						if (IsResourceImprovedForOwner(bGiftFromMajor) && !isCity())
 						{
 							owningPlayer.addResourcesOnPlotToTotal(this, false);
 							owningPlayer.removeResourcesOnPlotFromUnimproved(this, false);
@@ -8559,11 +8569,11 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 					else
 					{
 						// if this is a gift from a major, add the resource even if we can't see it yet
-						if (bNewImprovementGiftFromMajor && getResourceType() != NO_RESOURCE)
+						if (bGiftFromMajor && getResourceType() != NO_RESOURCE)
 						{
-							if (IsResourceImprovedForOwner(bNewImprovementGiftFromMajor))
+							if (IsResourceImprovedForOwner(bGiftFromMajor))
 							{
-								owningPlayer.addResourcesOnPlotToTotal(this, false, bNewImprovementGiftFromMajor);
+								owningPlayer.addResourcesOnPlotToTotal(this, false, bGiftFromMajor);
 							}
 						}
 					}
@@ -8680,15 +8690,10 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 						}
 					}
 				}
-				//Resource from improvement - change ownership if needed.
+				
 				ResourceTypes eResourceFromImprovement = (ResourceTypes)GC.getImprovementInfo(eOldImprovement)->GetResourceFromImprovement();
 				if (eResourceFromImprovement != NO_RESOURCE)
 				{
-					int iQuantity = GC.getImprovementInfo(eOldImprovement)->GetResourceQuantityFromImprovement();
-					if (iQuantity <= 0)
-					{
-						iQuantity = 1;
-					}
 					if (getResourceType() != NO_RESOURCE && getResourceType() == eResourceFromImprovement)
 					{
 						setResourceType(NO_RESOURCE, 0);
@@ -8735,7 +8740,7 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 			SetPlayerThatBuiltImprovement(eBuilder);
 		}
 
-		SetImprovedByGiftFromMajor(bNewImprovementGiftFromMajor); // Assumes that only one tile improvement can be on this plot at a time
+		SetImprovedByGiftFromMajor(bGiftFromMajor); // Assumes that only one tile improvement can be on this plot at a time
 
 		if(GC.getGame().isDebugMode())
 		{
@@ -8913,17 +8918,16 @@ void CvPlot::SetImprovementPillaged(bool bPillaged, bool bEvents)
 		{
 			CvImprovementEntry* pImprovementInfo = GC.getImprovementInfo(getImprovementType());
 
-			//Resource from improvement - change ownership if needed.
-			ResourceTypes eResourceFromImprovement = static_cast<ResourceTypes>(pImprovementInfo->GetResourceFromImprovement());
-			int iQuantity = pImprovementInfo->GetResourceQuantityFromImprovement();
-			if (iQuantity <= 0)
-			{
-				iQuantity = 1;
-			}
-
 			int iChange = bPillaged ? -1 : 1;
+
+			ResourceTypes eResourceFromImprovement = static_cast<ResourceTypes>(pImprovementInfo->GetResourceFromImprovement());
 			if (eResourceFromImprovement != NO_RESOURCE && getResourceType() != NO_RESOURCE && getResourceType() != eResourceFromImprovement)
 			{
+				int iQuantity = pImprovementInfo->GetResourceQuantityFromImprovement();
+				if (iQuantity <= 0)
+				{
+					iQuantity = 1;
+				}
 				GET_PLAYER(getOwner()).changeNumResourceTotal(eResourceFromImprovement, iChange * iQuantity, false, true, true);
 			}
 
@@ -9855,7 +9859,7 @@ int CvPlot::calculateNatureYield(YieldTypes eYield, PlayerTypes ePlayer, Feature
 	{
 		CvResourceInfo* pkResourceInfo = GC.getResourceInfo(eResource);
 		CvImprovementEntry* pkImprovementInfo = eImprovement != NO_IMPROVEMENT ? GC.getImprovementInfo(eImprovement) : NULL;
-		if (pkResourceInfo && (!BALANCE_NO_RESOURCE_YIELDS_FROM_GP_IMPROVEMENT || !pkImprovementInfo || !pkImprovementInfo->ConnectsAllResources()))
+		if (pkResourceInfo && (!MOD_BALANCE_NO_RESOURCE_YIELDS_FROM_GP_IMPROVEMENT || !pkImprovementInfo || !pkImprovementInfo->ConnectsAllResources()))
 			iYield += pkResourceInfo->getYieldChange(eYield);
 	}
 
@@ -15732,6 +15736,14 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 	if (eImprovement == NO_IMPROVEMENT)
 		return 0;
 
+	bool bExistingImprovement = eBuild == NO_BUILD;
+	if (!bExistingImprovement)
+	{
+		CvBuildInfo* pkBuildInfo = GC.getBuildInfo(eBuild);
+		if (pkBuildInfo && pkBuildInfo->isRepair())
+			bExistingImprovement = true;
+	}
+
 	CvImprovementEntry* pkImprovementInfo = GC.getImprovementInfo(eImprovement);
 	int iImprovementDefenseModifier = pkImprovementInfo->GetDefenseModifier();
 	int iImprovementDamage = pkImprovementInfo->GetNearbyEnemyDamage();
@@ -15796,7 +15808,7 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 						ImprovementTypes eAdjacentImprovement = it != sState.mChangedPlotImprovements.end() ? it->second.second : NO_IMPROVEMENT;
 
 						// If we are not planning on building an improvement here, use the one that exists already
-						if (eAdjacentImprovement == NO_IMPROVEMENT && !pLoopAdjacentAdjacentPlot->IsImprovementPillaged())
+						if (eAdjacentImprovement == NO_IMPROVEMENT)
 							eAdjacentImprovement = pLoopAdjacentAdjacentPlot->getImprovementType();
 
 						if (eAdjacentImprovement == NO_IMPROVEMENT)
@@ -15819,7 +15831,7 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 				ImprovementTypes eAdjacentImprovement = it != sState.mChangedPlotImprovements.end() ? it->second.second : NO_IMPROVEMENT;
 
 				// If we are not planning on building an improvement here, use the one that exists already
-				if (eAdjacentImprovement == NO_IMPROVEMENT && !pAdjacentPlot->IsImprovementPillaged())
+				if (eAdjacentImprovement == NO_IMPROVEMENT)
 					eAdjacentImprovement = pAdjacentPlot->getImprovementType();
 
 				if (eAdjacentImprovement != NO_IMPROVEMENT)
@@ -15832,24 +15844,25 @@ int CvPlot::GetDefenseBuildValue(PlayerTypes eOwner, BuildTypes eBuild, Improvem
 			}
 			else if (pAdjacentPlot->isOwned() && pAdjacentPlot->getTeam() != eTeam && GET_PLAYER(pAdjacentPlot->getOwner()).isMajorCiv())
 			{
-				iAdjacentOtherPlayerLand++;
+
+				if (iCultureBombRadius >= iRingID && !bExistingImprovement && !pAdjacentPlot->isCity() && !pAdjacentPlot->IsStealBlockedByImprovement())
+					iAdjacentOwnedLand++;
+				else
+					iAdjacentOtherPlayerLand++;
 
 				CivApproachTypes eApproach = pDiplomacyAI->GetCivApproach(pAdjacentPlot->getOwner());
 				StrengthTypes eStrength = pDiplomacyAI->GetMilitaryStrengthComparedToUs(pAdjacentPlot->getOwner());
 
 				iMaxAdjacentThreat = max(iMaxAdjacentThreat, GetDefensiveApproachMultiplierTimes100(eApproach) * GetDefensiveStrengthMultiplierTimes100(eStrength) / 100);
-
-				if (iCultureBombRadius >= iRingID && eBuild != NO_BUILD && !pAdjacentPlot->isCity() && !pAdjacentPlot->IsStealBlockedByImprovement())
-					iAdjacentOwnedLand++;
 			}
 		}
 	}
 
 	// No defensive utility from building here
-	if (iMaxAdjacentThreat == 0 || iAdjacentOtherPlayerLand<3)
+	if (!bExistingImprovement && (iMaxAdjacentThreat == 0 || iAdjacentOtherPlayerLand < 3))
 		return 0;
 
-	bool bIgnoreFeature = eBuild != NO_BUILD && getFeatureType() != NO_FEATURE && GC.getBuildInfo(eBuild)->isFeatureRemove(getFeatureType());
+	bool bIgnoreFeature = !bExistingImprovement && getFeatureType() != NO_FEATURE && GC.getBuildInfo(eBuild)->isFeatureRemove(getFeatureType());
 
 	int iDefenseModifier = defenseModifier(eTeam, true, bIgnoreFeature) + iImprovementDefenseModifier;
 

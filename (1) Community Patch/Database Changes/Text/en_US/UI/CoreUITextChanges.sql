@@ -105,7 +105,7 @@ WHERE Tag = 'TXT_KEY_PRODUCTION_RESOURCES_REQUIRED';
 
 -- Building
 UPDATE Language_en_US
-SET Text = '{1: number "''[ICON_HAPPINESS_1] Happiness: ''#;''[ICON_HAPPINESS_3] Unhappiness '':#"}'
+SET Text = '[ICON_HAPPINESS_1] Happiness: {2_Sign}{1_Num}'
 WHERE Tag = 'TXT_KEY_PRODUCTION_BUILDING_HAPPINESS';
 
 UPDATE Language_en_US
@@ -156,8 +156,8 @@ WHERE Tag = 'TXT_KEY_YIELD_FROM_RELIGION';
 UPDATE Language_en_US
 SET Text = '[ICON_BULLET]{1_Num} {2_IconString} from [ICON_CITIZEN] Population'
 WHERE Tag = 'TXT_KEY_YIELD_FROM_POP';
-UPDATE Language_en_US
 
+UPDATE Language_en_US
 SET Text = '[ICON_BULLET]{1_Num} {2_IconString} from other sources'
 WHERE Tag = 'TXT_KEY_YIELD_FROM_MISC';
 

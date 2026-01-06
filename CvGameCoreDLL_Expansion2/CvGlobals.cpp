@@ -2105,6 +2105,7 @@ CvGlobals::CvGlobals() :
 	GD_INT_INIT(BALANCE_MINOR_PROTECTION_MINIMUM_DURATION, 10),
 	GD_INT_INIT(BALANCE_SCOUT_XP_BASE, 1),
 	GD_INT_INIT(BALANCE_SCOUT_XP_RANDOM_VALUE, 12),
+	GD_INT_INIT(BALANCE_SCOUT_XP_DENOMINATOR, 10),
 	GD_INT_INIT(BALANCE_WORLD_WONDER_SAME_ERA_COST_MODIFIER, 0),
 	GD_INT_INIT(BALANCE_WORLD_WONDER_PREVIOUS_ERA_COST_MODIFIER, 0),
 	GD_INT_INIT(BALANCE_WORLD_WONDER_SECOND_PREVIOUS_ERA_COST_MODIFIER, 0),
@@ -3322,8 +3323,6 @@ std::vector<CvCivilizationInfo*>& CvGlobals::getCivilizationInfo()
 
 CvCivilizationInfo* CvGlobals::getCivilizationInfo(CivilizationTypes eCivilizationNum)
 {
-	PRECONDITION(eCivilizationNum > -1);
-	PRECONDITION(eCivilizationNum < GC.getNumCivilizationInfos());
 	if(eCivilizationNum > -1 && eCivilizationNum < (int)m_paCivilizationInfo.size())
 		return m_paCivilizationInfo[eCivilizationNum];
 	else
@@ -3332,7 +3331,6 @@ CvCivilizationInfo* CvGlobals::getCivilizationInfo(CivilizationTypes eCivilizati
 
 CivilizationTypes CvGlobals::getCivilizationInfoIndex(const char* pszType)
 {
-	ASSERT(pszType != NULL);
 	if(pszType != NULL)
 	{
 		int iIndex = 0;
@@ -4005,6 +4003,27 @@ void CvGlobals::GameDataPostCache()
 		}
 	}
 
+	// Cache Great Person lookups
+	for (int iI = 0; iI < getNumGreatPersonInfos(); ++iI)
+	{
+		GreatPersonTypes eGreatPerson = static_cast<GreatPersonTypes>(iI);
+		CvGreatPersonInfo* pGreatPersonInfo = getGreatPersonInfo(eGreatPerson);
+		if (pGreatPersonInfo == NULL)
+			continue;
+
+		SpecialistTypes eSpecialist = static_cast<SpecialistTypes>(pGreatPersonInfo->GetSpecialistType());
+		if (eSpecialist != NO_SPECIALIST)
+		{
+			m_specialistToGreatPersonCache[eSpecialist] = eGreatPerson;
+		}
+
+		UnitClassTypes eUnitClass = static_cast<UnitClassTypes>(pGreatPersonInfo->GetUnitClassType());
+		if (eUnitClass != NO_UNITCLASS)
+		{
+			m_unitClassToGreatPersonCache[eUnitClass] = eGreatPerson;
+		}
+	}
+
 	calcGameDataHash();
 }
 
@@ -4292,8 +4311,8 @@ std::vector<CvSpecialistInfo*>& CvGlobals::getSpecialistInfo()
 
 CvSpecialistInfo* CvGlobals::getSpecialistInfo(SpecialistTypes eSpecialistNum)
 {
-	PRECONDITION(eSpecialistNum > -1);
-	PRECONDITION(eSpecialistNum < GC.getNumSpecialistInfos());
+	ASSERT(eSpecialistNum > -1);
+	ASSERT(eSpecialistNum < GC.getNumSpecialistInfos());
 	if(eSpecialistNum > -1 && eSpecialistNum < (int)m_paSpecialistInfo.size())
 		return m_paSpecialistInfo[eSpecialistNum];
 	else
@@ -7009,6 +7028,7 @@ void CvGlobals::cacheGlobals()
 	GD_INT_CACHE(BALANCE_MINOR_PROTECTION_MINIMUM_DURATION);
 	GD_INT_CACHE(BALANCE_SCOUT_XP_BASE);
 	GD_INT_CACHE(BALANCE_SCOUT_XP_RANDOM_VALUE);
+	GD_INT_CACHE(BALANCE_SCOUT_XP_DENOMINATOR);
 	GD_INT_CACHE(BALANCE_WORLD_WONDER_SAME_ERA_COST_MODIFIER);
 	GD_INT_CACHE(BALANCE_WORLD_WONDER_PREVIOUS_ERA_COST_MODIFIER);
 	GD_INT_CACHE(BALANCE_WORLD_WONDER_SECOND_PREVIOUS_ERA_COST_MODIFIER);

@@ -1,10 +1,12 @@
 -------------------------------------------------
 -- GameSetup Screen
 -------------------------------------------------
+CivilopediaControl = "/FrontEnd/MainMenu/Other/Civilopedia" -- MUST be before include( "UniqueBonuses" ) to enable pedia callback
 include( "IconSupport" );
 include( "UniqueBonuses" );
-      
+
 local bIsModding = (ContextPtr:GetID() == "ModdingGameSetupScreen");
+local populateUniqueBonuses = PopulateUniqueBonuses_CreateCached();
 
 -------------------------------------------------
 -- Back Button Handler
@@ -482,9 +484,8 @@ function SetSelectedCiv()
 		
         
 		IconHookup( leader.PortraitIndex, 128, leader.IconAtlas, Controls.Portrait );
+		IconHookup( civ.PortraitIndex, 64, civ.IconAtlas, Controls.IconShadow )
 
-		SimpleCivIconHookup( 0, 64, Controls.IconShadow );      
-         
 		-- Sets Trait bonus Text
         local leaderTrait = GameInfo.Leader_Traits("LeaderType ='" .. leader.Type .. "'")();
         local trait = GameInfo.Traits[leaderTrait.TraitType];
@@ -492,9 +493,9 @@ function SetSelectedCiv()
         Controls.BonusDescription:SetText( Locale.ConvertTextKey( trait.Description ));
         
         SetCivName(leaderDescription, civ.ShortDescription, trait.ShortDescription);
-        
+
         -- Sets Bonus Icons
-        PopulateUniqueBonuses( Controls, civ, leader );
+        populateUniqueBonuses( Controls, civ.Type, true);
         
         -- Set Selected Civ Map
 		Controls.LargeMapImage:UnloadTexture();
