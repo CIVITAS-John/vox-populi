@@ -803,15 +803,9 @@ void CvCity::init(int iID, PlayerTypes eOwner, int iX, int iY, bool bBumpUnits, 
 			// Free Culture-per-turn in every City from Policies
 			ChangeBaseYieldRateFromPolicies(YIELD_CULTURE, GC.getPolicyInfo(ePolicy)->GetCulturePerCity());
 			// Yield from training units
-			for (int iI = 0; iI < NUM_YIELD_TYPES; iI++)
+			for (int iI = 0; iI < GC.getNUM_YIELD_TYPES(); iI++)
 			{
 				YieldTypes eYield = (YieldTypes)iI;
-				if (eYield == NO_YIELD)
-					continue;
-
-				//Simplification - errata yields not worth considering.
-				if ((YieldTypes)iI > YIELD_CULTURE_LOCAL && !MOD_BALANCE_CORE_JFD)
-					break;
 			
 				ChangeYieldFromUnitProduction(eYield, GC.getPolicyInfo(ePolicy)->GetYieldFromUnitProduction(eYield));
 			}
@@ -15385,7 +15379,7 @@ int CvCity::GetCultureFromSpecialist(SpecialistTypes eSpecialist) const
 		return 0;
 	}
 
-	int iCulture = pkSpecialistInfo->getCulturePerTurn() + GET_PLAYER(getOwner()).getSpecialistExtraYield(YIELD_CULTURE);
+	int iCulture = pkSpecialistInfo->getCulturePerTurn();
 	return iCulture;
 }
 
@@ -31875,6 +31869,7 @@ void CvCity::Serialize(City& city, Visitor& visitor)
 	visitor(city.m_aiYieldFromGoldenAgeStart);
 	visitor(city.m_aiYieldChangePerGoldenAge);
 	visitor(city.m_aiYieldChangePerGoldenAgeCap);
+	visitor(city.m_aiYieldFromPreviousGoldenAges);
 	visitor(city.m_aiGoldenAgeYieldMod);
 	visitor(city.m_aiYieldChangesPerLocalTheme);
 	visitor(city.m_aiYieldFromUnitGiftGlobal);
