@@ -100,7 +100,9 @@ int CvFlavorRecipient::GetLatestFlavorValue(FlavorTypes eFlavor, bool bAllowNega
 /// Constructor
 CvFlavorManager::CvFlavorManager(void)
 {
-
+	// Vox Deorum: Initialize custom flavor fields
+	m_iCustomFlavorSetTurn = -1;
+	m_bHasCustomFlavors = false;
 }
 
 /// Destructor
@@ -118,6 +120,7 @@ void CvFlavorManager::Init(CvPlayer* pPlayer)
 	// Allocate memory
 	m_piPersonalityFlavor.init();
 	m_piActiveFlavor.init();
+	m_CustomFlavors.init(0); // Vox Deorum: Initialize custom flavors to 0
 	m_FlavorTargetList.reserve((3*64)+100);
 
 	// Clear variables
@@ -193,6 +196,7 @@ void CvFlavorManager::Uninit()
 {
 	m_piPersonalityFlavor.uninit();
 	m_piActiveFlavor.uninit();
+	m_CustomFlavors.uninit(); // Vox Deorum
 	m_FlavorTargetList.clear();
 }
 
@@ -201,6 +205,9 @@ void CvFlavorManager::Reset()
 {
 	m_piPersonalityFlavor.assign(0);
 	m_piActiveFlavor.assign(0);
+	m_CustomFlavors.assign(0); // Vox Deorum
+	m_iCustomFlavorSetTurn = -1; // Vox Deorum
+	m_bHasCustomFlavors = false; // Vox Deorum
 }
 
 template<typename FlavorManager, typename Visitor>
@@ -208,6 +215,11 @@ void CvFlavorManager::Serialize(FlavorManager& flavorManager, Visitor& visitor)
 {
 	visitor(flavorManager.m_piPersonalityFlavor);
 	visitor(flavorManager.m_piActiveFlavor);
+
+	// Vox Deorum: Serialize custom flavor fields - will activate later
+	// visitor(flavorManager.m_bHasCustomFlavors);
+	// visitor(flavorManager.m_iCustomFlavorSetTurn);
+	// visitor(flavorManager.m_CustomFlavors);
 }
 
 /// Serialization read
@@ -443,6 +455,80 @@ int CvFlavorManager::GetAdjustedValue(int iOriginalValue, int iPlusMinus, int iM
 {
 	// Randomize!
 	return range(GC.getGame().randRangeInclusive(iOriginalValue - iPlusMinus, iOriginalValue + iPlusMinus, seed), iMin, iMax);
+}
+
+// Vox Deorum: Set custom flavors that auto-expire after 10 turns
+void CvFlavorManager::SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors)
+{
+	// If custom flavors already exist, unset them first
+	if (m_bHasCustomFlavors)
+	{
+		UnsetCustomFlavors();
+	}
+
+	// Store the new flavors (copy element by element)
+	int iNumFlavors = GC.getNumFlavorTypes();
+	for (int i = 0; i < iNumFlavors; i++)
+	{
+		m_CustomFlavors[i] = flavors[i];
+	}
+
+	// Apply them using BOTH ChangeActivePersonalityFlavors and ChangeCityFlavors with reason "VoxDeorum"
+	ChangeActivePersonalityFlavors(flavors, "VoxDeorum", true);
+	ChangeCityFlavors(flavors, "VoxDeorum", true);
+
+	// Set the turn when custom flavors were applied
+	m_iCustomFlavorSetTurn = GC.getGame().getGameTurn();
+	m_bHasCustomFlavors = true;
+}
+
+// Vox Deorum: Unset custom flavors
+void CvFlavorManager::UnsetCustomFlavors()
+{
+	// If no custom flavors, return
+	if (!m_bHasCustomFlavors)
+	{
+		return;
+	}
+
+	// Create negative deltas of m_CustomFlavors
+	CvEnumMap<FlavorTypes, int> negativeFlavors;
+	negativeFlavors.init();
+
+	int iNumFlavors = GC.getNumFlavorTypes();
+	for (int i = 0; i < iNumFlavors; i++)
+	{
+		negativeFlavors[i] = -m_CustomFlavors[i];
+	}
+
+	// Apply the negative deltas to both player and city flavors with reason "Custom"
+	ChangeActivePersonalityFlavors(negativeFlavors, "Custom", false);
+	ChangeCityFlavors(negativeFlavors, "Custom", false);
+
+	// Clear m_CustomFlavors (set all to 0)
+	m_CustomFlavors.assign(0);
+	m_bHasCustomFlavors = false;
+}
+
+// Vox Deorum: Get custom flavors
+void CvFlavorManager::GetCustomFlavors(CvEnumMap<FlavorTypes, int>& out) const
+{
+	// Copy m_CustomFlavors to the output parameter (element by element)
+	int iNumFlavors = GC.getNumFlavorTypes();
+	for (int i = 0; i < iNumFlavors; i++)
+	{
+		out[i] = m_CustomFlavors[i];
+	}
+}
+
+// Vox Deorum: Check if custom flavors should expire
+void CvFlavorManager::CheckCustomFlavorExpiration()
+{
+	// If has custom flavors and current turn >= m_iCustomFlavorSetTurn + 10, call UnsetCustomFlavors()
+	if (m_bHasCustomFlavors && GC.getGame().getGameTurn() >= m_iCustomFlavorSetTurn + 10)
+	{
+		UnsetCustomFlavors();
+	}
 }
 
 /// Sends base personality flavor settings to all recipients

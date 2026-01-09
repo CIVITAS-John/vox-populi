@@ -91,6 +91,13 @@ public:
 
 	int GetAdjustedValue(int iOriginalValue, int iPlusMinus, int iMin, int iMax, const CvSeeder& seed);
 
+	// Vox Deorum: Custom flavor management
+	void SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors);
+	void UnsetCustomFlavors();
+	void GetCustomFlavors(CvEnumMap<FlavorTypes, int>& out) const;
+	bool HasCustomFlavors() const { return m_bHasCustomFlavors; }
+	void CheckCustomFlavorExpiration();
+
 private:
 
 	void RandomizeWeights();
@@ -105,6 +112,11 @@ private:
 	CvPlayer* m_pPlayer;
 	typedef vector<CvFlavorRecipient*> Flavor_List;
 	Flavor_List m_FlavorTargetList;
+
+	// Vox Deorum: Custom flavor fields
+	CvEnumMap<FlavorTypes, int> m_CustomFlavors;
+	int m_iCustomFlavorSetTurn;
+	bool m_bHasCustomFlavors;
 };
 
 FDataStream& operator>>(FDataStream&, CvFlavorManager&);

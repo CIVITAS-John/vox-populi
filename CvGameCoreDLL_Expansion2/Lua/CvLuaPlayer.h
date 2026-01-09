@@ -1541,6 +1541,11 @@ protected:
 
 	// Vox Deorum: Settlement analysis
 	static int lGetBestSettlementInfo(lua_State* L);
+
+	// Vox Deorum: Custom flavor management
+	static int lSetCustomFlavors(lua_State* L);
+	static int lUnsetCustomFlavors(lua_State* L);
+	static int lGetCustomFlavors(lua_State* L);
 };
 
 namespace CvLuaArgs

@@ -10559,6 +10559,12 @@ void CvPlayer::doTurnPostDiplomacy()
 		}
 	}
 
+	// Vox Deorum: Check custom flavor expiration
+	if (GetFlavorManager())
+	{
+		GetFlavorManager()->CheckCustomFlavorExpiration();
+	}
+
 	//note that this isn't actually the end of the turn - AI_unitUpdate is called later
 	AI_doTurnPost();
 

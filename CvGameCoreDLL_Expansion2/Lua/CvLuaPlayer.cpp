@@ -34,6 +34,7 @@
 #include "../CvTechAI.h"
 #include "../CvPolicyAI.h"
 #include "../CvTacticalAnalysisMap.h"
+#include "../CvFlavorManager.h"
 #include "ICvDLLUserInterface.h"
 #include "CvDllInterfaces.h"
 #include "CvDllNetMessageExt.h"
@@ -1544,6 +1545,10 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(GetNumTacticalZones); // Vox Deorum: Get number of tactical zones
 	Method(GetTacticalZone);     // Vox Deorum: Get tactical zone information
 	Method(GetBestSettlementInfo); // Vox Deorum: Get best settlement location info
+
+	Method(SetCustomFlavors);   // Vox Deorum: Set custom flavor values
+	Method(UnsetCustomFlavors); // Vox Deorum: Unset custom flavor values
+	Method(GetCustomFlavors);   // Vox Deorum: Get custom flavor values
 }
 //------------------------------------------------------------------------------
 void CvLuaPlayer::HandleMissingInstance(lua_State* L)
@@ -20014,6 +20019,133 @@ int CvLuaPlayer::lGetBestSettlementInfo(lua_State* L)
 		// Add to array
 		lua_pushstring(L, result.c_str());
 		lua_rawseti(L, -2, index++);
+	}
+
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Set custom flavor values that auto-expire after 10 turns
+int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	if (!pkPlayer)
+	{
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	CvFlavorManager* pFlavorManager = pkPlayer->GetFlavorManager();
+	if (!pFlavorManager)
+	{
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	// Expect a Lua table of flavor name->value pairs
+	if (!lua_istable(L, 2))
+	{
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	// Build a CvEnumMap with flavor values
+	CvEnumMap<FlavorTypes, int> flavors;
+	flavors.init(0);
+
+	// Iterate through the Lua table
+	lua_pushnil(L); // First key
+	while (lua_next(L, 2) != 0)
+	{
+		// Key is at index -2, value is at index -1
+		if (lua_isstring(L, -2))
+		{
+			const char* szFlavorKey = lua_tostring(L, -2);
+			int iValue = lua_tointeger(L, -1);
+
+			// Convert FLAVOR_XXX string to FlavorTypes enum
+			FlavorTypes eFlavor = (FlavorTypes)GC.getInfoTypeForString(szFlavorKey);
+			if (eFlavor != NO_FLAVOR && eFlavor >= 0 && eFlavor < GC.getNumFlavorTypes())
+			{
+				flavors[eFlavor] = iValue;
+			}
+		}
+
+		// Remove value, keep key for next iteration
+		lua_pop(L, 1);
+	}
+
+	// Call SetCustomFlavors
+	pFlavorManager->SetCustomFlavors(flavors);
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Unset custom flavor values
+int CvLuaPlayer::lUnsetCustomFlavors(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	if (!pkPlayer)
+	{
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	CvFlavorManager* pFlavorManager = pkPlayer->GetFlavorManager();
+	if (!pFlavorManager)
+	{
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	// Simply call UnsetCustomFlavors
+	pFlavorManager->UnsetCustomFlavors();
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get current custom flavor values
+int CvLuaPlayer::lGetCustomFlavors(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	if (!pkPlayer)
+	{
+		lua_createtable(L, 0, 0);
+		return 1;
+	}
+
+	CvFlavorManager* pFlavorManager = pkPlayer->GetFlavorManager();
+	if (!pFlavorManager)
+	{
+		lua_createtable(L, 0, 0);
+		return 1;
+	}
+
+	// Get custom flavors from FlavorManager
+	CvEnumMap<FlavorTypes, int> customFlavors;
+	customFlavors.init();
+	pFlavorManager->GetCustomFlavors(customFlavors);
+
+	// Convert to Lua table with FLAVOR_XXX keys
+	lua_createtable(L, 0, 0);
+
+	int iNumFlavors = GC.getNumFlavorTypes();
+	for (int i = 0; i < iNumFlavors; i++)
+	{
+		FlavorTypes eFlavor = (FlavorTypes)i;
+		if (customFlavors[eFlavor] != 0) // Only include non-zero values
+		{
+			CvString szFlavorType = GC.getFlavorTypes(eFlavor);
+			if (!szFlavorType.empty())
+			{
+				lua_pushinteger(L, customFlavors[eFlavor]);
+				lua_setfield(L, -2, szFlavorType.c_str());
+			}
+		}
 	}
 
 	return 1;
