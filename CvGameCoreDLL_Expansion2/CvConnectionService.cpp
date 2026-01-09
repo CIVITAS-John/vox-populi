@@ -67,9 +67,9 @@ bool CvConnectionService::Setup()
 
 	Log(LOG_INFO, "ConnectionService::Setup() - Initializing connection service");
 
-	// Allocate the JSON buffers (40KB each)
-	m_pMainThreadReadBuffer = new DynamicJsonDocument(40960);
-	m_pMainThreadWriteBuffer = new DynamicJsonDocument(40960);
+	// Allocate the JSON buffers (100KB each)
+	m_pMainThreadReadBuffer = new DynamicJsonDocument(102400);
+	m_pMainThreadWriteBuffer = new DynamicJsonDocument(102400);
 
 	// Initialize critical sections for thread safety
 	InitializeCriticalSection(&m_csIncoming);
