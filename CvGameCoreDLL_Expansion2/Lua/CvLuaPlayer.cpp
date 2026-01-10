@@ -20199,7 +20199,10 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 
 	// Build a CvEnumMap with flavor values
 	CvEnumMap<FlavorTypes, int> flavors;
-	flavors.init(0);
+	flavors.init(50);
+	pFlavorManager->GetCustomFlavors(flavors);
+
+	// Iterate through the Lua table and override provided flavors
 
 	// Iterate through the Lua table
 	lua_pushnil(L); // First key
@@ -20581,7 +20584,7 @@ int CvLuaPlayer::lGetCustomFlavors(lua_State* L)
 
 	// Get custom flavors from FlavorManager
 	CvEnumMap<FlavorTypes, int> customFlavors;
-	customFlavors.init();
+	customFlavors.init(50);
 	pFlavorManager->GetCustomFlavors(customFlavors);
 
 	// Convert to Lua table with FLAVOR_XXX keys

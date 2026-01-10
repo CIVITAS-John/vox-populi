@@ -120,7 +120,7 @@ void CvFlavorManager::Init(CvPlayer* pPlayer)
 	// Allocate memory
 	m_piPersonalityFlavor.init();
 	m_piActiveFlavor.init();
-	m_CustomFlavors.init(0); // Vox Deorum: Initialize custom flavors to 0
+	m_CustomFlavors.init(50); // Vox Deorum: Initialize custom flavors to 50
 	m_FlavorTargetList.reserve((3*64)+100);
 
 	// Clear variables
