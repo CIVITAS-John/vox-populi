@@ -16189,7 +16189,7 @@ int CvLuaPlayer::lGetOpinionTable(lua_State* L)
 		if (PlaceholderPos != string::npos)
 		{
 			char valueBuffer[16];
-			sprintf(valueBuffer, "%d", aOpinions[ui].m_iValue);
+			sprintf(valueBuffer, "%d", -(aOpinions[ui].m_iValue));
 			strOutput.replace(PlaceholderPos, 2, valueBuffer);
 		} 
 		// Should we display the number value of opinion modifiers?
