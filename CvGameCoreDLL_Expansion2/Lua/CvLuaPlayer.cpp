@@ -19925,7 +19925,7 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 					// Update city specializations if required
 					if (pStrategy->RequiresCitySpecializationUpdate())
 					{
-						pkPlayer->GetCitySpecializationAI()->SetSpecializationsDirty(SPECIALIZATION_UPDATE_STRATEGY_TURNED_OFF);
+						pkPlayer->GetCitySpecializationAI()->SetSpecializationsDirty(SPECIALIZATION_UPDATE_STRATEGY_NOW_OFF);
 					}
 				}
 			}
@@ -20223,6 +20223,169 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 
 	// Call SetCustomFlavors
 	pFlavorManager->SetCustomFlavors(flavors);
+
+	// Vox Deorum: Auto-activate economic strategies based on custom flavor thresholds
+	CvEconomicAI* pEconomicAI = pkPlayer->GetEconomicAI();
+	if (pEconomicAI)
+	{
+		// Get flavor type IDs
+		FlavorTypes eFlavorHappiness = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_HAPPINESS");
+		FlavorTypes eFlavorRecon = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_RECON");
+		FlavorTypes eFlavorNavalRecon = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_NAVAL_RECON");
+
+		// Get strategy type IDs
+		EconomicAIStrategyTypes eStrategyNeedHappiness = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_HAPPINESS");
+		EconomicAIStrategyTypes eStrategyNeedHappinessCritical = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_HAPPINESS_CRITICAL");
+		EconomicAIStrategyTypes eStrategyLosingMoney = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_LOSING_MONEY");
+		EconomicAIStrategyTypes eStrategyNeedRecon = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_RECON");
+		EconomicAIStrategyTypes eStrategyNeedReconSea = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_RECON_SEA");
+
+		// Build set of strategies that should be enabled based on custom flavor thresholds
+		std::set<int> strategiesToEnable;
+
+		// ECONOMICAISTRATEGY_NEED_HAPPINESS: if custom happiness > 60
+		if (eStrategyNeedHappiness != NO_ECONOMICAISTRATEGY && eFlavorHappiness != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorHappiness, 60))
+			{
+				strategiesToEnable.insert((int)eStrategyNeedHappiness);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_NEED_HAPPINESS_CRITICAL: if custom happiness > 80
+		if (eStrategyNeedHappinessCritical != NO_ECONOMICAISTRATEGY && eFlavorHappiness != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorHappiness, 80))
+			{
+				strategiesToEnable.insert((int)eStrategyNeedHappinessCritical);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_LOSING_MONEY: if economic AI precondition is met
+		if (eStrategyLosingMoney != NO_ECONOMICAISTRATEGY)
+		{
+			if (EconomicAIHelpers::IsTestStrategy_LosingMoney(eStrategyLosingMoney, pkPlayer))
+			{
+				strategiesToEnable.insert((int)eStrategyLosingMoney);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_NEED_RECON: if recon > 60
+		if (eStrategyNeedRecon != NO_ECONOMICAISTRATEGY && eFlavorRecon != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorRecon, 60))
+			{
+				strategiesToEnable.insert((int)eStrategyNeedRecon);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_NEED_RECON_SEA: if sea recon > 60
+		if (eStrategyNeedReconSea != NO_ECONOMICAISTRATEGY && eFlavorNavalRecon != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorNavalRecon, 60))
+			{
+				strategiesToEnable.insert((int)eStrategyNeedReconSea);
+			}
+		}
+
+		// Loop through all economic strategies and update their state
+		int iNumStrategies = pEconomicAI->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
+		for (int i = 0; i < iNumStrategies; i++)
+		{
+			EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
+			bool bCurrentlyUsing = pEconomicAI->IsUsingStrategy(eStrategy);
+			bool bShouldUse = strategiesToEnable.count(i) > 0;
+
+			if (bCurrentlyUsing != bShouldUse)
+			{
+				pEconomicAI->SetUsingStrategy(eStrategy, bShouldUse);
+				// Set turn adopted to current turn + 10 if enabling, or current turn if disabling
+				pEconomicAI->SetTurnStrategyAdopted(eStrategy,
+					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
+			}
+		}
+	}
+
+	// Vox Deorum: Auto-activate military strategies based on custom flavor thresholds
+	CvMilitaryAI* pMilitaryAI = pkPlayer->GetMilitaryAI();
+	if (pMilitaryAI)
+	{
+		// Get flavor type IDs
+		FlavorTypes eFlavorDefense = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_DEFENSE");
+		FlavorTypes eFlavorNaval = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_NAVAL");
+
+		// Get strategy type IDs
+		MilitaryAIStrategyTypes eStrategyEmpireDefense = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_EMPIRE_DEFENSE");
+		MilitaryAIStrategyTypes eStrategyEmpireDefenseCritical = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_EMPIRE_DEFENSE_CRITICAL");
+		MilitaryAIStrategyTypes eStrategyNeedNavalUnits = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_NAVAL_UNITS");
+		MilitaryAIStrategyTypes eStrategyNeedNavalUnitsCritical = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_NAVAL_UNITS_CRITICAL");
+		MilitaryAIStrategyTypes eStrategyEnoughNavalUnits = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_ENOUGH_NAVAL_UNITS");
+
+		// Build set of strategies that should be enabled based on custom flavor thresholds
+		std::set<int> militaryStrategiesToEnable;
+
+		// MILITARYAISTRATEGY_EMPIRE_DEFENSE: if defense > 60
+		if (eStrategyEmpireDefense != NO_MILITARYAISTRATEGY && eFlavorDefense != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDefense, 60))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyEmpireDefense);
+			}
+		}
+
+		// MILITARYAISTRATEGY_EMPIRE_DEFENSE_CRITICAL: if defense > 80
+		if (eStrategyEmpireDefenseCritical != NO_MILITARYAISTRATEGY && eFlavorDefense != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDefense, 80))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyEmpireDefenseCritical);
+			}
+		}
+
+		// MILITARYAISTRATEGY_NEED_NAVAL_UNITS: if naval > 60
+		if (eStrategyNeedNavalUnits != NO_MILITARYAISTRATEGY && eFlavorNaval != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorNaval, 60))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyNeedNavalUnits);
+			}
+		}
+
+		// MILITARYAISTRATEGY_NEED_NAVAL_UNITS_CRITICAL: if naval > 80
+		if (eStrategyNeedNavalUnitsCritical != NO_MILITARYAISTRATEGY && eFlavorNaval != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorNaval, 80))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyNeedNavalUnitsCritical);
+			}
+		}
+
+		// MILITARYAISTRATEGY_ENOUGH_NAVAL_UNITS: if naval < 25
+		if (eStrategyEnoughNavalUnits != NO_MILITARYAISTRATEGY && eFlavorNaval != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorLowerThan(eFlavorNaval, 25))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyEnoughNavalUnits);
+			}
+		}
+
+		// Loop through all military strategies and update their state
+		int iNumMilitaryStrategies = pMilitaryAI->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
+		for (int i = 0; i < iNumMilitaryStrategies; i++)
+		{
+			MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)i;
+			bool bCurrentlyUsing = pMilitaryAI->IsUsingStrategy(eStrategy);
+			bool bShouldUse = militaryStrategiesToEnable.count(i) > 0;
+
+			if (bCurrentlyUsing != bShouldUse)
+			{
+				pMilitaryAI->SetUsingStrategy(eStrategy, bShouldUse);
+				// Set turn adopted to current turn + 10 if enabling, or current turn if disabling
+				pMilitaryAI->SetTurnStrategyAdopted(eStrategy,
+					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
+			}
+		}
+	}
 
 	lua_pushboolean(L, true);
 	return 1;
