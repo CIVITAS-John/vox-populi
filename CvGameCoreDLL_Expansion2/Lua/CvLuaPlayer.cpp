@@ -20591,7 +20591,7 @@ int CvLuaPlayer::lGetCustomFlavors(lua_State* L)
 	for (int i = 0; i < iNumFlavors; i++)
 	{
 		FlavorTypes eFlavor = (FlavorTypes)i;
-		if (customFlavors[eFlavor] != 0) // Only include non-zero values
+		if (customFlavors[eFlavor] != 50) // Only include non-zero values
 		{
 			CvString szFlavorType = GC.getFlavorTypes(eFlavor);
 			if (!szFlavorType.empty())

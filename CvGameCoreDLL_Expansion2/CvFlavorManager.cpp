@@ -205,7 +205,7 @@ void CvFlavorManager::Reset()
 {
 	m_piPersonalityFlavor.assign(0);
 	m_piActiveFlavor.assign(0);
-	m_CustomFlavors.assign(0); // Vox Deorum
+	m_CustomFlavors.assign(50); // Vox Deorum
 	m_iCustomFlavorSetTurn = -1; // Vox Deorum
 	m_bHasCustomFlavors = false; // Vox Deorum
 }
@@ -564,8 +564,8 @@ void CvFlavorManager::UnsetCustomFlavors()
 	ChangeActivePersonalityFlavors(negativeFlavors, "Custom", false);
 	ChangeCityFlavors(negativeFlavors, "Custom", false);
 
-	// Clear m_CustomFlavors (set all to 0)
-	m_CustomFlavors.assign(0);
+	// Clear m_CustomFlavors (set all to 50)
+	m_CustomFlavors.assign(50);
 	m_bHasCustomFlavors = false;
 }
 
