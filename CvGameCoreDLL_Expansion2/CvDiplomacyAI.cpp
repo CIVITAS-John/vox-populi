@@ -48803,16 +48803,19 @@ int CvDiplomacyAI::GetDiploModifiers(PlayerTypes eToPlayer, std::vector<Opinion>
 		aOpinions.push_back(kOpinion);
 	}
 	
-	iModifier = GetScenarioModifier2(eToPlayer);
-	if (iModifier != 0) 
-	{
-		iValue += iModifier;
+	// This part hides in Vox Deorum!
+	if (!MOD_IPC_CHANNEL) {
+		iModifier = GetScenarioModifier2(eToPlayer);
+		if (iModifier != 0) 
+		{
+			iValue += iModifier;
 
-		Opinion kOpinion;
-		kOpinion.m_iValue = iModifier;
-		Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2");
-		kOpinion.m_str = strOpinion.toUTF8();
-		aOpinions.push_back(kOpinion);
+			Opinion kOpinion;
+			kOpinion.m_iValue = iModifier;
+			Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2");
+			kOpinion.m_str = strOpinion.toUTF8();
+			aOpinions.push_back(kOpinion);
+		}
 	}
 
 	iModifier = GetScenarioModifier3(eToPlayer);
