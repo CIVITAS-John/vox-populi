@@ -600,7 +600,7 @@ bool CvFlavorManager::IsCustomFlavorLowerThan(FlavorTypes eFlavor, int iThreshol
 	if ((int)eFlavor < 0 || (int)eFlavor >= GC.getNumFlavorTypes())
 		return false;
 
-	return m_CustomFlavors[eFlavor] < iThreshold;
+	return m_CustomFlavors[eFlavor] <= iThreshold;
 }
 
 // Vox Deorum: Check if custom flavor is higher than threshold (0-100 MCP range)
@@ -613,7 +613,7 @@ bool CvFlavorManager::IsCustomFlavorHigherThan(FlavorTypes eFlavor, int iThresho
 	if ((int)eFlavor < 0 || (int)eFlavor >= GC.getNumFlavorTypes())
 		return false;
 
-	return m_CustomFlavors[eFlavor] > iThreshold;
+	return m_CustomFlavors[eFlavor] >= iThreshold;
 }
 
 /// Sends base personality flavor settings to all recipients
