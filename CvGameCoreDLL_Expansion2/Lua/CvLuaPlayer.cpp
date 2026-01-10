@@ -19641,7 +19641,9 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 
 	if (pkPlayer && pkPlayer->GetEconomicAI())
 	{
-		int iNumStrategies = pkPlayer->GetEconomicAI()->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
+		CvEconomicAI* pEconomicAI = pkPlayer->GetEconomicAI();
+		int iNumStrategies = pEconomicAI->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
+		int iNumFlavors = GC.getNumFlavorTypes();
 
 		// Check if includeBlacklisted parameter is provided (optional, defaults to false)
 		bool bIncludeBlacklisted = false;
@@ -19673,24 +19675,67 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 			}
 		}
 
+		// Temporary flavor array for applying changes
+		std::vector<int> tempFlavors(iNumFlavors);
+
 		// Compare current strategies with new strategies
 		for (int i = 0; i < iNumStrategies; i++)
 		{
 			if (bIncludeBlacklisted || !IsEconomicStrategyBlacklisted(i))
 			{
 				EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
-				bool bCurrentlyUsing = pkPlayer->GetEconomicAI()->IsUsingStrategy(eStrategy);
+				bool bCurrentlyUsing = pEconomicAI->IsUsingStrategy(eStrategy);
 				bool bShouldUse = newStrategies.count(i) > 0;
 
 				if (bCurrentlyUsing != bShouldUse)
 				{
 					bChanged = true;
-					pkPlayer->GetEconomicAI()->SetUsingStrategy(eStrategy, bShouldUse);
+					CvEconomicAIStrategyXMLEntry* pStrategy = pEconomicAI->GetEconomicAIStrategies()->GetEntry(i);
+
+					if (bShouldUse)
+					{
+						// Adopting strategy - apply positive flavor changes
+						pEconomicAI->SetUsingStrategy(eStrategy, true);
+
+						// Apply player flavor changes
+						for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+						{
+							tempFlavors[iFlavorLoop] = pStrategy->GetPlayerFlavorValue(iFlavorLoop);
+						}
+						pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+
+						// Apply city flavor changes
+						for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+						{
+							tempFlavors[iFlavorLoop] = pStrategy->GetCityFlavorValue(iFlavorLoop);
+						}
+						pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+					}
+					else
+					{
+						// Ending strategy - apply negative flavor changes
+						pEconomicAI->SetUsingStrategy(eStrategy, false);
+
+						// Apply negative player flavor changes
+						for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+						{
+							tempFlavors[iFlavorLoop] = -pStrategy->GetPlayerFlavorValue(iFlavorLoop);
+						}
+						pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+
+						// Apply negative city flavor changes
+						for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+						{
+							tempFlavors[iFlavorLoop] = -pStrategy->GetCityFlavorValue(iFlavorLoop);
+						}
+						pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+					}
 				}
-				
+
 				// Force refresh the adopted turn to avoid in-game AI overriding
-				pkPlayer->GetEconomicAI()->SetTurnStrategyAdopted(eStrategy,
-					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());			}
+				pEconomicAI->SetTurnStrategyAdopted(eStrategy,
+					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
+			}
 		}
 	}
 
@@ -19749,7 +19794,9 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 
 	if (pkPlayer && pkPlayer->GetMilitaryAI())
 	{
-		int iNumStrategies = pkPlayer->GetMilitaryAI()->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
+		CvMilitaryAI* pMilitaryAI = pkPlayer->GetMilitaryAI();
+		int iNumStrategies = pMilitaryAI->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
+		int iNumFlavors = GC.getNumFlavorTypes();
 
 		// Extract incoming strategies into a set for comparison
 		std::set<int> newStrategies;
@@ -19771,21 +19818,75 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 			}
 		}
 
+		// Temporary flavor array for applying changes
+		std::vector<int> tempFlavors(iNumFlavors);
+
 		// Compare current strategies with new strategies
 		for (int i = 0; i < iNumStrategies; i++)
 		{
 			MilitaryAIStrategyTypes eStrategy = (MilitaryAIStrategyTypes)i;
-			bool bCurrentlyUsing = pkPlayer->GetMilitaryAI()->IsUsingStrategy(eStrategy);
+			bool bCurrentlyUsing = pMilitaryAI->IsUsingStrategy(eStrategy);
 			bool bShouldUse = newStrategies.count(i) > 0;
 
 			if (bCurrentlyUsing != bShouldUse)
 			{
 				bChanged = true;
-				pkPlayer->GetMilitaryAI()->SetUsingStrategy(eStrategy, bShouldUse);
+				CvMilitaryAIStrategyXMLEntry* pStrategy = pMilitaryAI->GetMilitaryAIStrategies()->GetEntry(i);
+
+				if (bShouldUse)
+				{
+					// Adopting strategy - apply positive flavor changes
+					pMilitaryAI->SetUsingStrategy(eStrategy, true);
+
+					// Apply player flavor changes
+					for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+					{
+						tempFlavors[iFlavorLoop] = pStrategy->GetPlayerFlavorValue(iFlavorLoop);
+					}
+					pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+
+					// Apply city flavor changes
+					for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+					{
+						tempFlavors[iFlavorLoop] = pStrategy->GetCityFlavorValue(iFlavorLoop);
+					}
+					pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+
+					// Update city specializations if required
+					if (pStrategy->RequiresCitySpecializationUpdate())
+					{
+						pkPlayer->GetCitySpecializationAI()->SetSpecializationsDirty(SPECIALIZATION_UPDATE_STRATEGY_NOW_ON);
+					}
+				}
+				else
+				{
+					// Ending strategy - apply negative flavor changes
+					pMilitaryAI->SetUsingStrategy(eStrategy, false);
+
+					// Apply negative player flavor changes
+					for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+					{
+						tempFlavors[iFlavorLoop] = -pStrategy->GetPlayerFlavorValue(iFlavorLoop);
+					}
+					pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+
+					// Apply negative city flavor changes
+					for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
+					{
+						tempFlavors[iFlavorLoop] = -pStrategy->GetCityFlavorValue(iFlavorLoop);
+					}
+					pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+
+					// Update city specializations if required
+					if (pStrategy->RequiresCitySpecializationUpdate())
+					{
+						pkPlayer->GetCitySpecializationAI()->SetSpecializationsDirty(SPECIALIZATION_UPDATE_STRATEGY_TURNED_OFF);
+					}
+				}
 			}
-			
+
 			// Force refresh the adopted turn to avoid in-game AI overriding
-			pkPlayer->GetMilitaryAI()->SetTurnStrategyAdopted(eStrategy,
+			pMilitaryAI->SetTurnStrategyAdopted(eStrategy,
 				bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
 		}
 	}

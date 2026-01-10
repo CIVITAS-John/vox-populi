@@ -97,6 +97,8 @@ public:
 	void GetCustomFlavors(CvEnumMap<FlavorTypes, int>& out) const;
 	bool HasCustomFlavors() const { return m_bHasCustomFlavors; }
 	void CheckCustomFlavorExpiration();
+	bool IsCustomFlavorLowerThan(FlavorTypes eFlavor, int iThreshold) const;
+	bool IsCustomFlavorHigherThan(FlavorTypes eFlavor, int iThreshold) const;
 
 private:
 

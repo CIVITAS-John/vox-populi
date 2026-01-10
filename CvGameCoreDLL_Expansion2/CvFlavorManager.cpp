@@ -590,6 +590,32 @@ void CvFlavorManager::CheckCustomFlavorExpiration()
 	}
 }
 
+// Vox Deorum: Check if custom flavor is lower than threshold (0-100 MCP range)
+// Returns false if no custom flavor is set
+bool CvFlavorManager::IsCustomFlavorLowerThan(FlavorTypes eFlavor, int iThreshold) const
+{
+	if (!m_bHasCustomFlavors)
+		return false;
+
+	if ((int)eFlavor < 0 || (int)eFlavor >= GC.getNumFlavorTypes())
+		return false;
+
+	return m_CustomFlavors[eFlavor] < iThreshold;
+}
+
+// Vox Deorum: Check if custom flavor is higher than threshold (0-100 MCP range)
+// Returns false if no custom flavor is set
+bool CvFlavorManager::IsCustomFlavorHigherThan(FlavorTypes eFlavor, int iThreshold) const
+{
+	if (!m_bHasCustomFlavors)
+		return false;
+
+	if ((int)eFlavor < 0 || (int)eFlavor >= GC.getNumFlavorTypes())
+		return false;
+
+	return m_CustomFlavors[eFlavor] > iThreshold;
+}
+
 /// Sends base personality flavor settings to all recipients
 void CvFlavorManager::BroadcastBaseFlavors()
 {
