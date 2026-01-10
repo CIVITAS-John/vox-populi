@@ -16116,6 +16116,7 @@ int CvLuaPlayer::lGetOpinionTable(lua_State* L)
 	size_t BeginColorPrefixFound;
 	std::string strColorSuffix = "]";
 	size_t BeginColorSuffixFound;
+	size_t PlaceholderPos;
 	std::string strIntensePositiveColor = "[COLOR_INTENSE_POSITIVE_TEXT]";
 	std::string strFullPositiveColor = "[COLOR_POSITIVE_TEXT]";
 	std::string strModeratePositiveColor = "[COLOR_MODERATE_POSITIVE_TEXT]";
@@ -16183,9 +16184,17 @@ int CvLuaPlayer::lGetOpinionTable(lua_State* L)
 			strOutput.insert(0, strIntensePositiveColor);
 		}
 
+		PlaceholderPos = strOutput.find("%d");
+		// Vox Deorum: Replace %d placeholder with actual value
+		if (PlaceholderPos != string::npos)
+		{
+			char valueBuffer[16];
+			sprintf(valueBuffer, "%d", aOpinions[ui].m_iValue);
+			strOutput.replace(PlaceholderPos, 2, valueBuffer);
+		} 
 		// Should we display the number value of opinion modifiers?
 		// Only do this if the value is non-zero, otherwise it's annoying.
-		if (bShowAllValues && aOpinions[ui].m_iValue != 0)
+		else if (bShowAllValues && aOpinions[ui].m_iValue != 0)
 		{
 			CvString strTemp;
 
