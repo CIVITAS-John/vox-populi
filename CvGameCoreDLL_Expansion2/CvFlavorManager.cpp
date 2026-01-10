@@ -405,7 +405,16 @@ int CvFlavorManager::GetPersonalityIndividualFlavor(FlavorTypes eType)
 {
 	if ((int)eType < 0 || (int)eType >= GC.getNumFlavorTypes()) return 0;
 
-	return range(m_piPersonalityFlavor[eType],0,30);
+	// Vox Deorum: Override with custom flavor if active
+	if (m_bHasCustomFlavors)
+	{
+		// Convert MCP value (0-100) to 0-10 range
+		int mcpValue = m_CustomFlavors[eType];
+		int iValue = (int)(mcpValue / 10.0f + 0.5f); // Round
+		return range(iValue, 0, 10);
+	}
+
+	return range(m_piPersonalityFlavor[eType], 0, 30);
 }
 
 /// Retrieve the value of all Personality flavors
@@ -419,6 +428,15 @@ CvEnumMap<FlavorTypes, int>& CvFlavorManager::GetAllPersonalityFlavors()
 int CvFlavorManager::GetPersonalityFlavorForDiplomacy(FlavorTypes eType)
 {
 	if ((int)eType < 0 || (int)eType >= GC.getNumFlavorTypes()) return 0;
+
+	// Vox Deorum: Override with custom flavor if active
+	if (m_bHasCustomFlavors)
+	{
+		// Convert MCP value (0-100) to 1-10 range
+		int mcpValue = m_CustomFlavors[eType];
+		int iValue = (int)(mcpValue / 10.0f + 0.5f); // Round to 0-10
+		return range(iValue, 1, 10); // Clamp to 1-10 for diplomacy
+	}
 
 	int iValue = m_piPersonalityFlavor[eType];
 
@@ -458,6 +476,7 @@ int CvFlavorManager::GetAdjustedValue(int iOriginalValue, int iPlusMinus, int iM
 }
 
 // Vox Deorum: Set custom flavors that auto-expire after 10 turns
+// Accepts MCP range (0-100), stores raw values, converts to game range (-300 to 300) for strategies
 void CvFlavorManager::SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors)
 {
 	// If custom flavors already exist, unset them first
@@ -466,16 +485,40 @@ void CvFlavorManager::SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavor
 		UnsetCustomFlavors();
 	}
 
-	// Store the new flavors (copy element by element)
+	// Store the raw MCP values (0-100) and convert to game range (-300 to 300) for strategies
+	CvEnumMap<FlavorTypes, int> gameFlavors;
+	gameFlavors.init(0);
+
 	int iNumFlavors = GC.getNumFlavorTypes();
 	for (int i = 0; i < iNumFlavors; i++)
 	{
-		m_CustomFlavors[i] = flavors[i];
+		int mcpValue = flavors[i];
+
+		// Store raw MCP value (0-100)
+		m_CustomFlavors[i] = mcpValue;
+
+		// Convert to game range (-300 to 300) using exponential mapping
+		// MCP 50 = game 0 (balanced)
+		if (mcpValue == 50)
+		{
+			gameFlavors[i] = 0;
+		}
+		else
+		{
+			float normalized = (mcpValue - 50.0f) / 50.0f; // -1 to 1
+			int sign = (normalized >= 0) ? 1 : -1;
+			float absNorm = (normalized >= 0) ? normalized : -normalized;
+
+			// Exponential: e^(3x) - 1 gives gentle middle, steep extremes
+			// e^3 ≈ 20.09, so (e^3 - 1) ≈ 19.09
+			float expValue = (exp(3.0f * absNorm) - 1.0f) / 19.09f;
+			gameFlavors[i] = sign * (int)(expValue * 300.0f + 0.5f); // Round
+		}
 	}
 
 	// Apply them using BOTH ChangeActivePersonalityFlavors and ChangeCityFlavors with reason "VoxDeorum"
-	ChangeActivePersonalityFlavors(flavors, "VoxDeorum", true);
-	ChangeCityFlavors(flavors, "VoxDeorum", true);
+	ChangeActivePersonalityFlavors(gameFlavors, "VoxDeorum", true);
+	ChangeCityFlavors(gameFlavors, "VoxDeorum", true);
 
 	// Set the turn when custom flavors were applied
 	m_iCustomFlavorSetTurn = GC.getGame().getGameTurn();
@@ -491,14 +534,30 @@ void CvFlavorManager::UnsetCustomFlavors()
 		return;
 	}
 
-	// Create negative deltas of m_CustomFlavors
+	// Convert stored MCP values to game range deltas for removal
 	CvEnumMap<FlavorTypes, int> negativeFlavors;
 	negativeFlavors.init();
 
 	int iNumFlavors = GC.getNumFlavorTypes();
 	for (int i = 0; i < iNumFlavors; i++)
 	{
-		negativeFlavors[i] = -m_CustomFlavors[i];
+		int mcpValue = m_CustomFlavors[i];
+
+		// Convert MCP to game range, then negate
+		if (mcpValue == 50)
+		{
+			negativeFlavors[i] = 0;
+		}
+		else
+		{
+			float normalized = (mcpValue - 50.0f) / 50.0f; // -1 to 1
+			int sign = (normalized >= 0) ? 1 : -1;
+			float absNorm = (normalized >= 0) ? normalized : -normalized;
+
+			float expValue = (exp(3.0f * absNorm) - 1.0f) / 19.09f;
+			int gameValue = sign * (int)(expValue * 300.0f + 0.5f);
+			negativeFlavors[i] = -gameValue; // Negate for removal
+		}
 	}
 
 	// Apply the negative deltas to both player and city flavors with reason "Custom"
@@ -510,10 +569,10 @@ void CvFlavorManager::UnsetCustomFlavors()
 	m_bHasCustomFlavors = false;
 }
 
-// Vox Deorum: Get custom flavors
+// Vox Deorum: Get custom flavors (returns raw MCP range 0-100)
 void CvFlavorManager::GetCustomFlavors(CvEnumMap<FlavorTypes, int>& out) const
 {
-	// Copy m_CustomFlavors to the output parameter (element by element)
+	// Copy raw MCP values (0-100) from m_CustomFlavors
 	int iNumFlavors = GC.getNumFlavorTypes();
 	for (int i = 0; i < iNumFlavors; i++)
 	{
