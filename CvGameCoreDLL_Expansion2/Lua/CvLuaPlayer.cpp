@@ -1467,6 +1467,9 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(GetDiplomacyEvaluation);
 
 	// Vox Deorum: Scenario modifiers
+	Method(GetScenarioModifier1);
+	Method(GetScenarioModifier2);
+	Method(GetScenarioModifier3);
 	Method(SetScenarioModifier1);
 	Method(SetScenarioModifier2);
 	Method(SetScenarioModifier3);
@@ -16310,6 +16313,48 @@ int CvLuaPlayer::lGetDiplomacyEvaluation(lua_State* L)
 	lua_pushstring(L, EnemyStr.c_str());
 	lua_settable(L, -3);
 
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get ScenarioModifier1
+int CvLuaPlayer::lGetScenarioModifier1(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iOtherPlayer = lua_tointeger(L, 2);
+
+	// Directly get the cached value without triggering Lua callbacks
+	const int iValue = pkPlayer->GetDiplomacyAI()->GetCachedScenarioModifier1((PlayerTypes)iOtherPlayer);
+
+	lua_pushinteger(L, iValue);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get ScenarioModifier2
+int CvLuaPlayer::lGetScenarioModifier2(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iOtherPlayer = lua_tointeger(L, 2);
+
+	// Directly get the cached value without triggering Lua callbacks
+	const int iValue = pkPlayer->GetDiplomacyAI()->GetCachedScenarioModifier2((PlayerTypes)iOtherPlayer);
+
+	lua_pushinteger(L, iValue);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Get ScenarioModifier3
+int CvLuaPlayer::lGetScenarioModifier3(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	const int iOtherPlayer = lua_tointeger(L, 2);
+
+	// Directly get the cached value without triggering Lua callbacks
+	const int iValue = pkPlayer->GetDiplomacyAI()->GetCachedScenarioModifier3((PlayerTypes)iOtherPlayer);
+
+	lua_pushinteger(L, iValue);
 	return 1;
 }
 

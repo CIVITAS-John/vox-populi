@@ -1724,6 +1724,10 @@ public:
 	int GetScenarioModifier1(PlayerTypes ePlayer);
 	int GetScenarioModifier2(PlayerTypes ePlayer);
 	int GetScenarioModifier3(PlayerTypes ePlayer);
+	// Vox Deorum: Direct cached value getters (no Lua callbacks)
+	int GetCachedScenarioModifier1(PlayerTypes ePlayer) const { return (ePlayer >= 0 && ePlayer < MAX_MAJOR_CIVS) ? m_aiScenarioModifier1[ePlayer] : 0; }
+	int GetCachedScenarioModifier2(PlayerTypes ePlayer) const { return (ePlayer >= 0 && ePlayer < MAX_MAJOR_CIVS) ? m_aiScenarioModifier2[ePlayer] : 0; }
+	int GetCachedScenarioModifier3(PlayerTypes ePlayer) const { return (ePlayer >= 0 && ePlayer < MAX_MAJOR_CIVS) ? m_aiScenarioModifier3[ePlayer] : 0; }
 	void SetScenarioModifier1(PlayerTypes ePlayer, int iValue);
 	void SetScenarioModifier2(PlayerTypes ePlayer, int iValue);
 	void SetScenarioModifier3(PlayerTypes ePlayer, int iValue);

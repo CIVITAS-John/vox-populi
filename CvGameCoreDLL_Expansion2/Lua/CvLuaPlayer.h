@@ -1451,6 +1451,9 @@ protected:
 	static int lGetDiplomacyEvaluation(lua_State* L);
 
 	// Vox Deorum: Scenario modifiers
+	static int lGetScenarioModifier1(lua_State* L);
+	static int lGetScenarioModifier2(lua_State* L);
+	static int lGetScenarioModifier3(lua_State* L);
 	static int lSetScenarioModifier1(lua_State* L);
 	static int lSetScenarioModifier2(lua_State* L);
 	static int lSetScenarioModifier3(lua_State* L);
