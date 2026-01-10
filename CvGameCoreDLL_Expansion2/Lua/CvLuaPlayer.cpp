@@ -19721,7 +19721,8 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 		}
 
 		// Temporary flavor array for applying changes
-		std::vector<int> tempFlavors(iNumFlavors);
+		CvEnumMap<FlavorTypes, int> tempFlavors;
+		tempFlavors.init();
 
 		// Compare current strategies with new strategies
 		for (int i = 0; i < iNumStrategies; i++)
@@ -19747,14 +19748,14 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 						{
 							tempFlavors[iFlavorLoop] = pStrategy->GetPlayerFlavorValue(iFlavorLoop);
 						}
-						pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+						pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors, pStrategy->GetType(), true);
 
 						// Apply city flavor changes
 						for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
 						{
 							tempFlavors[iFlavorLoop] = pStrategy->GetCityFlavorValue(iFlavorLoop);
 						}
-						pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+						pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors, pStrategy->GetType(), true);
 					}
 					else
 					{
@@ -19766,14 +19767,14 @@ int CvLuaPlayer::lSetEconomicStrategies(lua_State* L)
 						{
 							tempFlavors[iFlavorLoop] = -pStrategy->GetPlayerFlavorValue(iFlavorLoop);
 						}
-						pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+						pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors, pStrategy->GetType(), false);
 
 						// Apply negative city flavor changes
 						for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
 						{
 							tempFlavors[iFlavorLoop] = -pStrategy->GetCityFlavorValue(iFlavorLoop);
 						}
-						pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+						pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors, pStrategy->GetType(), false);
 					}
 				}
 
@@ -19864,7 +19865,8 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 		}
 
 		// Temporary flavor array for applying changes
-		std::vector<int> tempFlavors(iNumFlavors);
+		CvEnumMap<FlavorTypes, int> tempFlavors;
+		tempFlavors.init();
 
 		// Compare current strategies with new strategies
 		for (int i = 0; i < iNumStrategies; i++)
@@ -19888,14 +19890,14 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 					{
 						tempFlavors[iFlavorLoop] = pStrategy->GetPlayerFlavorValue(iFlavorLoop);
 					}
-					pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+					pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors, pStrategy->GetType(), true);
 
 					// Apply city flavor changes
 					for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
 					{
 						tempFlavors[iFlavorLoop] = pStrategy->GetCityFlavorValue(iFlavorLoop);
 					}
-					pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), true);
+					pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors, pStrategy->GetType(), true);
 
 					// Update city specializations if required
 					if (pStrategy->RequiresCitySpecializationUpdate())
@@ -19913,14 +19915,14 @@ int CvLuaPlayer::lSetMilitaryStrategies(lua_State* L)
 					{
 						tempFlavors[iFlavorLoop] = -pStrategy->GetPlayerFlavorValue(iFlavorLoop);
 					}
-					pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+					pkPlayer->GetFlavorManager()->ChangeActivePersonalityFlavors(tempFlavors, pStrategy->GetType(), false);
 
 					// Apply negative city flavor changes
 					for (int iFlavorLoop = 0; iFlavorLoop < iNumFlavors; iFlavorLoop++)
 					{
 						tempFlavors[iFlavorLoop] = -pStrategy->GetCityFlavorValue(iFlavorLoop);
 					}
-					pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors.data(), pStrategy->GetType(), false);
+					pkPlayer->GetFlavorManager()->ChangeCityFlavors(tempFlavors, pStrategy->GetType(), false);
 
 					// Update city specializations if required
 					if (pStrategy->RequiresCitySpecializationUpdate())
@@ -20232,6 +20234,10 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 		FlavorTypes eFlavorHappiness = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_HAPPINESS");
 		FlavorTypes eFlavorRecon = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_RECON");
 		FlavorTypes eFlavorNavalRecon = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_NAVAL_RECON");
+		FlavorTypes eFlavorDiplomacy = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_DIPLOMACY");
+		FlavorTypes eFlavorSpaceship = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_SPACESHIP");
+		FlavorTypes eFlavorReligion = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_RELIGION");
+		FlavorTypes eFlavorExpansion = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_EXPANSION");
 
 		// Get strategy type IDs
 		EconomicAIStrategyTypes eStrategyNeedHappiness = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_HAPPINESS");
@@ -20239,6 +20245,17 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 		EconomicAIStrategyTypes eStrategyLosingMoney = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_LOSING_MONEY");
 		EconomicAIStrategyTypes eStrategyNeedRecon = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_RECON");
 		EconomicAIStrategyTypes eStrategyNeedReconSea = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_RECON_SEA");
+		EconomicAIStrategyTypes eStrategyNeedDiplomats = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_DIPLOMATS");
+		EconomicAIStrategyTypes eStrategyNeedDiplomatsCritical = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_NEED_DIPLOMATS_CRITICAL");
+		EconomicAIStrategyTypes eStrategySpaceshipHomeStretch = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_GS_SPACESHIP_HOMESTRETCH");
+		EconomicAIStrategyTypes eStrategyBuildingReligion = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_DEVELOPING_RELIGION");
+		EconomicAIStrategyTypes eStrategyEnoughExpansion = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_ENOUGH_EXPANSION");
+		EconomicAIStrategyTypes eStrategyGSDiplomacy = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_GS_DIPLOMACY");
+		EconomicAIStrategyTypes eStrategyGSSpaceship = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_GS_SPACESHIP");
+		EconomicAIStrategyTypes eStrategyGSCulture = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_GS_CULTURE");
+		EconomicAIStrategyTypes eStrategyGSConquest = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_GS_CONQUEST");
+		EconomicAIStrategyTypes eStrategyEarlyExpansion = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_EARLY_EXPANSION");
+		EconomicAIStrategyTypes eStrategyExpandToOtherContinents = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_EXPAND_TO_OTHER_CONTINENTS");
 
 		// Build set of strategies that should be enabled based on custom flavor thresholds
 		std::set<int> strategiesToEnable;
@@ -20288,10 +20305,112 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 			}
 		}
 
+		// ECONOMICAISTRATEGY_NEED_DIPLOMATS: if diplomacy > 60
+		if (eStrategyNeedDiplomats != NO_ECONOMICAISTRATEGY && eFlavorDiplomacy != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDiplomacy, 60))
+			{
+				strategiesToEnable.insert((int)eStrategyNeedDiplomats);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_NEED_DIPLOMATS_CRITICAL: if diplomacy > 80
+		if (eStrategyNeedDiplomatsCritical != NO_ECONOMICAISTRATEGY && eFlavorDiplomacy != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDiplomacy, 80))
+			{
+				strategiesToEnable.insert((int)eStrategyNeedDiplomatsCritical);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_GS_SPACESHIP_HOMESTRETCH: if spaceship > 80
+		if (eStrategySpaceshipHomeStretch != NO_ECONOMICAISTRATEGY && eFlavorSpaceship != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorSpaceship, 80))
+			{
+				strategiesToEnable.insert((int)eStrategySpaceshipHomeStretch);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_DEVELOPING_RELIGION: if religion > 60
+		if (eStrategyBuildingReligion != NO_ECONOMICAISTRATEGY && eFlavorReligion != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorReligion, 60))
+			{
+				strategiesToEnable.insert((int)eStrategyBuildingReligion);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_ENOUGH_EXPANSION: if expansion < 30
+		if (eStrategyEnoughExpansion != NO_ECONOMICAISTRATEGY && eFlavorExpansion != NO_FLAVOR)
+		{
+			if (!pFlavorManager->IsCustomFlavorHigherThan(eFlavorExpansion, 30))
+			{
+				strategiesToEnable.insert((int)eStrategyEnoughExpansion);
+			}
+		}
+
+		// Grand strategy checks based on diplomacy AI
+		CvDiplomacyAI* pDiplomacyAI = pkPlayer->GetDiplomacyAI();
+		if (pDiplomacyAI)
+		{
+			// ECONOMICAISTRATEGY_GS_DIPLOMACY: if grand strategy is diplomacy
+			if (eStrategyGSDiplomacy != NO_ECONOMICAISTRATEGY && pDiplomacyAI->IsGoingForDiploVictory())
+			{
+				strategiesToEnable.insert((int)eStrategyGSDiplomacy);
+			}
+
+			// ECONOMICAISTRATEGY_GS_SPACESHIP: if grand strategy is spaceship
+			if (eStrategyGSSpaceship != NO_ECONOMICAISTRATEGY && pDiplomacyAI->IsGoingForSpaceshipVictory())
+			{
+				strategiesToEnable.insert((int)eStrategyGSSpaceship);
+			}
+
+			// ECONOMICAISTRATEGY_GS_CULTURE: if grand strategy is culture
+			if (eStrategyGSCulture != NO_ECONOMICAISTRATEGY && pDiplomacyAI->IsGoingForCultureVictory())
+			{
+				strategiesToEnable.insert((int)eStrategyGSCulture);
+			}
+
+			// ECONOMICAISTRATEGY_GS_CONQUEST: if grand strategy is conquest
+			if (eStrategyGSConquest != NO_ECONOMICAISTRATEGY && pDiplomacyAI->IsGoingForWorldConquest())
+			{
+				strategiesToEnable.insert((int)eStrategyGSConquest);
+			}
+		}
+
+		// ECONOMICAISTRATEGY_EARLY_EXPANSION: if expansion > 60 then check the in-game code
+		if (eStrategyEarlyExpansion != NO_ECONOMICAISTRATEGY && eFlavorExpansion != NO_FLAVOR)
+		{
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorExpansion, 60))
+			{
+				if (EconomicAIHelpers::IsTestStrategy_EarlyExpansion(eStrategyEarlyExpansion, pkPlayer))
+				{
+					strategiesToEnable.insert((int)eStrategyEarlyExpansion);
+				}
+				else
+				{
+					// Or, check ECONOMICAISTRATEGY_EXPAND_TO_OTHER_CONTINENTS
+					if (eStrategyExpandToOtherContinents != NO_ECONOMICAISTRATEGY)
+					{
+						if (EconomicAIHelpers::IsTestStrategy_ExpandToOtherContinents(eStrategyExpandToOtherContinents, pkPlayer))
+						{
+							strategiesToEnable.insert((int)eStrategyExpandToOtherContinents);
+						}
+					}
+				}
+			}
+		}
+
 		// Loop through all economic strategies and update their state
 		int iNumStrategies = pEconomicAI->GetEconomicAIStrategies()->GetNumEconomicAIStrategies();
 		for (int i = 0; i < iNumStrategies; i++)
 		{
+			if (IsEconomicStrategyBlacklisted(i))
+			{
+				continue;
+			}
+			
 			EconomicAIStrategyTypes eStrategy = (EconomicAIStrategyTypes)i;
 			bool bCurrentlyUsing = pEconomicAI->IsUsingStrategy(eStrategy);
 			bool bShouldUse = strategiesToEnable.count(i) > 0;
@@ -20299,10 +20418,11 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 			if (bCurrentlyUsing != bShouldUse)
 			{
 				pEconomicAI->SetUsingStrategy(eStrategy, bShouldUse);
-				// Set turn adopted to current turn + 10 if enabling, or current turn if disabling
-				pEconomicAI->SetTurnStrategyAdopted(eStrategy,
-					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
 			}
+
+			// Force refresh the adopted turn to avoid in-game AI overriding
+			pEconomicAI->SetTurnStrategyAdopted(eStrategy,
+				bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
 		}
 	}
 
@@ -20320,6 +20440,8 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 		MilitaryAIStrategyTypes eStrategyNeedNavalUnits = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_NAVAL_UNITS");
 		MilitaryAIStrategyTypes eStrategyNeedNavalUnitsCritical = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_NAVAL_UNITS_CRITICAL");
 		MilitaryAIStrategyTypes eStrategyEnoughNavalUnits = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_ENOUGH_NAVAL_UNITS");
+		MilitaryAIStrategyTypes eStrategyEradicateBarbarians = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_ERADICATE_BARBARIANS");
+		MilitaryAIStrategyTypes eStrategyEradicateBarbariansCritical = (MilitaryAIStrategyTypes)GC.getInfoTypeForString("MILITARYAISTRATEGY_ERADICATE_BARBARIANS_CRITICAL");
 
 		// Build set of strategies that should be enabled based on custom flavor thresholds
 		std::set<int> militaryStrategiesToEnable;
@@ -20369,6 +20491,28 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 			}
 		}
 
+		// MILITARYAISTRATEGY_ERADICATE_BARBARIANS: use built-in test
+		if (eStrategyEradicateBarbarians != NO_MILITARYAISTRATEGY)
+		{
+			// Use the helper function to check if strategy should be active
+			if (MilitaryAIHelpers::IsTestStrategy_EradicateBarbarians(eStrategyEradicateBarbarians, pkPlayer,
+				pMilitaryAI->GetBarbarianCampCount(), pMilitaryAI->GetVisibleBarbarianCount()))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyEradicateBarbarians);
+			}
+		}
+
+		// MILITARYAISTRATEGY_ERADICATE_BARBARIANS_CRITICAL: use built-in test
+		if (eStrategyEradicateBarbariansCritical != NO_MILITARYAISTRATEGY)
+		{
+			// Use the helper function to check if strategy should be active
+			if (MilitaryAIHelpers::IsTestStrategy_EradicateBarbariansCritical(eStrategyEradicateBarbariansCritical, pkPlayer,
+				pMilitaryAI->GetBarbarianCampCount(), pMilitaryAI->GetVisibleBarbarianCount()))
+			{
+				militaryStrategiesToEnable.insert((int)eStrategyEradicateBarbariansCritical);
+			}
+		}
+
 		// Loop through all military strategies and update their state
 		int iNumMilitaryStrategies = pMilitaryAI->GetMilitaryAIStrategies()->GetNumMilitaryAIStrategies();
 		for (int i = 0; i < iNumMilitaryStrategies; i++)
@@ -20380,10 +20524,11 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 			if (bCurrentlyUsing != bShouldUse)
 			{
 				pMilitaryAI->SetUsingStrategy(eStrategy, bShouldUse);
-				// Set turn adopted to current turn + 10 if enabling, or current turn if disabling
-				pMilitaryAI->SetTurnStrategyAdopted(eStrategy,
-					bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
 			}
+
+			// Force refresh the adopted turn to avoid in-game AI overriding
+			pMilitaryAI->SetTurnStrategyAdopted(eStrategy,
+				bShouldUse ? GC.getGame().getGameTurn() + 10 : GC.getGame().getGameTurn());
 		}
 	}
 

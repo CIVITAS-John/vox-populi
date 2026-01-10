@@ -546,6 +546,10 @@ CvWeightedVector<ProductionSpecializationSubtypes> CvCitySpecializationAI::Weigh
 	int iFlavorOffense = m_pPlayer->GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE"));
 	if (iFlavorOffense < 0) iFlavorOffense = 0;
 
+	// Vox Deorum: control military production priority
+	int iFlavorMobilization = m_pPlayer->GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_MOBILIZATION"));
+	if (iFlavorMobilization < 0) iFlavorMobilization = 0;
+
 	int iUnitsRequested = m_pPlayer->GetNumUnitsNeededToBeBuilt();
 
 	// LONG-TERM MILITARY BUILD-UP
@@ -588,6 +592,12 @@ CvWeightedVector<ProductionSpecializationSubtypes> CvCitySpecializationAI::Weigh
 	{
 		iMilitaryTrainingWeight = 0;
 		iEmergencyUnitWeight = 0;
+	}
+	
+	// Vox Deorum: Depending on the mobilization level, increase or reduce military training weight (-400 to +400)
+	if (iFlavorMobilization != 0) {
+		iMilitaryTrainingWeight += (iFlavorMobilization - 5) * 80;
+		if (iMilitaryTrainingWeight < 0) iMilitaryTrainingWeight = 0;
 	}
 
 	eStrategy = (MilitaryAIStrategyTypes) GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_NAVAL_UNITS");

@@ -289,6 +289,15 @@ public:
 	{
 		return m_iNumFreeCarriers;
 	}
+	// Vox Deorum: Getters for barbarian counts
+	int GetBarbarianCampCount() const
+	{
+		return m_iBarbarianCampCount;
+	}
+	int GetVisibleBarbarianCount() const
+	{
+		return m_iVisibleBarbarianCount;
+	}
 
 	bool IsStrategyAllowed(MilitaryAIStrategyTypes eStrategy, CvMilitaryAIStrategyXMLEntry* pStrategy);
 
