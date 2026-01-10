@@ -20299,46 +20299,46 @@ int CvLuaPlayer::lSetCustomFlavors(lua_State* L)
 			}
 		}
 
-		// ECONOMICAISTRATEGY_NEED_RECON: if recon > 60
+		// ECONOMICAISTRATEGY_NEED_RECON: if recon > 70
 		if (eStrategyNeedRecon != NO_ECONOMICAISTRATEGY && eFlavorRecon != NO_FLAVOR)
 		{
-			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorRecon, 60))
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorRecon, 70))
 			{
 				strategiesToEnable.insert((int)eStrategyNeedRecon);
 			}
 		}
 
-		// ECONOMICAISTRATEGY_NEED_RECON_SEA: if sea recon > 60
+		// ECONOMICAISTRATEGY_NEED_RECON_SEA: if sea recon > 70
 		if (eStrategyNeedReconSea != NO_ECONOMICAISTRATEGY && eFlavorNavalRecon != NO_FLAVOR)
 		{
-			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorNavalRecon, 60))
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorNavalRecon, 70))
 			{
 				strategiesToEnable.insert((int)eStrategyNeedReconSea);
 			}
 		}
 
-		// ECONOMICAISTRATEGY_NEED_DIPLOMATS: if diplomacy > 60
+		// ECONOMICAISTRATEGY_NEED_DIPLOMATS: if diplomacy > 70
 		if (eStrategyNeedDiplomats != NO_ECONOMICAISTRATEGY && eFlavorDiplomacy != NO_FLAVOR)
 		{
-			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDiplomacy, 60))
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDiplomacy, 70))
 			{
 				strategiesToEnable.insert((int)eStrategyNeedDiplomats);
 			}
 		}
 
-		// ECONOMICAISTRATEGY_NEED_DIPLOMATS_CRITICAL: if diplomacy > 80
+		// ECONOMICAISTRATEGY_NEED_DIPLOMATS_CRITICAL: if diplomacy > 90
 		if (eStrategyNeedDiplomatsCritical != NO_ECONOMICAISTRATEGY && eFlavorDiplomacy != NO_FLAVOR)
 		{
-			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDiplomacy, 80))
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorDiplomacy, 90))
 			{
 				strategiesToEnable.insert((int)eStrategyNeedDiplomatsCritical);
 			}
 		}
 
-		// ECONOMICAISTRATEGY_GS_SPACESHIP_HOMESTRETCH: if spaceship > 80
+		// ECONOMICAISTRATEGY_GS_SPACESHIP_HOMESTRETCH: if spaceship > 90
 		if (eStrategySpaceshipHomeStretch != NO_ECONOMICAISTRATEGY && eFlavorSpaceship != NO_FLAVOR)
 		{
-			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorSpaceship, 80))
+			if (pFlavorManager->IsCustomFlavorHigherThan(eFlavorSpaceship, 90))
 			{
 				strategiesToEnable.insert((int)eStrategySpaceshipHomeStretch);
 			}
