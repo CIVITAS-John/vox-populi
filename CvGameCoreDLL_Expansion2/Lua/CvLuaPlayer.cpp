@@ -13716,21 +13716,20 @@ int CvLuaPlayer::lGetOpinionTable(lua_State* L)
 
 				kOpinion.m_str = str;
 				aOpinions.push_back(kOpinion);
+			}
 
-				// Vox Deorum: show public and private opinions
-				if (MOD_IPC_CHANNEL) {
-					Opinion kOpinion;
-					kOpinion.m_iValue = pDiplo->GetScenarioModifier1(eToPlayer);
-					Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_1");
-					kOpinion.m_str = strOpinion.toUTF8();
-					aOpinions.push_back(kOpinion);
-					
-					Opinion kOpinion;
-					kOpinion.m_iValue = pDiplo->GetScenarioModifier2(eToPlayer);
-					Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2");
-					kOpinion.m_str = strOpinion.toUTF8();
-					aOpinions.push_back(kOpinion);
-				}
+			// Vox Deorum: in debug mode, show public and private opinions
+			if (MOD_IPC_CHANNEL && (bForceDebugMode || MOD_DIPLO_DEBUG_MODE)) {
+				Opinion kOpinion;
+				kOpinion.m_iValue = pDiplo->GetScenarioModifier1(ePlayer);
+				Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_1");
+				kOpinion.m_str = strOpinion.toUTF8();
+				aOpinions.push_back(kOpinion);
+				
+				kOpinion.m_iValue = pDiplo->GetScenarioModifier2(ePlayer);
+				strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2");
+				kOpinion.m_str = strOpinion.toUTF8();
+				aOpinions.push_back(kOpinion);
 			}
 
 			// Untrustworthy friend?
