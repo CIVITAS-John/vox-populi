@@ -26384,6 +26384,15 @@ void CvDiplomacyAI::DoUpdatePeaceTreatyWillingness(bool bMyTurn)
 				iPeaceScore -= 20;
 			}
 
+			// Vox Deorum: LLM diplomatic modifiers affect peace willingness (-200 to +200 => -20 to +20)
+			// Negative opinion (positive modifier value) reduces peace willingness
+			// Positive opinion (negative modifier value) increases peace willingness
+			if (MOD_IPC_CHANNEL)
+			{
+				int iDiploModifier = GetScenarioModifier1(ePlayer) + GetScenarioModifier2(ePlayer);
+				iPeaceScore += (iDiploModifier * -1) / 10;
+			}
+
 			if (iPeaceScore > 0)
 			{
 				// If we're going for world conquest, we want to fight our wars until we get their capital or can vassalize them
