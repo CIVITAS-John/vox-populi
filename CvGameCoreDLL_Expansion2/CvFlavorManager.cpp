@@ -217,9 +217,9 @@ void CvFlavorManager::Serialize(FlavorManager& flavorManager, Visitor& visitor)
 	visitor(flavorManager.m_piActiveFlavor);
 
 	// Vox Deorum: Serialize custom flavor fields - will activate later
-	// visitor(flavorManager.m_bHasCustomFlavors);
-	// visitor(flavorManager.m_iCustomFlavorSetTurn);
-	// visitor(flavorManager.m_CustomFlavors);
+	visitor(flavorManager.m_bHasCustomFlavors);
+	visitor(flavorManager.m_iCustomFlavorSetTurn);
+	visitor(flavorManager.m_CustomFlavors);
 }
 
 /// Serialization read
