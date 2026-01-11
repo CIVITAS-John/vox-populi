@@ -591,11 +591,15 @@ CvWeightedVector<ProductionSpecializationSubtypes> CvCitySpecializationAI::Weigh
 	}
 	
 	// Vox Deorum: Depending on the mobilization level, increase or reduce military training weight (-400 to +400)
-	if (MOD_IPC_CHANNEL) {
-		int iFlavorMobilization = m_pPlayer->GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_MOBILIZATION"));
-		if (iFlavorMobilization < 0) iFlavorMobilization = 0;
-		iMilitaryTrainingWeight += (iFlavorMobilization - 5) * 80;
-		if (iMilitaryTrainingWeight < 0) iMilitaryTrainingWeight = 0;
+	if (MOD_IPC_CHANNEL && m_pPlayer->GetFlavorManager()->HasCustomFlavors()) {
+		FlavorTypes eFlavorMobilization = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_MOBILIZATION");
+		if (eFlavorMobilization != NO_FLAVOR)
+		{
+			int iFlavorMobilization = m_pPlayer->GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(eFlavorMobilization);
+			if (iFlavorMobilization < 0) iFlavorMobilization = 0;
+			iMilitaryTrainingWeight += (iFlavorMobilization - 5) * 80;
+			if (iMilitaryTrainingWeight < 0) iMilitaryTrainingWeight = 0;
+		}
 	}
 
 	eStrategy = (MilitaryAIStrategyTypes) GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_NAVAL_UNITS");
