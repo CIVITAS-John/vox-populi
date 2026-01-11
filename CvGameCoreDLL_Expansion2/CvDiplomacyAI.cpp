@@ -48813,12 +48813,12 @@ int CvDiplomacyAI::GetDiploModifiers(PlayerTypes eToPlayer, std::vector<Opinion>
 	}
 	
 	// This part hides in Vox Deorum!
-	if (!MOD_IPC_CHANNEL) {
-		iModifier = GetScenarioModifier2(eToPlayer);
-		if (iModifier != 0) 
-		{
-			iValue += iModifier;
+	iModifier = GetScenarioModifier2(eToPlayer);
+	if (iModifier != 0) 
+	{
+		iValue += iModifier;
 
+		if (!MOD_IPC_CHANNEL) {
 			Opinion kOpinion;
 			kOpinion.m_iValue = iModifier;
 			Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2");
