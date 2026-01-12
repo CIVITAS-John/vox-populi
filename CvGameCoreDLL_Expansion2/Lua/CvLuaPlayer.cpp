@@ -13733,7 +13733,7 @@ int CvLuaPlayer::lGetOpinionTable(lua_State* L)
 				if (iModifier2 != 0) {
 					Opinion kOpinion;
 					kOpinion.m_iValue = iModifier2;
-					strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2_SELF");
+					Localization::String strOpinion = Localization::Lookup("TXT_KEY_SPECIFIC_DIPLO_STRING_2_SELF");
 					kOpinion.m_str = strOpinion.toUTF8();
 					aOpinions.push_back(kOpinion);
 				}
