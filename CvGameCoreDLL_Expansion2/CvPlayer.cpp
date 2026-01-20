@@ -4482,11 +4482,11 @@ CvCity* CvPlayer::acquireCity(CvCity* pCity, bool bConquest, bool bGift, bool bO
 			// Human decides what to do with a City
 			else
 			{
-				CvNotifications* pNotify = GetNotifications();
+				pNewCity->SetIgnoreCityForHappiness(true); // Used to display info for annex/puppet/raze popup - turned off in DoCreatePuppet and DoAnnex
 
+				CvNotifications* pNotify = GetNotifications();
 				if (GC.getGame().getActivePlayer() == GetID() && pNotify)
 				{
-					pNewCity->SetIgnoreCityForHappiness(true); // Used to display info for annex/puppet/raze popup - turned off in DoCreatePuppet and DoAnnex
 					int iTemp[5] = { pNewCity->GetID(), iCaptureGold, iCaptureCulture, iCaptureGreatWorks, ePlayerToLiberate };
 					bool bFirstParameter = MOD_BALANCE_VP ? bAllowSphereRemoval : bMinorCivBuyout;
 					bool bTemp[2] = { bFirstParameter, bConquest };
@@ -5077,65 +5077,62 @@ void CvPlayer::UpdateBestMilitaryCities()
 	{
 		int iBestDomainValue = 0;
 		DomainTypes eTestDomain = (DomainTypes)iDomainLoop;
-		if (eTestDomain != NO_DOMAIN)
+		CvCity* pBestDomainCity = NULL;
+		for (pLoopCity = firstCity(&iLoop); pLoopCity != NULL; pLoopCity = nextCity(&iLoop))
 		{
-			CvCity* pBestDomainCity = NULL;
-			for (pLoopCity = firstCity(&iLoop); pLoopCity != NULL; pLoopCity = nextCity(&iLoop))
+			//Production is king, and also our base value.
+			int iDomainValue = (pLoopCity->getRawProductionPerTurnTimes100() / 500);
+
+			//Also get our XP boosts local to this city.
+			iDomainValue += pLoopCity->getFreeExperience();
+			iDomainValue += pLoopCity->GetExperienceFromPreviousGoldenAges();
+
+			if (pLoopCity->getDomainFreeExperience(eTestDomain) > 0)
 			{
-				//Production is king, and also our base value.
-				int iDomainValue = (pLoopCity->getRawProductionPerTurnTimes100() / 500);
+				iDomainValue += max(1, pLoopCity->getDomainFreeExperience(eTestDomain));
+			}
+			if (pLoopCity->getDomainFreeExperienceFromGreatWorks(eTestDomain) > 0)
+			{
+				iDomainValue += max(1, pLoopCity->getDomainFreeExperienceFromGreatWorks(eTestDomain));
+			}
+			if (pLoopCity->getDomainFreeExperienceFromGreatWorksGlobal(eTestDomain) > 0)
+			{
+				iDomainValue += max(1, pLoopCity->getDomainFreeExperienceFromGreatWorksGlobal(eTestDomain));
+			}
+			if (pLoopCity->getDomainProductionModifier(eTestDomain) > 0)
+			{
+				iDomainValue += max(1, pLoopCity->getDomainProductionModifier(eTestDomain));
+			}
 
-				//Also get our XP boosts local to this city.
-				iDomainValue += pLoopCity->getFreeExperience();
-				iDomainValue += pLoopCity->GetExperienceFromPreviousGoldenAges();
-
-				if (pLoopCity->getDomainFreeExperience(eTestDomain) > 0)
+			//Let's try to synergize our domain and combat class productions in the same cities.
+			for (int iI = 0; iI < GC.getNumUnitCombatClassInfos(); iI++)
+			{
+				const UnitCombatTypes eUnitCombatClass = static_cast<UnitCombatTypes>(iI);
+				CvBaseInfo* pkUnitCombatClassInfo = GC.getUnitCombatClassInfo(eUnitCombatClass);
+				if (pkUnitCombatClassInfo)
 				{
-					iDomainValue += max(1, pLoopCity->getDomainFreeExperience(eTestDomain));
-				}
-				if (pLoopCity->getDomainFreeExperienceFromGreatWorks(eTestDomain) > 0)
-				{
-					iDomainValue += max(1, pLoopCity->getDomainFreeExperienceFromGreatWorks(eTestDomain));
-				}
-				if (pLoopCity->getDomainFreeExperienceFromGreatWorksGlobal(eTestDomain) > 0)
-				{
-					iDomainValue += max(1, pLoopCity->getDomainFreeExperienceFromGreatWorksGlobal(eTestDomain));
-				}
-				if (pLoopCity->getDomainProductionModifier(eTestDomain) > 0)
-				{
-					iDomainValue += max(1, pLoopCity->getDomainProductionModifier(eTestDomain));
-				}
-
-				//Let's try to synergize our domain and combat class productions in the same cities.
-				for (int iI = 0; iI < GC.getNumUnitCombatClassInfos(); iI++)
-				{
-					const UnitCombatTypes eUnitCombatClass = static_cast<UnitCombatTypes>(iI);
-					CvBaseInfo* pkUnitCombatClassInfo = GC.getUnitCombatClassInfo(eUnitCombatClass);
-					if (pkUnitCombatClassInfo)
+					if (GetBestMilitaryCity(eUnitCombatClass, NO_DOMAIN) == pLoopCity)
 					{
-						if (GetBestMilitaryCity(eUnitCombatClass, NO_DOMAIN) == pLoopCity)
-						{
-							iDomainValue *= 2;
-						}
+						iDomainValue *= 2;
 					}
 				}
-				if (iDomainValue > iBestDomainValue)
-				{
-					iBestDomainValue = iDomainValue;
-					pBestDomainCity = pLoopCity;
-				}
 			}
-			if (pBestDomainCity != NULL && pBestDomainCity != GetBestMilitaryCity(NO_UNITCOMBAT, eTestDomain))
+			if (iDomainValue > iBestDomainValue)
 			{
-				if (GC.getLogging() && GC.getAILogging())
-				{
-					CvString strCity = pBestDomainCity->getName();
-					CvString strLogString;
-					strLogString.Format("***************** New Military Domain City Chosen for domain %d: %s. ****************", eTestDomain, strCity.c_str());
-					GetHomelandAI()->LogHomelandMessage(strLogString);
-				}
-				SetBestMilitaryCityDomain(pBestDomainCity->GetID(), eTestDomain);
+				iBestDomainValue = iDomainValue;
+				pBestDomainCity = pLoopCity;
 			}
+		}
+		if (pBestDomainCity != NULL && pBestDomainCity != GetBestMilitaryCity(NO_UNITCOMBAT, eTestDomain))
+		{
+			if (GC.getLogging() && GC.getAILogging())
+			{
+				CvString strCity = pBestDomainCity->getName();
+				CvString strLogString;
+				strLogString.Format("***************** New Military Domain City Chosen for domain %d: %s. ****************", eTestDomain, strCity.c_str());
+				GetHomelandAI()->LogHomelandMessage(strLogString);
+			}
+			SetBestMilitaryCityDomain(pBestDomainCity->GetID(), eTestDomain);
 		}
 	}
 }
@@ -11065,10 +11062,6 @@ void CvPlayer::chooseTech(int iDiscover, const char* strText, TechTypes iTechJus
 	if(iDiscover > 0)
 	{
 		SetNumFreeTechs(GetNumFreeTechs()+iDiscover);
-	}
-
-	if(iDiscover > 0)
-	{
 		CvNotifications* pNotifications = GetNotifications();
 		if(pNotifications)
 		{
@@ -13359,12 +13352,11 @@ void CvPlayer::AwardFreeBuildings(CvCity* pCity)
 		{
 			if (pCity->SetNumFreeBuilding(eBuilding, 1, bRefund, bValidate))
 				bOwedBuilding = false;
-
-			pCity->SetOwedCultureBuilding(bOwedBuilding);
-			ChangeNumCitiesFreeCultureBuilding(-1);
-			pCity->SetHasFreeCultureBuilding(true);
 		}
 
+		pCity->SetOwedCultureBuilding(bOwedBuilding);
+		ChangeNumCitiesFreeCultureBuilding(-1);
+		pCity->SetHasFreeCultureBuilding(true);
 	}
 
 	int iNumFreeFoodBuildings = GetNumCitiesFreeFoodBuilding();
@@ -13376,12 +13368,11 @@ void CvPlayer::AwardFreeBuildings(CvCity* pCity)
 		{
 			if (pCity->SetNumFreeBuilding(eBuilding, 1, bRefund, bValidate))
 				bOwedBuilding = false;
-
-			pCity->SetOwedFoodBuilding(bOwedBuilding);
-			ChangeNumCitiesFreeFoodBuilding(-1);
-			pCity->SetHasFreeFoodBuilding(true);
 		}
 
+		pCity->SetOwedFoodBuilding(bOwedBuilding);
+		ChangeNumCitiesFreeFoodBuilding(-1);
+		pCity->SetHasFreeFoodBuilding(true);
 	}
 }
 
@@ -29973,10 +29964,7 @@ int CvPlayer::GetReformCooldownRate() const
 void CvPlayer::SetReformCooldownRate(int iValue)
 {
 	GAMEEVENTINVOKE_HOOK(GAMEEVENT_ReformCooldownRateChanges, GetID(), iValue);
-	if(m_iJFDReformCooldownRate != iValue)
-	{
-		m_iJFDReformCooldownRate = iValue;
-	}
+	m_iJFDReformCooldownRate = iValue;
 }
 
 void CvPlayer::ChangeGovernmentCooldown(int iValue)
@@ -30131,10 +30119,7 @@ void CvPlayer::SetActiveContract(ContractTypes eContract, bool bValue)
 	VALIDATE_OBJECT();
 	PRECONDITION(eContract >= 0, "eContract expected to be >= 0");
 	PRECONDITION(eContract < GC.getNumContractInfos(), "eContract expected to be < GC.GetNumContractInfos()");
-	if (m_abActiveContract[eContract] != bValue)
-	{
-		m_abActiveContract[eContract] = bValue;
-	}
+	m_abActiveContract[eContract] = bValue;
 }
 
 void CvPlayer::DoUnitDiversity()
@@ -32908,60 +32893,64 @@ void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default
 
 	if (!bNewValue)
 	{
-		// check if resource numbers are stored correctly. there were a few issues with the calculations in the past
-		for (int iJ = 0; iJ < GC.getNumResourceInfos(); iJ++)
+		// unfortunately the resource check doesn't work for CS because they can be gifted improvements from major civs which are connected even if the CS can't see/improve them yet...
+		if (isMajorCiv())
 		{
-			int iCntImproved = 0;
-			int iCntUnimproved = 0;
-			for (int iI = 0; iI < GC.getMap().numPlots(); iI++)
+			// check if resource numbers are stored correctly. there were a few issues with the calculations in the past
+			for (int iJ = 0; iJ < GC.getNumResourceInfos(); iJ++)
 			{
-				CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(iI);
-				if (pLoopPlot->getOwner() == GetID())
+				int iCntImproved = 0;
+				int iCntUnimproved = 0;
+				for (int iI = 0; iI < GC.getMap().numPlots(); iI++)
 				{
-					ResourceTypes eRes = pLoopPlot->getResourceType(getTeam());
-					if (eRes == (ResourceTypes)iJ)
+					CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(iI);
+					if (pLoopPlot->getOwner() == GetID())
 					{
-						CvResourceInfo* pResourceInfo = GC.getResourceInfo(eRes);
-						int iNumExtraLuxury = 0;
-						if (pResourceInfo->getResourceUsage() == RESOURCEUSAGE_LUXURY)
+						ResourceTypes eRes = pLoopPlot->getResourceType(getTeam());
+						if (eRes == (ResourceTypes)iJ)
 						{
-							CvCity* pCity = pLoopPlot->getOwningCity();
-							if (pCity && pCity->IsExtraLuxuryResources())
+							CvResourceInfo* pResourceInfo = GC.getResourceInfo(eRes);
+							int iNumExtraLuxury = 0;
+							if (pResourceInfo->getResourceUsage() == RESOURCEUSAGE_LUXURY)
 							{
-								iNumExtraLuxury = 1;
+								CvCity* pCity = pLoopPlot->getOwningCity();
+								if (pCity && pCity->IsExtraLuxuryResources())
+								{
+									iNumExtraLuxury = 1;
+								}
 							}
-						}
-						int iNumResource = pLoopPlot->getNumResource();
-						if (pResourceInfo->getResourceUsage() == RESOURCEUSAGE_STRATEGIC)
-						{
-							int iQuantityMod = GetPlayerTraits()->GetStrategicResourceQuantityModifier(pLoopPlot->getTerrainType());
-							iNumResource *= 100 + iQuantityMod;
-							iNumResource /= 100;
-						}
+							int iNumResource = pLoopPlot->getNumResource();
+							if (pResourceInfo->getResourceUsage() == RESOURCEUSAGE_STRATEGIC)
+							{
+								int iQuantityMod = GetPlayerTraits()->GetStrategicResourceQuantityModifier(pLoopPlot->getTerrainType());
+								iNumResource *= 100 + iQuantityMod;
+								iNumResource /= 100;
+							}
 
-						if (GetPlayerTraits()->GetResourceQuantityModifier(eRes) > 0)
-						{
-							int iQuantityMod = GetPlayerTraits()->GetResourceQuantityModifier(eRes);
-							iNumResource *= 100 + iQuantityMod;
-							iNumResource /= 100;
-						}
+							if (GetPlayerTraits()->GetResourceQuantityModifier(eRes) > 0)
+							{
+								int iQuantityMod = GetPlayerTraits()->GetResourceQuantityModifier(eRes);
+								iNumResource *= 100 + iQuantityMod;
+								iNumResource /= 100;
+							}
 
-						if (pLoopPlot->IsResourceImprovedForOwner())
-						{
-							iCntImproved += iNumResource;
-							// ExtraLuxury resources are stored in m_paiNumResourceFromBuildings, but we can't compare it with the counted value because it also contains resources from other sources
-						}
-						else
-						{
-							iCntUnimproved += iNumResource + iNumExtraLuxury;
+							if (pLoopPlot->IsResourceImprovedForOwner())
+							{
+								iCntImproved += iNumResource;
+								// ExtraLuxury resources are stored in m_paiNumResourceFromBuildings, but we can't compare it with the counted value because it also contains resources from other sources
+							}
+							else
+							{
+								iCntUnimproved += iNumResource + iNumExtraLuxury;
 
+							}
 						}
 					}
 				}
+				const char* szResName = GC.getResourceInfo((ResourceTypes)iJ)->GetText();
+				ASSERT(m_paiNumResourceFromTiles[iJ] == iCntImproved, "Mismatch m_paiNumResourceFromTiles for Resource %s. Stored: %d, counted: %d.", szResName, m_paiNumResourceFromTiles[iJ], iCntImproved);
+				ASSERT(m_paiNumResourceUnimproved[iJ] == iCntUnimproved, "Mismatch m_paiNumResourceUnimproved for Resource %s. Stored: %d, counted: %d.", szResName, m_paiNumResourceUnimproved[iJ], iCntUnimproved);
 			}
-			const char* szResName = GC.getResourceInfo((ResourceTypes)iJ)->GetText();
-			ASSERT(m_paiNumResourceFromTiles[iJ] == iCntImproved, "Mismatch m_paiNumResourceFromTiles for Resource %s. Stored: %d, counted: %d.", szResName, m_paiNumResourceFromTiles[iJ], iCntImproved);
-			ASSERT(m_paiNumResourceUnimproved[iJ] == iCntUnimproved, "Mismatch m_paiNumResourceUnimproved for Resource %s. Stored: %d, counted: %d.", szResName, m_paiNumResourceUnimproved[iJ], iCntUnimproved);
 		}
 	}
 
@@ -38685,8 +38674,7 @@ void CvPlayer::changeResourceFromGP(ResourceTypes eIndex, byte iChange)
 	if (iChange != 0)
 	{
 		m_aiNumResourceFromGP[eIndex] = m_aiNumResourceFromGP[eIndex] + iChange;
-		if (iChange > 0)
-			CheckForLuxuryResourceGainInstantYields(eIndex);
+		CheckForLuxuryResourceGainInstantYields(eIndex);
 	}
 }
 
@@ -42650,6 +42638,11 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 				int iVal = pCapital->getPopulation() * pkPolicyInfo->GetYieldFromBirthCapitalRetroactive(iI);
 				doInstantYield(INSTANT_YIELD_TYPE_BIRTH_RETROACTIVE, false, NO_GREATPERSON, NO_BUILDING, iVal, true, NO_PLAYER, NULL, false, pCapital, false, false, false, eYield);
 			}
+
+			if (pkPolicyInfo->GetInstantYield(iI) != 0)
+			{
+				doInstantYield(INSTANT_YIELD_TYPE_INSTANT, false, NO_GREATPERSON, NO_BUILDING, pkPolicyInfo->GetInstantYield(iI), false, NO_PLAYER, NULL, false, pCapital, false, true, true, eYield);
+			}
 		}
 
 		// Store off number of newly built cities that will get a free building
@@ -45726,8 +45719,7 @@ int CvPlayer::GetTurnsSinceSettledLastCity() const
 /// How long ago did this guy last settle a city?
 void CvPlayer::SetTurnsSinceSettledLastCity(int iValue)
 {
-	if(m_iTurnsSinceSettledLastCity != iValue)
-		m_iTurnsSinceSettledLastCity = iValue;
+	m_iTurnsSinceSettledLastCity = iValue;
 }
 
 /// How long ago did this guy last settle a city?
@@ -45796,11 +45788,7 @@ std::vector<SPlotWithScore> CvPlayer::GetBestSettlePlots(CvUnit* pUnit, CvAIOper
 	for(int iPlotLoop = 0; iPlotLoop < iNumPlots; iPlotLoop++)
 	{
 		CvPlot* pPlot = kMap.plotByIndexUnchecked(iPlotLoop);
-
-		if(!pPlot)
-		{
-			continue;
-		}
+		ASSERT(pPlot != NULL, "plotByIndexUnchecked returned null - invalid plot index");
 
 		if (bLogging)
 		{
@@ -46398,10 +46386,7 @@ bool CvPlayer::IsWorkersIgnoreImpassable() const
 
 void CvPlayer::SetWorkersIgnoreImpassable(bool bValue)
 {
-	if (m_bWorkersIgnoreImpassable != bValue)
-	{
-		m_bWorkersIgnoreImpassable = bValue;
-	}
+	m_bWorkersIgnoreImpassable = bValue;
 }
 
 /// Number of Cities in the empire with our State Religion
@@ -46793,11 +46778,6 @@ bool CvPlayer::HasAnyUnitCanEmbark()
 
 	for (pLoopUnit = firstUnit(&iUnitLoop); pLoopUnit != NULL; pLoopUnit = nextUnit(&iUnitLoop))
 	{
-		if (!pLoopUnit)
-		{
-			continue;
-		}
-
 		if (pLoopUnit->IsHasEmbarkAbility())
 			return true;
 	}
@@ -46823,7 +46803,8 @@ CvPlot* CvPlayer::GetClosestGoodyPlot(bool bStopAfterFindingFirst)
 	for(int i = 0; i < GC.getMap().numPlots(); i++)
 	{
 		CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(i);
-		if(!pPlot || !pPlot->isGoody(getTeam()))
+		ASSERT(pPlot != NULL, "plotByIndexUnchecked returned null - invalid plot index");
+		if(!pPlot->isGoody(getTeam()))
 		{
 			continue;
 		}
@@ -46889,10 +46870,7 @@ bool CvPlayer::GetAnyUnitHasOrderToGoody()
 	for(int i = 0; i < GC.getMap().numPlots(); i++)
 	{
 		CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(i);
-		if(!pPlot)
-		{
-			continue;
-		}
+		ASSERT(pPlot != NULL, "plotByIndexUnchecked returned null - invalid plot index");
 
 		if(!pPlot->isGoody(getTeam()))
 		{
@@ -47924,8 +47902,7 @@ void CvPlayer::DoVassalLevy()
 
 void CvPlayer::SetVassalLevy(bool bValue)
 {
-	if (m_bVassalLevy != bValue)
-		m_bVassalLevy = bValue;
+	m_bVassalLevy = bValue;
 }
 
 /// Is eUnit valid to be received on era change?

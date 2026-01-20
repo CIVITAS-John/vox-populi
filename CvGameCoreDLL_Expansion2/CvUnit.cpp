@@ -5843,10 +5843,7 @@ bool CvUnit::CanAutomate(AutomateTypes eAutomate, bool bTestVisibility) const
 			{
 				return false;
 			}
-		}
 
-		if (!bTestVisibility)
-		{
 			if (/*0*/ GD_INT_GET(UNIT_AUTO_EXTRA_AUTOMATIONS_DISABLED) == 1)
 			{
 				return false;
@@ -5878,10 +5875,7 @@ bool CvUnit::CanAutomate(AutomateTypes eAutomate, bool bTestVisibility) const
 			{
 				return false;
 			}
-		}
 
-		if (!bTestVisibility)
-		{
 			if (/*0*/ GD_INT_GET(UNIT_AUTO_EXTRA_AUTOMATIONS_DISABLED) == 1)
 			{
 				return false;
@@ -5914,10 +5908,7 @@ bool CvUnit::CanAutomate(AutomateTypes eAutomate, bool bTestVisibility) const
 			{
 				return false;
 			}
-		}
 
-		if (!bTestVisibility)
-		{
 			if (/*0*/ GD_INT_GET(UNIT_AUTO_EXTRA_AUTOMATIONS_DISABLED) == 1)
 			{
 				return false;
@@ -9298,10 +9289,7 @@ bool CvUnit::createGreatWork()
 				// Loop through owner's cities.
 				for (pLoopCity = GET_PLAYER(getOwner()).firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = GET_PLAYER(getOwner()).nextCity(&iCityLoop))
 				{
-					if (pLoopCity != NULL)
-					{
-						pLoopCity->ChangeWeLoveTheKingDayCounter(iWLTKD, true);
-					}
+					pLoopCity->ChangeWeLoveTheKingDayCounter(iWLTKD, true);
 				}
 				CvNotifications* pNotifications = kPlayer.GetNotifications();
 				if (pNotifications)
@@ -12647,10 +12635,7 @@ int CvUnit::getGoldenAgeTurns() const
 		// Loop through owner's cities.
 		for (CvCity* pLoopCity = kPlayer.firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = kPlayer.nextCity(&iCityLoop))
 		{
-			if (pLoopCity != NULL)
-			{
-				iTotalThemes += pLoopCity->GetCityBuildings()->GetTotalNumThemedBuildings();
-			}
+			iTotalThemes += pLoopCity->GetCityBuildings()->GetTotalNumThemedBuildings();
 		}
 
 		iTotalThemes = (iTotalThemes * getUnitInfo().GetScaleFromNumThemes());
@@ -13390,11 +13375,6 @@ bool CvUnit::canPromote(PromotionTypes ePromotion, int iLeaderUnitId) const
 	}
 
 	if(ePromotion == NO_PROMOTION)
-	{
-		return false;
-	}
-
-	if (IsPromotionBlocked(ePromotion))
 	{
 		return false;
 	}
@@ -25049,6 +25029,9 @@ bool CvUnit::isPromotionReady() const
 void CvUnit::setPromotionReady(bool bNewValue)
 {
 	VALIDATE_OBJECT();
+	if (bNewValue && !canAcquirePromotionAny())
+		return;
+
 	if(isPromotionReady() != bNewValue)
 	{
 		m_bPromotionReady = bNewValue;
@@ -25089,7 +25072,7 @@ void CvUnit::testPromotionReady()
 {
 	VALIDATE_OBJECT();
 	
-	setPromotionReady(((getExperienceTimes100() / 100) >= experienceNeeded()) && !isOutOfAttacks(true) && canAcquirePromotionAny());
+	setPromotionReady(((getExperienceTimes100() / 100) >= experienceNeeded()) && !isOutOfAttacks(true));
 }
 
 
@@ -26976,6 +26959,12 @@ bool CvUnit::canAcquirePromotion(PromotionTypes ePromotion) const
 	{
 		return false;
 	}
+
+	if (IsPromotionBlocked(ePromotion))
+	{
+		return false;
+	}
+
 	CvPlayer& kPlayer = GET_PLAYER(getOwner());
 	static PromotionTypes ePromotionRoughTerrain = (PromotionTypes)GC.getInfoTypeForString("PROMOTION_ROUGH_TERRAIN_ENDS_TURN");
 	if(ePromotion == ePromotionRoughTerrain && kPlayer.GetPlayerTraits()->IsConquestOfTheWorld())

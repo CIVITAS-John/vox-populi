@@ -1888,9 +1888,7 @@ void CvPlayerTechs::CheckWillHaveUUTechSoon()
 	//Already have? Set this false!
 	if (HasUUTech())
 	{
-		if (m_bWillHaveUUTechSoon)
-			m_bWillHaveUUTechSoon = false;
-
+		m_bWillHaveUUTechSoon = false;
 		return;
 	}
 
