@@ -6872,6 +6872,8 @@ int CvUnit::GetInfluenceFromCombatXPTimes100() const
 //	--------------------------------------------------------------------------------
 void CvUnit::SetPromotionDuration(PromotionTypes eIndex, int iValue)
 {
+	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex is expected to be within maximum bounds (invalid Index)");
 	std::map<PromotionTypes, int>& m_map = m_PromotionDuration;
 	if (iValue > 0)
 		m_map[eIndex] = iValue;
@@ -6882,6 +6884,8 @@ void CvUnit::SetPromotionDuration(PromotionTypes eIndex, int iValue)
 //	--------------------------------------------------------------------------------
 void CvUnit::ChangePromotionDuration(PromotionTypes eIndex, int iChange)
 {
+	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex is expected to be within maximum bounds (invalid Index)");
 	std::map<PromotionTypes, int>& m_map = m_PromotionDuration;
 	if (m_map.find(eIndex) != m_map.end())
 	{
@@ -6895,6 +6899,8 @@ void CvUnit::ChangePromotionDuration(PromotionTypes eIndex, int iChange)
 //	--------------------------------------------------------------------------------
 int CvUnit::getPromotionDuration(PromotionTypes eIndex) const
 {
+	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex is expected to be within maximum bounds (invalid Index)");
 	const std::map<PromotionTypes, int>& m_map = m_PromotionDuration;
 	std::map<PromotionTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
@@ -6906,6 +6912,8 @@ int CvUnit::getPromotionDuration(PromotionTypes eIndex) const
 //	--------------------------------------------------------------------------------
 void CvUnit::SetTurnPromotionGained(PromotionTypes eIndex, int iValue)
 {
+	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex is expected to be within maximum bounds (invalid Index)");
 	std::map<PromotionTypes, int>& m_map = m_TurnPromotionGained;
 	if (iValue>0)
 		m_map[eIndex] = iValue;
@@ -6915,6 +6923,8 @@ void CvUnit::SetTurnPromotionGained(PromotionTypes eIndex, int iValue)
 //	--------------------------------------------------------------------------------
 int CvUnit::getTurnPromotionGained(PromotionTypes eIndex) const
 {
+	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex is expected to be within maximum bounds (invalid Index)");
 	const std::map<PromotionTypes, int>& m_map = m_TurnPromotionGained;
 	std::map<PromotionTypes, int>::const_iterator it = m_map.find(eIndex);
 	if (it != m_map.end())
@@ -13058,7 +13068,7 @@ bool CvUnit::canBuild(const CvPlot* pPlot, BuildTypes eBuild, bool bTestVisible,
 
 	if (MOD_EVENTS_PLOT)
 	{
-		if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_PlayerCanBuild, getOwner(), GetID(), getX(), getY(), eBuild) == GAMEEVENTRETURN_FALSE)
+		if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_PlayerCanBuild, getOwner(), GetID(), pPlot->getX(), pPlot->getY(), eBuild) == GAMEEVENTRETURN_FALSE)
 		{
 			return false;
 		}
@@ -22588,7 +22598,6 @@ void CvUnit::changeExtraFriendlyHeal(int iChange)
 {
 	VALIDATE_OBJECT();
 	m_iExtraFriendlyHeal = (m_iExtraFriendlyHeal + iChange);
-	ASSERT(getExtraFriendlyHeal() >= 0);
 }
 
 
@@ -22605,7 +22614,6 @@ void CvUnit::changeSameTileHeal(int iChange)
 {
 	VALIDATE_OBJECT();
 	m_iSameTileHeal = (m_iSameTileHeal + iChange);
-	ASSERT(getSameTileHeal() >= 0);
 }
 
 
@@ -25791,15 +25799,18 @@ void CvUnit::SetGAPBlastStrength(int iValue)
 //	--------------------------------------------------------------------------------
 void CvUnit::SetPromotionEverObtained(PromotionTypes eIndex, bool bValue)
 {
-	ASSERT(eIndex >= 0);
-	PRECONDITION(eIndex < GC.getNumPromotionInfos());
+	PRECONDITION(eIndex >= 0, "eIndex expected to be >= 0");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex expected to be < GC.getNumPromotionInfos()");
 
-	m_abPromotionEverObtained[eIndex] =  bValue;
+	m_abPromotionEverObtained[eIndex] = bValue;
 }
 
 //	--------------------------------------------------------------------------------
 bool CvUnit::IsPromotionEverObtained(PromotionTypes eIndex) const
 {
+	PRECONDITION(eIndex >= 0, "eIndex expected to be >= 0");
+	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex expected to be < GC.getNumPromotionInfos()");
+
 	return m_abPromotionEverObtained[eIndex];
 }
 
@@ -27661,7 +27672,7 @@ void CvUnit::setPromotionActive(PromotionTypes eIndex, bool bNewValue)
 		}
 		else
 		{
-			ChangePromotionDuration(NO_PROMOTION, 0);
+			ChangePromotionDuration(eIndex, 0);
 		}
 	}
 	if (thisPromotion.NegatesPromotion() != NO_PROMOTION)

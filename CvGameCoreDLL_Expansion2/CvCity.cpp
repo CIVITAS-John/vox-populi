@@ -10116,6 +10116,9 @@ int CvCity::GetNumHiddenBuildings() const
 
 void CvCity::SetBuildingHidden(BuildingTypes eBuilding)
 {
+	PRECONDITION(eBuilding >= 0, "eBuilding expected to be >= 0");
+	PRECONDITION(eBuilding < GC.getNumBuildingInfos(), "eBuilding expected to be < GC.getNumBuildingInfos()");
+
 	if (!IsBuildingHidden(eBuilding))
 	{
 		m_inumHiddenBuildings++;
@@ -10133,6 +10136,9 @@ void CvCity::ClearHiddenBuildings()
 
 bool CvCity::IsBuildingHidden(BuildingTypes eBuilding) const
 {
+	PRECONDITION(eBuilding >= 0, "eBuilding expected to be >= 0");
+	PRECONDITION(eBuilding < GC.getNumBuildingInfos(), "eBuilding expected to be < GC.getNumBuildingInfos()");
+
 	return m_abIsBuildingHidden[eBuilding];
 }
 
@@ -13781,7 +13787,7 @@ void CvCity::processBuilding(BuildingTypes eBuilding, int iChange, bool bFirst, 
 					ResourceTypes eResourceLoop = (ResourceTypes) iResourceLoop;
 					int iQuantity = kPlayer.GetPlayerTraits()->GetNumFreeResourceOnWorldWonderCompletion(eResourceLoop);
 					if (iQuantity > 0)
-						kPlayer.SpawnResourceInOwnedLands(eResourceLoop, iQuantity);
+						kPlayer.SpawnResourceInVicinity(this, eResourceLoop, iQuantity, /*bSarcophagus*/ false);
 				}
 			}
 			if (pBuildingInfo->GrantsRandomResourceTerritory() > 0)
@@ -15722,10 +15728,14 @@ bool CvCity::IsTraded(PlayerTypes ePlayer)
 void CvCity::SetIgnoredForExpansionBickering(PlayerTypes ePlayer, bool bValue)
 {
 	VALIDATE_OBJECT();
+	PRECONDITION(ePlayer >= 0, "eIndex expected to be >= 0");
+	PRECONDITION(ePlayer < MAX_MAJOR_CIVS, "eIndex expected to be < MAX_PLAYERS");
 	m_abIgnoredForExpansionBickering[ePlayer] = bValue;
 }
 bool CvCity::IsIgnoredForExpansionBickering(PlayerTypes ePlayer) const
 {
+	PRECONDITION(ePlayer >= 0, "eIndex expected to be >= 0");
+	PRECONDITION(ePlayer < MAX_MAJOR_CIVS, "eIndex expected to be < MAX_PLAYERS");
 	return m_abIgnoredForExpansionBickering[ePlayer];
 }
 
@@ -22279,6 +22289,9 @@ bool CvCity::IsNoStarvationNonSpecialist() const
 int CvCity::GetNumTimesOwned(PlayerTypes ePlayer) const
 {
 	VALIDATE_OBJECT();
+	PRECONDITION(ePlayer >= 0, "ePlayer expected to be >= 0");
+	PRECONDITION(ePlayer < MAX_PLAYERS, "ePlayer expected to be < MAX_PLAYERS");
+
 	return m_aiNumTimesOwned[ePlayer];
 }
 void CvCity::SetNumTimesOwned(PlayerTypes ePlayer, int iValue)
@@ -23704,10 +23717,10 @@ void CvCity::ChangeBaseYieldRateFromBuildings(YieldTypes eIndex, int iChange)
 	if (iChange != 0)
 	{
 		m_aiBaseYieldRateFromBuildings[eIndex] += iChange;
+		UpdateCityYields(eIndex);
 
 		if (getTeam() == GC.getGame().getActiveTeam())
 		{
-			UpdateCityYields(eIndex);
 			if (isCitySelected())
 			{
 				DLLUI->setDirty(CityScreen_DIRTY_BIT, true);
@@ -23738,10 +23751,10 @@ void CvCity::ChangeBaseYieldRateFromSpecialists(YieldTypes eIndex, int iChange)
 	if (iChange != 0)
 	{
 		m_aiBaseYieldRateFromSpecialists[eIndex] = m_aiBaseYieldRateFromSpecialists[eIndex] + iChange;
+		UpdateCityYields(eIndex);
 
 		if (getTeam() == GC.getGame().getActiveTeam())
 		{
-			UpdateCityYields(eIndex);
 			if (isCitySelected())
 			{
 				DLLUI->setDirty(CityScreen_DIRTY_BIT, true);
@@ -23772,10 +23785,10 @@ void CvCity::ChangeBaseYieldRateFromMisc(YieldTypes eIndex, int iChange)
 	if (iChange != 0)
 	{
 		m_aiBaseYieldRateFromMisc[eIndex] = m_aiBaseYieldRateFromMisc[eIndex] + iChange;
+		UpdateCityYields(eIndex);
 
 		if (getTeam() == GC.getGame().getActiveTeam())
 		{
-			UpdateCityYields(eIndex);
 			if (isCitySelected())
 			{
 				DLLUI->setDirty(CityScreen_DIRTY_BIT, true);
@@ -23808,10 +23821,10 @@ void CvCity::ChangeBaseYieldRatePermanentWLTKDTimes100(YieldTypes eIndex, int iC
 	if (iChange != 0)
 	{
 		m_aiBaseYieldRatePermanentWLTKDTimes100[eIndex] = m_aiBaseYieldRatePermanentWLTKDTimes100[eIndex] + iChange;
+		UpdateCityYields(eIndex);
 
 		if (getTeam() == GC.getGame().getActiveTeam())
 		{
-			UpdateCityYields(eIndex);
 			if (isCitySelected())
 			{
 				DLLUI->setDirty(CityScreen_DIRTY_BIT, true);
@@ -25733,6 +25746,9 @@ void CvCity::ChangeResourceQuantityPerXFranchises(ResourceTypes eResource, fract
 int CvCity::GetResourceQuantityFromPOP(ResourceTypes eResource) const
 {
 	VALIDATE_OBJECT();
+	PRECONDITION(eResource >= 0, "eResource expected to be >= 0");
+	PRECONDITION(eResource < GC.getNumResourceInfos(), "eResource expected to be < GC.getNumResourceInfos()");
+
 	return m_aiResourceQuantityFromPOP[eResource];
 }
 //	--------------------------------------------------------------------------------
@@ -25743,6 +25759,9 @@ void CvCity::ChangeResourceQuantityFromPOP(ResourceTypes eResource, int iChange)
 }
 void CvCity::SetResourceQuantityFromPOP(ResourceTypes eResource, int iValue)
 {
+	PRECONDITION(eResource >= 0, "eResource expected to be >= 0");
+	PRECONDITION(eResource < GC.getNumResourceInfos(), "eResource expected to be < GC.getNumResourceInfos()");
+
 	m_aiResourceQuantityFromPOP[eResource] = iValue;
 }
 //	--------------------------------------------------------------------------------
@@ -34952,7 +34971,7 @@ void CvCity::SetYieldModifierFromHappiness(YieldTypes eYield, int iValue)
 int CvCity::GetYieldModifierFromHappiness(YieldTypes eYield) const
 {
 	VALIDATE_OBJECT();
-		PRECONDITION(eYield >= 0, "eYield expected to be >= 0");
+	PRECONDITION(eYield >= 0, "eYield expected to be >= 0");
 	PRECONDITION(eYield < NUM_YIELD_TYPES, "eYield expected to be < NUM_YIELD_TYPES");
 
 	return m_aiYieldModifierFromHappiness[eYield];
@@ -34969,6 +34988,9 @@ void CvCity::SetYieldModifierFromHealth(YieldTypes eYield, int iValue)
 int CvCity::GetYieldModifierFromHealth(YieldTypes eYield) const
 {
 	VALIDATE_OBJECT();
+	PRECONDITION(eYield >= 0, "eYield expected to be >= 0");
+	PRECONDITION(eYield < NUM_YIELD_TYPES, "eYield expected to be < NUM_YIELD_TYPES");
+
 	return m_aiYieldModifierFromHealth[eYield];
 }
 
@@ -34983,6 +35005,9 @@ void CvCity::SetYieldModifierFromCrime(YieldTypes eYield, int iValue)
 int CvCity::GetYieldModifierFromCrime(YieldTypes eYield) const
 {
 	VALIDATE_OBJECT();
+	PRECONDITION(eYield >= 0, "eYield expected to be >= 0");
+	PRECONDITION(eYield < NUM_YIELD_TYPES, "eYield expected to be < NUM_YIELD_TYPES");
+
 	return m_aiYieldModifierFromCrime[eYield];
 }
 
@@ -34997,6 +35022,9 @@ void CvCity::SetYieldModifierFromDevelopment(YieldTypes eYield, int iValue)
 int CvCity::GetYieldModifierFromDevelopment(YieldTypes eYield) const
 {
 	VALIDATE_OBJECT();
+	PRECONDITION(eYield >= 0, "eYield expected to be >= 0");
+	PRECONDITION(eYield < NUM_YIELD_TYPES, "eYield expected to be < NUM_YIELD_TYPES");
+
 	return m_aiYieldModifierFromDevelopment[eYield];
 }
 
