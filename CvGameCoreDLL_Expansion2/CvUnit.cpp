@@ -12521,7 +12521,7 @@ void CvUnit::PerformCultureBomb(int iRadius)
 			}
 
 			// Vox Deorum: Fire StealPlot event before ownership transfer
-			if (ePlotOwner != NO_PLAYER && MOD_IPC_CHANNEL)
+			if (MOD_IPC_CHANNEL && ePlotOwner != NO_PLAYER)
 				GAMEEVENTINVOKE_HOOK(GAMEEVENT_StealPlot, pLoopPlot->getX(), pLoopPlot->getY(), ePlotOwner, getOwner());
 
 			// Have to set owner after we do the above stuff
