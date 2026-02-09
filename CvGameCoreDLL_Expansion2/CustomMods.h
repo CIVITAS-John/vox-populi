@@ -1308,6 +1308,7 @@ enum BattleTypeTypes
 #define GAMEEVENT_ResolutionProposing			"ResolutionProposing",			"ii"
 #define GAMEEVENT_ResolutionResult				"ResolutionResult",				"iiibb"
 #define GAMEEVENT_ResolutionVoting				"ResolutionVoting",				"ii"
+#define GAMEEVENT_StealPlot						"StealPlot",					"iiii"
 #define GAMEEVENT_TeamSetEra					"TeamSetEra",					"iib"
 #define GAMEEVENT_TerraformingMap				"TerraformingMap",				"ii"
 #define GAMEEVENT_TerraformingPlot				"TerraformingPlot",				"iiiiiiii"

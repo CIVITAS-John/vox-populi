@@ -112,6 +112,7 @@ static const char* props_ReligionReformed[] = {"PlayerID", "ReligionID", "Reform
 static const char* props_ResolutionResult[] = {"ResolutionType", "ProposerPlayerID", "Decision", "!IsEnact", "!Passed", NULL};
 static const char* props_SetAlly[] = {"MinorPlayerID", "OldAllyPlayerID", "NewAllyPlayerID", NULL};
 static const char* props_SetPopulation[] = {"CityX", "CityY", "OldPopulation", "NewPopulation", NULL};
+static const char* props_StealPlot[] = {"PlotX", "PlotY", "FromPlayerID", "ToPlayerID", NULL};
 static const char* props_StateReligionAdopted[] = {"PlayerID", "NewReligionID", "OldReligionID", NULL};
 static const char* props_StateReligionChanged[] = {"PlayerID", "NewReligionID", "OldReligionID", NULL};
 static const char* props_TeamMeet[] = {"OtherTeamID", "CurrentTeamID", NULL};
@@ -250,6 +251,7 @@ std::map<std::string, const char**> GetEventSchemas() {
         schemas["ResolutionResult"] = props_ResolutionResult;
         schemas["SetAlly"] = props_SetAlly;
         schemas["SetPopulation"] = props_SetPopulation;
+        schemas["StealPlot"] = props_StealPlot;
         schemas["StateReligionAdopted"] = props_StateReligionAdopted;
         schemas["StateReligionChanged"] = props_StateReligionChanged;
         schemas["TeamMeet"] = props_TeamMeet;

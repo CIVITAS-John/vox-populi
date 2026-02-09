@@ -12520,6 +12520,10 @@ void CvUnit::PerformCultureBomb(int iRadius)
 				}
 			}
 
+			// Vox Deorum: Fire StealPlot event before ownership transfer
+			if (ePlotOwner != NO_PLAYER && MOD_IPC_CHANNEL)
+				GAMEEVENTINVOKE_HOOK(GAMEEVENT_StealPlot, pLoopPlot->getX(), pLoopPlot->getY(), ePlotOwner, getOwner());
+
 			// Have to set owner after we do the above stuff
 			pLoopPlot->setOwner(getOwner(), iBestCityID);
 		}

@@ -28585,6 +28585,10 @@ void CvCity::BuyPlot(int iPlotX, int iPlotY, bool bAutomaticPurchaseFromBuilding
 		}
 	}
 
+	// Vox Deorum: Fire StealPlot event for foreign tile purchase
+	if (MOD_IPC_CHANNEL && ePlotOwner != NO_PLAYER)
+		GAMEEVENTINVOKE_HOOK(GAMEEVENT_StealPlot, iPlotX, iPlotY, ePlotOwner, getOwner());
+
 	DoAcquirePlot(iPlotX, iPlotY);
 
 	if (MOD_EVENTS_CITY)
