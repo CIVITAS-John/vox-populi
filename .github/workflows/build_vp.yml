@@ -690,7 +690,7 @@ jobs:
           path: 'BuildOutput/Release'
 
   create-release:
-    needs: build-msvc
+    needs: [get-version, build-msvc]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
