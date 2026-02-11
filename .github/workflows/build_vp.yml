@@ -699,13 +699,13 @@ jobs:
       - name: Download MSVC Release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: VP_MSVC_Release
+          name: VP_MSVC_Release_${{ needs.get-version.outputs.version }}
           path: msvc-release
 
       - name: Download MSVC Debug artifacts
         uses: actions/download-artifact@v4
         with:
-          name: VP_MSVC_Debug
+          name: VP_MSVC_Debug_${{ needs.get-version.outputs.version }}
           path: msvc-debug
 
       - name: Prepare release files
