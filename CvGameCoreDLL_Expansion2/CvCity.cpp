@@ -905,22 +905,23 @@ void CvCity::init(int iID, PlayerTypes eOwner, int iX, int iY, bool bBumpUnits, 
 	// Spread a pantheon here if one is active
 	CvPlayerReligions* pReligions = kOwner.GetReligions();
 	CvCity* pCapital = kOwner.getCapitalCity();
-	if (kOwner.GetPlayerTraits()->IsNewCitiesStartWithCapitalReligion() && pCapital && pCapital->GetCityReligions()->GetMajorityReligion())
-	{
-		const CvReligion* pCapitalReligion = pCapital->GetCityReligions()->GetMajorityReligion();
-		int iInitialPressure = /*1000*/ GD_INT_GET(RELIGION_ATHEISM_PRESSURE_PER_POP) * getPopulation() * 2;
-		GetCityReligions()->AddReligiousPressure(FOLLOWER_CHANGE_POP_CHANGE, pCapitalReligion->m_eReligion, iInitialPressure);
-		GetCityReligions()->RecomputeFollowers(FOLLOWER_CHANGE_POP_CHANGE);
-	}
-	else if (pReligions->HasCreatedPantheon() && !pReligions->OwnsReligion())
-	{
-		int iInitialPressure = /*1000*/ GD_INT_GET(RELIGION_ATHEISM_PRESSURE_PER_POP) * getPopulation() * 2;
-		GetCityReligions()->AddReligiousPressure(FOLLOWER_CHANGE_POP_CHANGE, RELIGION_PANTHEON, iInitialPressure);
-		GetCityReligions()->RecomputeFollowers(FOLLOWER_CHANGE_POP_CHANGE);
-	}
 
-	if (bInitialFounding) 
+	if (bInitialFounding)
 	{
+		if (kOwner.GetPlayerTraits()->IsNewCitiesStartWithCapitalReligion() && pCapital && pCapital->GetCityReligions()->GetMajorityReligion())
+		{
+			const CvReligion* pCapitalReligion = pCapital->GetCityReligions()->GetMajorityReligion();
+			int iInitialPressure = /*1000*/ GD_INT_GET(RELIGION_ATHEISM_PRESSURE_PER_POP) * getPopulation() * 2;
+			GetCityReligions()->AddReligiousPressure(FOLLOWER_CHANGE_POP_CHANGE, pCapitalReligion->m_eReligion, iInitialPressure);
+			GetCityReligions()->RecomputeFollowers(FOLLOWER_CHANGE_POP_CHANGE);
+		}
+		else if (pReligions->HasCreatedPantheon() && !pReligions->OwnsReligion())
+		{
+			int iInitialPressure = /*1000*/ GD_INT_GET(RELIGION_ATHEISM_PRESSURE_PER_POP) * getPopulation() * 2;
+			GetCityReligions()->AddReligiousPressure(FOLLOWER_CHANGE_POP_CHANGE, RELIGION_PANTHEON, iInitialPressure);
+			GetCityReligions()->RecomputeFollowers(FOLLOWER_CHANGE_POP_CHANGE);
+		}
+
 		if (eInitialReligion != NO_RELIGION) 
 		{
 			// Spread an initial religion here if one was given
@@ -7609,7 +7610,7 @@ int CvCity::maxXPValue() const
 		iMaxValue = std::min(iMaxValue, /*-1 in CP, 70 in VP*/ GD_INT_GET(MINOR_MAX_XP_VALUE));
 	}
 
-	if (iMaxValue > 0)
+	if (iMaxValue > 0 && iMaxValue != MAX_INT)
 	{
 		iMaxValue *= GC.getGame().getGameSpeedInfo().getExperiencePercent();
 		iMaxValue /= 100;
@@ -17183,35 +17184,39 @@ int CvCity::GetReligionGreatPersonRateModifier(GreatPersonTypes eGreatPerson) co
 
 	if (GET_PLAYER(getOwner()).getGoldenAgeTurns() > 0)
 	{
-		ReligionTypes eMajority = GetCityReligions()->GetReligiousMajority();
-		BeliefTypes eSecondaryPantheon = NO_BELIEF;
-		if (eMajority != NO_RELIGION)
+		ReligionTypes eOwnerReligion = GET_PLAYER(getOwner()).GetReligions()->GetOwnedReligion();
+		if (eOwnerReligion != NO_RELIGION && GetCityReligions()->IsHolyCityForReligion(eOwnerReligion))
 		{
-			const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eMajority, getOwner());
-			if (pReligion)
+			ReligionTypes eMajority = GetCityReligions()->GetReligiousMajority();
+			BeliefTypes eSecondaryPantheon = NO_BELIEF;
+			if (eMajority != NO_RELIGION)
 			{
-				iResult += pReligion->m_Beliefs.GetGoldenAgeGreatPersonRateModifier(eGreatPerson, getOwner(), this);
-				eSecondaryPantheon = GetCityReligions()->GetSecondaryReligionPantheonBelief();
-				if (eSecondaryPantheon != NO_BELIEF)
+				const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eMajority, getOwner());
+				if (pReligion)
 				{
-					iResult += GC.GetGameBeliefs()->GetEntry(eSecondaryPantheon)->GetGoldenAgeGreatPersonRateModifier(eGreatPerson);
+					iResult += pReligion->m_Beliefs.GetGoldenAgeGreatPersonRateModifier(eGreatPerson, getOwner(), this);
+					eSecondaryPantheon = GetCityReligions()->GetSecondaryReligionPantheonBelief();
+					if (eSecondaryPantheon != NO_BELIEF)
+					{
+						iResult += GC.GetGameBeliefs()->GetEntry(eSecondaryPantheon)->GetGoldenAgeGreatPersonRateModifier(eGreatPerson);
+					}
 				}
 			}
-		}
 
-		// Mod for civs keeping their pantheon belief forever
-		if (MOD_BALANCE_PERMANENT_PANTHEONS)
-		{
-			if (GC.getGame().GetGameReligions()->HasCreatedPantheon(getOwner()))
+			// Mod for civs keeping their pantheon belief forever
+			if (MOD_BALANCE_PERMANENT_PANTHEONS)
 			{
-				const CvReligion* pPantheon = GC.getGame().GetGameReligions()->GetReligion(RELIGION_PANTHEON, getOwner());
-				BeliefTypes ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(getOwner());
-				if (pPantheon != NULL && ePantheonBelief != NO_BELIEF && ePantheonBelief != eSecondaryPantheon)
+				if (GC.getGame().GetGameReligions()->HasCreatedPantheon(getOwner()))
 				{
-					const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eMajority, getOwner());
-					if (pReligion == NULL || !pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eMajority, getOwner())) // check that the our religion does not have our belief, to prevent double counting
+					const CvReligion* pPantheon = GC.getGame().GetGameReligions()->GetReligion(RELIGION_PANTHEON, getOwner());
+					BeliefTypes ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(getOwner());
+					if (pPantheon != NULL && ePantheonBelief != NO_BELIEF && ePantheonBelief != eSecondaryPantheon)
 					{
-						iResult += GC.GetGameBeliefs()->GetEntry(ePantheonBelief)->GetGoldenAgeGreatPersonRateModifier(eGreatPerson);
+						const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eMajority, getOwner());
+						if (pReligion == NULL || !pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eMajority, getOwner())) // check that the our religion does not have our belief, to prevent double counting
+						{
+							iResult += GC.GetGameBeliefs()->GetEntry(ePantheonBelief)->GetGoldenAgeGreatPersonRateModifier(eGreatPerson);
+						}
 					}
 				}
 			}
@@ -21313,8 +21318,11 @@ int CvCity::GetDistressRaw(bool bForceRecalc, int iAssumedExtraYieldRate) const
 	int iTotalYield = getFoodPerTurnBeforeConsumptionTimes100() + getYieldRateTimes100(YIELD_PRODUCTION, false, false, !bForceRecalc) + iAssumedExtraYieldRate;
 
 	// Second, calculate the median (with need modifiers)
-	float fMedianYieldPerPop = 0.00f;
-	fMedianYieldPerPop += GetBasicNeedsMedian(bForceRecalc, 0);
+	float fMedianYieldPerPop = GetBasicNeedsMedian(bForceRecalc, 0);
+
+	// Avoid division by zero which produces NaN
+	if (fMedianYieldPerPop <= 0.0f)
+		return 0;
 
 	// Unhappiness = Population - (Total Yield / Modified Median)
 	int iPopulation = bForceRecalc ? getPopulation() + 1 : getPopulation();
@@ -21360,8 +21368,11 @@ int CvCity::GetPovertyRaw(bool bForceRecalc, int iAssumedExtraYieldRate) const
 	int iTotalYield = getYieldRateTimes100(YIELD_GOLD, false, false, !bForceRecalc) + iAssumedExtraYieldRate;
 
 	// Second, calculate the median (with need modifiers)
-	float fMedianYieldPerPop = 0.00f;
-	fMedianYieldPerPop += GetGoldMedian(bForceRecalc, 0);
+	float fMedianYieldPerPop = GetGoldMedian(bForceRecalc, 0);
+
+	// Avoid division by zero which produces NaN
+	if (fMedianYieldPerPop <= 0.0f)
+		return 0;
 
 	// Unhappiness = Population - (Total Yield / Modified Median)
 	int iPopulation = bForceRecalc ? getPopulation() + 1 : getPopulation();
@@ -21407,8 +21418,11 @@ int CvCity::GetIlliteracyRaw(bool bForceRecalc, int iAssumedExtraYieldRate) cons
 	int iTotalYield = getYieldRateTimes100(YIELD_SCIENCE, false, false, !bForceRecalc) + iAssumedExtraYieldRate;
 
 	// Second, calculate the median (with need modifiers)
-	float fMedianYieldPerPop = 0.00f;
-	fMedianYieldPerPop += GetScienceMedian(bForceRecalc, 0);
+	float fMedianYieldPerPop = GetScienceMedian(bForceRecalc, 0);
+
+	// Avoid division by zero which produces NaN
+	if (fMedianYieldPerPop <= 0.0f)
+		return 0;
 
 	// Unhappiness = Population - (Total Yield / Modified Median)
 	int iPopulation = bForceRecalc ? getPopulation() + 1 : getPopulation();
@@ -21454,8 +21468,11 @@ int CvCity::GetBoredomRaw(bool bForceRecalc, int iAssumedExtraYieldRate) const
 	int iTotalYield = getYieldRateTimes100(YIELD_CULTURE, false, false, !bForceRecalc) + iAssumedExtraYieldRate;
 
 	// Second, calculate the median (with need modifiers)
-	float fMedianYieldPerPop = 0.00f;
-	fMedianYieldPerPop += GetCultureMedian(bForceRecalc, 0);
+	float fMedianYieldPerPop = GetCultureMedian(bForceRecalc, 0);
+
+	// Avoid division by zero which produces NaN
+	if (fMedianYieldPerPop <= 0.0f)
+		return 0;
 
 	// Unhappiness = Population - (Total Yield / Modified Median)
 	int iPopulation = bForceRecalc ? getPopulation() + 1 : getPopulation();
@@ -31104,7 +31121,8 @@ void CvCity::doGrowth()
 	int iFoodPerTurn100 = getYieldRateTimes100(YIELD_FOOD);
 	int iFoodReqForGrowth = growthThreshold();
 
-	if (iFoodPerTurn100 < 0)
+	// show notification if we're starving and it would take less than 100 turns to reach zero food
+	if (iFoodPerTurn100 < 0 && getFoodTimes100() / (-iFoodPerTurn100) < 100)
 	{
 		CvNotifications* pNotifications = GET_PLAYER(getOwner()).GetNotifications();
 		if (pNotifications)

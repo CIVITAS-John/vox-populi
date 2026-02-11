@@ -3719,31 +3719,44 @@ CvCity* CvPlayer::acquireCity(CvCity* pCity, bool bConquest, bool bGift, bool bO
 			// There's a spy! Remove it!
 			GET_PLAYER(eLoopPlayer).GetEspionage()->ExtractSpyFromCity(iAssignedSpy);
 
-			// Notify the spy's owner
-			CvNotifications* pNotify = GET_PLAYER(eLoopPlayer).GetNotifications();
-			if (!pNotify)
-				continue;
-
 			CvEspionageSpy* pSpy = pEspionage->GetSpyByID(iAssignedSpy);
-			Localization::String strSummary(bConquest ? GetLocalizedText("TXT_KEY_NOTIFICATION_SPY_EVICTED_CONQUEST_S") : GetLocalizedText("TXT_KEY_NOTIFICATION_SPY_EVICTED_TRADE_S"));
 
-			// City acquirer gets a different notification
-			if (eLoopPlayer == GetID())
+			// If the spy was a diplomat from vassalage and this is the last city of the vassal, delete the spy
+			if (pSpy->GetVassalDiplomatPlayer() != NO_PLAYER)
 			{
-				Localization::String strNotification = bConquest ? Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_CONQUEST_YOU") : Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_TRADE_YOU");
-				strNotification << pEspionage->GetSpyRankName(pSpy->m_eRank);
-				strNotification << pSpy->GetSpyName();
-				strNotification << pCity->getNameKey();
-				pNotify->Add(NOTIFICATION_SPY_EVICTED, strNotification.toUTF8(), strSummary.toUTF8(), -1, -1, eOldOwner);
+				if (GET_PLAYER(eOldOwner).getNumCities() == 1)
+				{
+					// spies are deleted by giving them the TERMINATED state, then they are no longer shown in the espionage menu
+					pSpy->SetSpyState(eLoopPlayer, iAssignedSpy, SPY_STATE_TERMINATED);
+				}
 			}
 			else
 			{
-				Localization::String strNotification = bConquest ? Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_CONQUEST") : Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_TRADE");
-				strNotification << pEspionage->GetSpyRankName(pSpy->m_eRank);
-				strNotification << pSpy->GetSpyName();
-				strNotification << pCity->getNameKey();
-				strNotification << getCivilizationInfo().getShortDescriptionKey();
-				pNotify->Add(NOTIFICATION_SPY_EVICTED, strNotification.toUTF8(), strSummary.toUTF8(), -1, -1, eOldOwner);
+				// Notify the spy's owner
+				CvNotifications* pNotify = GET_PLAYER(eLoopPlayer).GetNotifications();
+				if (!pNotify)
+					continue;
+
+				Localization::String strSummary(bConquest ? GetLocalizedText("TXT_KEY_NOTIFICATION_SPY_EVICTED_CONQUEST_S") : GetLocalizedText("TXT_KEY_NOTIFICATION_SPY_EVICTED_TRADE_S"));
+
+				// City acquirer gets a different notification
+				if (eLoopPlayer == GetID())
+				{
+					Localization::String strNotification = bConquest ? Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_CONQUEST_YOU") : Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_TRADE_YOU");
+					strNotification << pEspionage->GetSpyRankName(pSpy->m_eRank);
+					strNotification << pSpy->GetSpyName();
+					strNotification << pCity->getNameKey();
+					pNotify->Add(NOTIFICATION_SPY_EVICTED, strNotification.toUTF8(), strSummary.toUTF8(), -1, -1, eOldOwner);
+				}
+				else
+				{
+					Localization::String strNotification = bConquest ? Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_CONQUEST") : Localization::Lookup("TXT_KEY_NOTIFICATION_SPY_EVICTED_TRADE");
+					strNotification << pEspionage->GetSpyRankName(pSpy->m_eRank);
+					strNotification << pSpy->GetSpyName();
+					strNotification << pCity->getNameKey();
+					strNotification << getCivilizationInfo().getShortDescriptionKey();
+					pNotify->Add(NOTIFICATION_SPY_EVICTED, strNotification.toUTF8(), strSummary.toUTF8(), -1, -1, eOldOwner);
+				}
 			}
 		}
 	}
@@ -32670,6 +32683,15 @@ void CvPlayer::setAlive(bool bNewValue, bool bNotify)
 		if (isMajorCiv())
 			GC.getGame().GetGameDeals().DoCancelAllDealsWithPlayer(GetID());
 
+		CvPlayerEspionage* pEspionage = GetEspionage();
+		if (pEspionage)
+		{
+			for (uint uiSpy = 0; uiSpy < (uint)pEspionage->GetNumSpies(); uiSpy++)
+			{
+				pEspionage->ExtractSpyFromCity(uiSpy);
+			}
+		}
+
 		clearResearchQueue();
 		killUnits();
 		killCities();
@@ -42198,9 +42220,12 @@ void CvPlayer::processPolicies(PolicyTypes ePolicy, int iChange)
 	changeXPopulationConscription(pkPolicyInfo->GetXPopulationConscription() * iChange);
 	ChangeMedianTechPercentage(pkPolicyInfo->GetMedianTechPercentChange() * iChange);
 	ChangeInternalTRTourism(pkPolicyInfo->IsInternalTRTourism() * iChange);
-	ChangeFreeChosenBuildingNewCity(pkPolicyInfo->GetNewCityFreeBuilding(), iChange);
-	ChangeNewFoundCityFreeBuilding(pkPolicyInfo->GetNewFoundCityFreeBuilding(), iChange);
-	ChangeNewFoundCityFreeUnit(pkPolicyInfo->GetNewFoundCityFreeUnit(), iChange);
+	if (pkPolicyInfo->GetNewCityFreeBuilding() != NO_BUILDINGCLASS)
+		ChangeFreeChosenBuildingNewCity(pkPolicyInfo->GetNewCityFreeBuilding(), iChange);
+	if (pkPolicyInfo->GetNewFoundCityFreeBuilding() != NO_BUILDINGCLASS)
+		ChangeNewFoundCityFreeBuilding(pkPolicyInfo->GetNewFoundCityFreeBuilding(), iChange);
+	if (pkPolicyInfo->GetNewFoundCityFreeUnit() != NO_UNITCLASS)
+		ChangeNewFoundCityFreeUnit(pkPolicyInfo->GetNewFoundCityFreeUnit(), iChange);
 
 	GetTreasury()->ChangeCityConnectionTradeRouteGoldModifier(pkPolicyInfo->GetCityConnectionTradeRouteGoldModifier() * iChange);
 

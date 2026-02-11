@@ -5589,6 +5589,14 @@ bool CvUnit::jumpToNearestValidPlot()
 			if (pLoopPlot->needsEmbarkation(this) && !isEmbarked())
 				iValue += 3000;
 
+
+			//for civilians and Great Generals prefer tiles with a military unit
+			if (IsCivilianUnit() || IsCombatSupportUnit())
+			{
+				if (!pLoopPlot->isFriendlyUnit(getOwner(), true, true))
+					iValue += 1000;
+			}
+
 			//we allowed passage through enemy territory but we don't want to end up there
 			if (!GET_PLAYER(getOwner()).IsAtWarWith(pLoopPlot->getOwner()))
 				candidates.push_back(SPlotWithScore(pLoopPlot,iValue));
@@ -17701,7 +17709,7 @@ int CvUnit::maxXPValue() const
 		iMaxValue = std::min(iMaxValue, /*-1 in CP, 70 in VP*/ GD_INT_GET(MINOR_MAX_XP_VALUE));
 	}
 
-	if (iMaxValue > 0)
+	if (iMaxValue > 0 && iMaxValue != MAX_INT)
 	{
 		iMaxValue *= GC.getGame().getGameSpeedInfo().getExperiencePercent();
 		iMaxValue /= 100;
@@ -24287,7 +24295,7 @@ void CvUnit::DoFinishBuildIfSafe()
 
 bool CvUnit::IsCombatSupportUnit() const
 {
-	return IsGreatGeneral() || IsGreatAdmiral() || IsCityAttackSupport() || IsSapper();
+	return getUnitInfo().GetUnitAIType(UNITAI_GENERAL) || GetGreatGeneralCount() > 0 || getUnitInfo().GetUnitAIType(UNITAI_ADMIRAL) || GetGreatAdmiralCount() > 0 || IsCityAttackSupport() || IsSapper();
 }
 
 //	--------------------------------------------------------------------------------
@@ -30222,10 +30230,6 @@ int CvUnit::UnitPathTo(int iX, int iY, int iFlags)
 // Returns true if we want to continue next turn or false if we are done
 bool CvUnit::UnitRoadTo(int iX, int iY, int iFlags)
 {
-	//do we have movement points left?
-	if (!canMove())
-		return true; //continue next turn
-
 	//first check if we can continue building on the current plot
 	BuildTypes eBestRouteBuildInPlot = NO_BUILD;
 	const RouteTypes eBestRouteInPlot = GetBestBuildRouteForRoadTo(plot(), &eBestRouteBuildInPlot);
@@ -30234,6 +30238,10 @@ bool CvUnit::UnitRoadTo(int iX, int iY, int iFlags)
 	bool bGetSameBenefitFromTrait = kPlayer.GetSameRouteBenefitFromTrait(plot(), eBestRouteInPlot);
 	if(!bGetSameBenefitFromTrait && eBestRouteBuildInPlot != NO_BUILD && UnitBuild(eBestRouteBuildInPlot))
 		return true;
+
+	//do we have movement points left?
+	if (!canMove())
+		return true; //continue next turn
 
 	//are we at the target plot? then there's nothing else to do
 	if (at(iX, iY))
