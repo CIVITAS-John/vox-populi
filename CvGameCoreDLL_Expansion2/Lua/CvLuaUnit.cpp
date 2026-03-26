@@ -93,6 +93,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(Embark);
 
 	Method(IsRangeAttackIgnoreLOS);
+	Method(GetSeeThrough);
 
 	Method(CanAirlift);
 	Method(CanAirliftAt);
@@ -229,6 +230,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(IsFound);
 	Method(IsFoundAbroad);
 	Method(IsWork);
+	Method(GetBuildDisabledReasonString);
 	Method(IsGoldenAge);
 	Method(CanCoexistWithEnemyUnit);
 	Method(IsContractUnit);
@@ -1456,7 +1458,7 @@ int CvLuaUnit::lCanHeal(lua_State* L)
 {
 	CvUnit* pkUnit = GetInstance(L);
 	CvPlot* pkPlot = CvLuaPlot::GetInstance(L, 2);
-	const bool bResult = pkUnit->IsHurt() && pkUnit->canHeal(pkPlot);
+	const bool bResult = pkUnit->IsHurt() && pkUnit->ActualHealRate(pkPlot) > 0;
 
 	lua_pushboolean(L, bResult);
 	return 1;
@@ -1561,6 +1563,12 @@ int CvLuaUnit::lIsRangeAttackIgnoreLOS(lua_State* L)
 	return BasicLuaMethod(L, &CvUnit::IsRangeAttackIgnoreLOS);
 }
 //------------------------------------------------------------------------------
+//int GetSeeThrough(CyPlot* pPlot);
+int CvLuaUnit::lGetSeeThrough(lua_State* L)
+{
+	return BasicLuaMethod(L, &CvUnit::GetSeeThrough);
+}
+//------------------------------------------------------------------------------
 //bool canAirlift(CyPlot* pPlot);
 int CvLuaUnit::lCanAirlift(lua_State* L)
 {
@@ -1625,15 +1633,28 @@ int CvLuaUnit::lCanRangeStrike(lua_State* L)
 	return BasicLuaMethod(L, &CvUnit::canRangeStrike);
 }
 //------------------------------------------------------------------------------
-//bool CanRangeStrikeAt(int iX, int iY)
+//bool CanRangeStrikeAt(int iX, int iY [, int sourceX, int sourceY, bool ignoreVision] )
 int CvLuaUnit::lCanEverRangeStrikeAt(lua_State* L)
 {
 	CvUnit* pkUnit = GetInstance(L);
 	const int x = lua_tointeger(L, 2);
 	const int y = lua_tointeger(L, 3);
 
-	const bool bResult = pkUnit->canEverRangeStrikeAt(x, y);
-	lua_pushboolean(L, bResult);
+	if ( lua_gettop(L) >= 5 )
+	{
+		const int sx = lua_tointeger(L, 4);
+		const int sy = lua_tointeger(L, 5);
+		const CvPlot* pTargetPlot = GC.getMap().plot(sx,sy) ;
+		const bool ignoreVision = luaL_optbool(L, 6, false) ; 
+		const bool bResult = pkUnit->canEverRangeStrikeAt(x, y, pTargetPlot, ignoreVision);
+		lua_pushboolean(L, bResult);
+	}
+	else 
+	{
+		const bool bResult = pkUnit->canEverRangeStrikeAt(x, y);
+		lua_pushboolean(L, bResult);
+	}
+
 	return 1;
 }
 
@@ -2854,6 +2875,24 @@ int CvLuaUnit::lIsWork(lua_State* L)
 	const bool bResult = pkUnit->IsWork();
 
 	lua_pushboolean(L, bResult);
+	return 1;
+}
+//------------------------------------------------------------------------------
+// string GetBuildDisabledReasonString(int iBuildID)
+int CvLuaUnit::lGetBuildDisabledReasonString(lua_State* L)
+{
+	CvUnit* pkUnit = GetInstance(L);
+	const BuildTypes eBuild = (BuildTypes)lua_tointeger(L, 2);
+
+	CvString toolTip = "";
+	if (eBuild >= 0 && eBuild < GC.getNumBuildInfos())
+	{
+		CvPlot* pPlot = pkUnit->plot();
+		if (pPlot)
+			pkUnit->canBuild(pPlot, eBuild, false, false, false, &toolTip);
+	}
+
+	lua_pushstring(L, toolTip.c_str());
 	return 1;
 }
 //------------------------------------------------------------------------------

@@ -128,6 +128,7 @@ CvGame::CvGame() :
 #endif
 	, m_bArchaeologyTriggered(false)
 	, m_bIsDesynced(false)
+	, m_bHumanAIPath(false)
 	, m_eObserverUIOverridePlayer(NO_PLAYER)
 	, m_lastTurnAICivsProcessed(-1)
 	, m_firstActivationOfPlayersAfterLoad(false)
@@ -1194,6 +1195,7 @@ void CvGame::uninit()
 	m_bCombatWarned = false;
 	m_bArchaeologyTriggered = false;
 	m_bIsDesynced = false;
+	m_bHumanAIPath = false;
 	m_eObserverUIOverridePlayer = NO_PLAYER;
 	m_eCurrentVisibilityPlayer = NO_PLAYER;
 
@@ -3447,6 +3449,7 @@ bool CvGame::canDoControl(ControlTypes eControl)
 	case CONTROL_TOGGLE_OBSERVER_MODE:
 	case CONTROL_TOGGLE_AI_TAKEOVER:
 	case CONTROL_SWITCH_TO_NEXT_PLAYER:
+	case CONTROL_HUMAN_AI_PATH:
 		return true;
 		break;
 
@@ -3928,6 +3931,11 @@ void CvGame::doControl(ControlTypes eControl)
 		}
 	}
 	break;
+
+	case CONTROL_HUMAN_AI_PATH:
+		DLLUI->AddMessage(0, GC.getGame().getActivePlayer(), false, /*10*/ GD_INT_GET(EVENT_MESSAGE_TIME), GetLocalizedText(GC.getGame().isHumanAIPath() ? "TXT_KEY_MISC_HUMAN_AI_PATH_DISABLED" : "TXT_KEY_MISC_HUMAN_AI_PATH_ENABLED"));
+		GC.getGame().setHumanAIPath(!GC.getGame().isHumanAIPath());
+		break;
 
 	case CONTROL_QUICK_SAVE:
 		if(!(isNetworkMultiPlayer()))	// SP only!
@@ -6093,6 +6101,15 @@ void CvGame::setDesynced(bool bNewValue)
 		return;
 
 	m_bIsDesynced = bNewValue;
+}
+
+bool CvGame::isHumanAIPath() const
+{
+	return m_bHumanAIPath;
+}
+void CvGame::setHumanAIPath(bool bNewValue)
+{
+	m_bHumanAIPath = bNewValue;
 }
 
 //	--------------------------------------------------------------------------------
@@ -8267,7 +8284,7 @@ void CvGame::setName(const char* szName)
 }
 
 //	--------------------------------------------------------------------------------
-bool CvGame::isDestroyedCityName(CvString& szName) const
+bool CvGame::isDestroyedCityName(const CvString& szName) const
 {
 	stringHash hasher;
 	std::vector<size_t>::const_iterator it = std::find(m_aszDestroyedCities.begin(), m_aszDestroyedCities.end(), hasher(szName.c_str()));
@@ -8415,8 +8432,6 @@ void CvGame::doTurn()
 			ReviveActivePlayer();
 		}
 	}
-
-	m_kGameDeals.DoTurnPost();
 
 	RollOverAssetCounter();
 
