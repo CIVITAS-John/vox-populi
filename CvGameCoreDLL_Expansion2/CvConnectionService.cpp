@@ -93,6 +93,13 @@ bool CvConnectionService::Setup()
 
 	// Register game data with the Lua state
 	LuaSupport::RegisterScriptData(m_pLuaState);
+
+	// Vox Deorum: Clear leftover items from RegisterScriptData (e.g. PushTypeTable leaves
+	// type tables on the stack). ProcessLuaResult uses lua_gettop to count results, so any
+	// stale stack items would be mistaken for return values and serialized - the self-referential
+	// type tables (Type.__index = Type) cause infinite recursion in ConvertLuaToJsonValue.
+	lua_settop(m_pLuaState, 0);
+
 	Log(LOG_INFO, "ConnectionService::Setup() - Lua state initialized, creating named pipe server");
 	
 	// Create the Named Pipe server thread
