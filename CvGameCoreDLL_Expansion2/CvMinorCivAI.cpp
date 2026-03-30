@@ -16715,6 +16715,23 @@ void CvMinorCivAI::DoElection()
 						strMsg.Format("Spy #%d failed to rig election in %s. Influence lost: %d", ui, pCapital->getName().c_str(), iDiminishAmount / 100);
 						GET_PLAYER(ePlayer).GetEspionage()->LogEspionageMsg(strMsg);
 					}
+
+					if (MOD_EVENTS_ESPIONAGE)
+					{
+						int iLoop = 0;
+						int iSpyID = -1;
+						for (CvCity* pCity = m_pPlayer->firstCity(&iLoop); pCity != NULL; pCity = m_pPlayer->nextCity(&iLoop))
+						{
+							CvCityEspionage* pCityEspionage = pCity->GetCityEspionage();
+							iSpyID = pCityEspionage->m_aiSpyAssignment[ePlayer];
+							if (iSpyID != -1)
+							{
+								break;
+							}
+						}
+						ASSERT(iSpyID != -1, "Couldn't find a spy in any of the cities of the Minor Civ");
+						GAMEEVENTINVOKE_HOOK(GAMEEVENT_ElectionResultFailure, (int)ePlayer, iSpyID, iDiminishAmount, pCapital->getX(), pCapital->getY());
+					}
 				}
 				else if (bMet && (bFriends || iFriendship > iRelationshipAnchor))
 				{
@@ -16729,23 +16746,8 @@ void CvMinorCivAI::DoElection()
 						strNotification << (iDiminishAmount / 100);
 						pNotifications->Add(NOTIFICATION_SPY_RIG_ELECTION_ALERT, strNotification.toUTF8(), strSummary.toUTF8(), pCapital->getX(), pCapital->getY(), -1);
 					}
-				}
-
-				if (MOD_EVENTS_ESPIONAGE)
-				{
-					int iLoop = 0;
-					int iSpyID = -1;
-					for (CvCity* pCity = m_pPlayer->firstCity(&iLoop); pCity != NULL; pCity = m_pPlayer->nextCity(&iLoop))
-					{
-						CvCityEspionage* pCityEspionage = pCity->GetCityEspionage();
-						iSpyID = pCityEspionage->m_aiSpyAssignment[ePlayer];
-						if (iSpyID != -1)
-						{
-							break;
-						}
-					}
-					ASSERT(iSpyID != -1, "Couldn't find a spy in any of the cities of the Minor Civ");
-					GAMEEVENTINVOKE_HOOK(GAMEEVENT_ElectionResultFailure, (int)ePlayer, iSpyID, iDiminishAmount, pCapital->getX(), pCapital->getY());
+					// Vox Deorum: Make the event trigger for spy -1 (no spy)
+					GAMEEVENTINVOKE_HOOK(GAMEEVENT_ElectionResultFailure, (int)ePlayer, -1, iDiminishAmount, pCapital->getX(), pCapital->getY());
 				}
 			}
 		}
