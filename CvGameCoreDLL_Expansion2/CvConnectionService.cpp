@@ -726,34 +726,45 @@ void CvConnectionService::ProcessMessages()
 	// Loop and wait while a pause is imposed externally
 	while (true)
 	{
+		// Vox Deorum: Track whether m_csIncoming is held so the exception handler
+		// can release it if needed, preventing permanent deadlock of the pipe thread
+		bool bCsHeld = false;
 		try {
 			// Lock the incoming queue critical section
 			EnterCriticalSection(&m_csIncoming);
-			
+			bCsHeld = true;
+
 			// Process all queued messages
 			while (!m_incomingQueue.empty())
 			{
 				// Get the message from the front of the queue
 				std::string msgJson = m_incomingQueue.front();
 				m_incomingQueue.pop();
-				
+
 				// Temporarily release the lock to process the message
 				LeaveCriticalSection(&m_csIncoming);
-				
+				bCsHeld = false;
+
 				// Route the message to the appropriate handler
 				RouteMessage(msgJson);
-				
+
 				processedCount++;
-				
+
 				// Re-acquire the lock for the next iteration
 				EnterCriticalSection(&m_csIncoming);
+				bCsHeld = true;
 			}
-			
+
 			// Release the critical section
 			LeaveCriticalSection(&m_csIncoming);
+			bCsHeld = false;
 		}
 		catch (...)
 		{
+			if (bCsHeld)
+			{
+				LeaveCriticalSection(&m_csIncoming);
+			}
 			std::stringstream ss;
 			ss << "ProcessMessages - Unknown exception processing messages";
 			Log(LOG_ERROR, ss.str().c_str());
@@ -2019,7 +2030,18 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 
 			// Send the message asynchronously via the queue
 			if (SendMessage(message) >= 5) {
-				Sleep(20); // Wait 20ms to throttle the game thread
+				// Vox Deorum: Release game core lock during throttle sleep to avoid
+				// blocking the UI thread for 20ms (which increases lock contention)
+				bool bHadLock = gDLL->HasGameCoreLock();
+				if (bHadLock)
+				{
+					gDLL->ReleaseGameCoreLock();
+				}
+				Sleep(20);
+				if (bHadLock)
+				{
+					gDLL->GetGameCoreLock();
+				}
 			}
 		}
 		else
@@ -2177,10 +2199,18 @@ void CvConnectionService::SerializeEventSequence()
 	script << "-- Update or insert EventSequence value\n";
 	script << "for row in saveDB.Query(\"DELETE FROM Deorum WHERE Key == 'EventSequence'\") do end\n";
 	script << "for row in saveDB.Query(\"INSERT INTO Deorum (Key, Value) VALUES ('EventSequence', ?)\", tostring(" << m_uiEventSequence << ")) do end\n";
-	
+
+	// Vox Deorum: Must release game core lock before Lua execution to prevent
+	// ABBA deadlock with the UI thread (which holds LuaLock and may need GameCoreLock)
+	bool bHadLock = gDLL->HasGameCoreLock();
+	if (bHadLock)
+	{
+		gDLL->ReleaseGameCoreLock();
+	}
+
 	// Execute the script
 	int result = luaL_dostring(m_pLuaState, script.str().c_str());
-	
+
 	if (result != 0)
 	{
 		const char* errorMsg = lua_tostring(m_pLuaState, -1);
@@ -2196,13 +2226,19 @@ void CvConnectionService::SerializeEventSequence()
 		ss << "SerializeEventSequence - Saved event sequence: " << m_uiEventSequence;
 		Log(LOG_DEBUG, ss.str().c_str());
 	}
+
+	// Restore game core lock if we had it
+	if (bHadLock)
+	{
+		gDLL->GetGameCoreLock();
+	}
 }
 
 // Deserialize m_uiEventSequence from database
 void CvConnectionService::DeserializeEventSequence()
 {
 	// Build Lua script to load event sequence
-	const char* script = 
+	const char* script =
 		"local saveDB = Modding.OpenSaveData();\n"
 		"-- Create table if not exists\n"
 		"for row in saveDB.Query('CREATE TABLE IF NOT EXISTS Deorum(\"ID\" INTEGER NOT NULL PRIMARY KEY, \"Key\" TEXT, \"Value\" TEXT)') do end\n"
@@ -2213,10 +2249,18 @@ void CvConnectionService::DeserializeEventSequence()
 		"  break;\n"
 		"end\n"
 		"return eventSequence;\n";
-	
+
+	// Vox Deorum: Must release game core lock before Lua execution to prevent
+	// ABBA deadlock with the UI thread (which holds LuaLock and may need GameCoreLock)
+	bool bHadLock = gDLL->HasGameCoreLock();
+	if (bHadLock)
+	{
+		gDLL->ReleaseGameCoreLock();
+	}
+
 	// Execute the script
 	int result = luaL_dostring(m_pLuaState, script);
-	
+
 	if (result != 0)
 	{
 		const char* errorMsg = lua_tostring(m_pLuaState, -1);
@@ -2243,6 +2287,13 @@ void CvConnectionService::DeserializeEventSequence()
 		}
 		lua_pop(m_pLuaState, 1);
 	}
+
+	// Restore game core lock if we had it
+	if (bHadLock)
+	{
+		gDLL->GetGameCoreLock();
+	}
+
 	std::stringstream ss;
 	ss << "DeserializeEventSequence - Loaded event sequence: " << m_uiEventSequence;
 	Log(LOG_DEBUG, ss.str().c_str());
@@ -2286,12 +2337,20 @@ void CvConnectionService::HandleExternalCallCallback(const ExternalCallResult& r
 	LuaExternalCallbackData* pData = (LuaExternalCallbackData*)userData;
 	if (pData && pData->L)
 	{
+		// Vox Deorum: Must release game core lock before Lua execution to prevent
+		// ABBA deadlock with the UI thread (which holds LuaLock and may need GameCoreLock)
+		bool bHadLock = gDLL->HasGameCoreLock();
+		if (bHadLock)
+		{
+			gDLL->ReleaseGameCoreLock();
+		}
+
 		// Get the callback function from registry
 		lua_rawgeti(pData->L, LUA_REGISTRYINDEX, pData->callbackRef);
-		
+
 		// Use shared post-processing
 		CvConnectionService::GetInstance().ProcessExternalCallResult(pData->L, result);
-		
+
 		// Call the callback with 2 arguments (result/nil, error)
 		if (lua_pcall(pData->L, 2, 0, 0) != 0)
 		{
@@ -2302,10 +2361,16 @@ void CvConnectionService::HandleExternalCallCallback(const ExternalCallResult& r
 			CvConnectionService::GetInstance().Log(CvConnectionService::LOG_ERROR, logMsg.str().c_str());
 			lua_pop(pData->L, 1);  // Remove error from stack
 		}
-		
+
 		// Clean up the callback reference
 		luaL_unref(pData->L, LUA_REGISTRYINDEX, pData->callbackRef);
-		
+
+		// Restore game core lock if we had it
+		if (bHadLock)
+		{
+			gDLL->GetGameCoreLock();
+		}
+
 		// Clean up the callback data
 		delete pData;
 	}
