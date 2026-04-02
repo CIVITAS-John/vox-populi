@@ -1593,6 +1593,13 @@ int CvGrandStrategyAI::GetBaseGrandStrategyPriority(AIGrandStrategyTypes eGrandS
 /// Get the base Priority for a Grand Strategy; these are elements common to ALL Grand Strategies
 int CvGrandStrategyAI::GetPersonalityAndGrandStrategy(FlavorTypes eFlavorType, bool bBoostGSMainFlavor)
 {
+	// Vox Deorum: when custom flavors are active, treat them as authoritative and
+	// keep grand strategy as strategic state rather than an implicit flavor modifier.
+	if (MOD_IPC_CHANNEL && m_pPlayer->GetFlavorManager()->HasCustomFlavors())
+	{
+		return m_pPlayer->GetFlavorManager()->GetPersonalityIndividualFlavor(eFlavorType);
+	}
+
 	if (m_eActiveGrandStrategy != NO_AIGRANDSTRATEGY)
 	{
 		CvAIGrandStrategyXMLEntry* pGrandStrategy = GetAIGrandStrategies()->GetEntry(m_eActiveGrandStrategy);
