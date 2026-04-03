@@ -2069,10 +2069,7 @@ void CvConnectionService::BroadcastEvent(const char* eventName, const DynamicJso
 	DynamicJsonDocument message(2048);
 	message["type"] = "game_event";
 	message["event"] = eventName;
-	JsonObject payloadObj = message.createNestedObject("payload");
-	for (JsonPairConst kv : payload.as<JsonObjectConst>()) {
-		payloadObj[kv.key()] = kv.value();
-	}
+	message["payload"] = payload.as<JsonVariantConst>();
 	SendMessage(message);
 }
 
@@ -2086,7 +2083,7 @@ int CvConnectionService::BroadcastEventFromLua(lua_State* L)
 	message["event"] = eventName;
 	if (lua_istable(L, 2)) {
 		JsonObject payloadObj = message.createNestedObject("payload");
-		ConvertLuaToJsonValue(L, 2, payloadObj, nullptr);
+		ConvertLuaToJsonValue(L, 2, payloadObj, NULL);
 	}
 	SendMessage(message);
 	return 0;
