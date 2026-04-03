@@ -514,6 +514,8 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 	Method(UnregisterFunction);
 	Method(CallExternal);
 	Method(IsExternalRegistered);
+	Method(GetCurrentTimeEpochMs);
+	Method(BroadcastEvent);
 
 	Method(DeleteCSV);
 	Method(WriteCSV);
@@ -4285,6 +4287,29 @@ int CvLuaGame::lCallExternal(lua_State* L)
 {
 	// Call the external function and return the number of values pushed onto the stack
 	return CvConnectionService::GetInstance().CallExternalFunction(L);
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: Broadcast a custom game event from Lua through the IPC pipe.
+// Args: eventName (string, required), payload (table, optional)
+int CvLuaGame::lBroadcastEvent(lua_State* L)
+{
+	return CvConnectionService::GetInstance().BroadcastEventFromLua(L);
+}
+
+// Vox Deorum: Returns current wall-clock time as Unix epoch milliseconds.
+// Uses Win32 GetSystemTimeAsFileTime for MSVC compatibility.
+int CvLuaGame::lGetCurrentTimeEpochMs(lua_State* L)
+{
+	FILETIME ft;
+	GetSystemTimeAsFileTime(&ft);
+	ULARGE_INTEGER uli;
+	uli.LowPart  = ft.dwLowDateTime;
+	uli.HighPart = ft.dwHighDateTime;
+	// Offset between 1601-01-01 and 1970-01-01 in 100ns units
+	const ULONGLONG EPOCH_OFFSET = 116444736000000000UI64;
+	lua_pushnumber(L, (lua_Number)((uli.QuadPart - EPOCH_OFFSET) / 10000ULL));
+	return 1;
 }
 
 //------------------------------------------------------------------------------

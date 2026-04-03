@@ -409,6 +409,8 @@ protected:
 	
 	static int lCallExternal(lua_State* L);
 	static int lIsExternalRegistered(lua_State* L);
+	static int lGetCurrentTimeEpochMs(lua_State* L);
+	static int lBroadcastEvent(lua_State* L);
 
 	LUAAPIEXTN(CreateGreatWork, int, iGreatWorkType, iOwningPlayer, iEra, sCreator);
 	static int lGetGreatWorkTooltip(lua_State* L);

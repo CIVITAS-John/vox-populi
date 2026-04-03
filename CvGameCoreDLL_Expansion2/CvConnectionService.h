@@ -67,6 +67,7 @@ public:
 	
 	// Broadcast a custom event with JSON payload
 	void BroadcastEvent(const char* eventName, const DynamicJsonDocument& payload);
+	int BroadcastEventFromLua(lua_State* L);
 
 	// External function registry management
 	void RegisterExternalFunction(const char* name, bool bAsync);

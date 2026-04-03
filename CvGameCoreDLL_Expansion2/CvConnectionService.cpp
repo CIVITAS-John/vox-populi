@@ -2063,6 +2063,35 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 	ProcessMessages();
 }
 
+// Vox Deorum: Broadcast a custom game event from C++ through the IPC pipe.
+void CvConnectionService::BroadcastEvent(const char* eventName, const DynamicJsonDocument& payload)
+{
+	DynamicJsonDocument message(2048);
+	message["type"] = "game_event";
+	message["event"] = eventName;
+	JsonObject payloadObj = message.createNestedObject("payload");
+	for (JsonPairConst kv : payload.as<JsonObjectConst>()) {
+		payloadObj[kv.key()] = kv.value();
+	}
+	SendMessage(message);
+}
+
+// Vox Deorum: Broadcast a custom game event from Lua through the IPC pipe.
+// Lua args: eventName (string, required), payload (table, optional)
+int CvConnectionService::BroadcastEventFromLua(lua_State* L)
+{
+	const char* eventName = luaL_checkstring(L, 1);
+	DynamicJsonDocument message(2048);
+	message["type"] = "game_event";
+	message["event"] = eventName;
+	if (lua_istable(L, 2)) {
+		JsonObject payloadObj = message.createNestedObject("payload");
+		ConvertLuaToJsonValue(L, 2, payloadObj, nullptr);
+	}
+	SendMessage(message);
+	return 0;
+}
+
 // Register an external function that can be called from Lua
 void CvConnectionService::RegisterExternalFunction(const char* name, bool bAsync)
 {
