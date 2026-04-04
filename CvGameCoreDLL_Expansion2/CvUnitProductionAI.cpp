@@ -1056,10 +1056,15 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 		if (m_pCity->getFoodTurnsLeft() <= 1)
 			return SR_STRATEGY;
 
+		// Vox Deorum: Check if in VD's custom flavor mode
+		bool VDCustomFlavor = MOD_IPC_CHANNEL && kPlayer.GetFlavorManager()->HasCustomFlavors();
+
 		//this checks war state, grand strategy and more!
-		static EconomicAIStrategyTypes eNoMoreExpand = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_ENOUGH_EXPANSION");
-		if (GET_PLAYER(m_pCity->getOwner()).GetEconomicAI()->IsUsingStrategy(eNoMoreExpand))
-			return SR_STRATEGY;
+		if (!VDCustomFlavor) {
+			static EconomicAIStrategyTypes eNoMoreExpand = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_ENOUGH_EXPANSION");
+			if (GET_PLAYER(m_pCity->getOwner()).GetEconomicAI()->IsUsingStrategy(eNoMoreExpand))
+				return SR_STRATEGY;
+		}
 
 		AICityStrategyTypes eEnoughSettlers = (AICityStrategyTypes)GC.getInfoTypeForString("AICITYSTRATEGY_ENOUGH_SETTLERS");
 		if (m_pCity->GetCityStrategyAI()->IsUsingCityStrategy(eEnoughSettlers))
@@ -1072,16 +1077,23 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 
 		int iFlavorExpansion = kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_EXPANSION"));
 
+		// Vox Deorum: VD's flavor is a smooth trajectory
+		if (VDCustomFlavor) {
+			// 0-10 flavor => roughly -150 ~ 150, centered at 5
+			iFlavorExpansion = (iFlavorExpansion - 5) * 30;
+		} else {
+			// If we are running "ECONOMICAISTRATEGY_EARLY_EXPANSION"
+			if (kPlayer.IsEarlyExpansionPhase())
+				//strategies affect unit flavors but unfortunately we largely ignore "pre" score from the flavor system
+				// JC: this number may need revising down since we changed how "pre" score is calculated
+				iFlavorExpansion += 100;
+		}
+
 		//we already checked ECONOMICAISTRATEGY_ENOUGH_EXPANSION, so we know we have a good settle plot
 		//but let's bump the prio based on the quality of the plot
 		int iQuality = kPlayer.GetSettlePlotQualityMeasure(kPlayer.GetBestSettlePlot(NULL));
 		if (iQuality>0)
 			iFlavorExpansion += iQuality;
-
-		// If we are running "ECONOMICAISTRATEGY_EARLY_EXPANSION"
-		if (kPlayer.IsEarlyExpansionPhase())
-			//strategies affect unit flavors but unfortunately we largely ignore "pre" score from the flavor system
-			iFlavorExpansion += 100;
 
 		AICityStrategyTypes eFeeder = (AICityStrategyTypes)GC.getInfoTypeForString("AICITYSTRATEGY_NEW_CONTINENT_FEEDER");
 		if (m_pCity->GetCityStrategyAI()->IsUsingCityStrategy(eFeeder))
