@@ -20925,6 +20925,35 @@ void CvDiplomacyAI::SelectBestApproachTowardsMajorCiv(PlayerTypes ePlayer, bool 
 		vApproachScores[CIV_APPROACH_NEUTRAL] = ApplyPercentageModifier(vApproachScores[CIV_APPROACH_NEUTRAL], 100 + iNeutralMod);
 	}
 
+	// Vox Deorum: Friendly relationship modifiers linearly dampen planned war inclination.
+	// Semantic split: Modifier1 = Public, Modifier2 = Private (per set-relationship tool).
+	//   WAR (openly planning war) is dampened by max(Public, Private):
+	//     either public OR private need to commit to friendliness for WAR to fully de-escalate.
+	//     In stored terms (negative = friendly), the strongest friendly signal is min(Mod1, Mod2).
+	//   DECEPTIVE (friendly façade hiding war intent) is dampened by Private only — since the
+	//     DECEPTIVE premise IS a public-friendly façade, only private friendliness invalidates it.
+	// Clean 1:1 linear formula: factor = max(0, 100 + storedDriver). At max friendly (stored -100)
+	// the factor is 0 and the approach is fully zeroed; at 0 there is no change.
+	// Coop war commitments enforced separately in DoUpdateWarTargets and are NOT affected.
+	if (MOD_IPC_CHANNEL)
+	{
+		// WAR approach: scaled by stronger of Public/Private (= less-negative in stored terms)
+		int iWarDriver = min(GetCachedScenarioModifier1(ePlayer), GetCachedScenarioModifier2(ePlayer));
+		if (iWarDriver < 0)
+		{
+			int iWarScale = max(0, 100 + iWarDriver);
+			vApproachScores[CIV_APPROACH_WAR] = vApproachScores[CIV_APPROACH_WAR] * iWarScale / 100;
+		}
+
+		// DECEPTIVE approach: scaled by Private only
+		int iPrivate = GetCachedScenarioModifier2(ePlayer);
+		if (iPrivate < 0)
+		{
+			int iDeceptiveScale = max(0, 100 + iPrivate);
+			vApproachScores[CIV_APPROACH_DECEPTIVE] = vApproachScores[CIV_APPROACH_DECEPTIVE] * iDeceptiveScale / 100;
+		}
+	}
+
 	//--------------------------------//
 	// [PART 14: THE APPROACH CURVE]  //
 	//--------------------------------//
