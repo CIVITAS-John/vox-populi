@@ -40,6 +40,7 @@ CvConnectionService::CvConnectionService()
 	, m_bClientConnected(false)
 	, m_bShutdownRequested(false)
 	, m_uiNextCallId(1)
+	, m_bProcessingMessages(false)  // Vox Deorum: reentrancy guard for ProcessMessages
 	, m_uiCurrentTurn(0)
 	, m_uiEventSequence(1)
 	, m_dwLastGCTime(0)
@@ -260,6 +261,13 @@ void CvConnectionService::Shutdown()
 // Log a message to the connection log file
 void CvConnectionService::Log(LogLevel level, const char* message)
 {
+	// Vox Deorum: Guard against NULL messages to prevent downstream pLog->Msg(NULL)
+	// which scans memory for a terminator and can walk past the end of mapped pages.
+	if (message == NULL)
+	{
+		return;
+	}
+
 	// Only log if logging is enabled in the game
 	if (!GC.getLogging())
 	{
@@ -322,6 +330,14 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 // Vox Deorum: Separate function to handle SEH without C2712 error
 void CvConnectionService::SafeLogMessage(FILogFile* pLog, const char* message)
 {
+	// Vox Deorum: Guard before entering the __try. pLog->Msg(NULL) will scan past the
+	// end of memory for a null terminator; SEH only catches the eventual AV, which
+	// can manifest as a "forever hang" from the caller's perspective.
+	if (pLog == NULL || message == NULL)
+	{
+		return;
+	}
+
 	__try
 	{
 		pLog->Msg(message);
@@ -723,6 +739,18 @@ void CvConnectionService::ProcessMessages()
 		return;
 	}
 
+	// Vox Deorum: Prevent reentrant drain. ForwardGameEvent calls us from inside
+	// Lua event hooks that fire during game-core mutations (e.g. CvUnit::build).
+	// If we allowed reentry, the inner RouteMessage would clobber m_pMainThreadReadBuffer
+	// while the outer HandleLuaCall still holds pointers into it, producing hangs/crashes
+	// in downstream Log/pLog->Msg calls. All callers are on the main game thread, so a
+	// plain flag is sufficient — no atomics needed.
+	if (m_bProcessingMessages)
+	{
+		return;
+	}
+	m_bProcessingMessages = true;
+
 	int processedCount = 0;
 
 	// Loop and wait while a pause is imposed externally
@@ -831,6 +859,9 @@ void CvConnectionService::ProcessMessages()
 			m_dwLastGCTime = currentTime;
 		}
 	}
+
+	// Vox Deorum: Release the reentrancy guard set at function entry.
+	m_bProcessingMessages = false;
 }
 
 // Send a message to the Bridge Service (called from game code)
@@ -857,7 +888,7 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 	// Clear and reuse the read buffer for main thread message processing
 	m_pMainThreadReadBuffer->clear();
 	DeserializationError error = deserializeJson(*m_pMainThreadReadBuffer, messageJson);
-	
+
 	if (error)
 	{
 		std::stringstream ss;
@@ -865,85 +896,143 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 		Log(LOG_ERROR, ss.str().c_str());
 		return;
 	}
-	
-	const char* messageType = (*m_pMainThreadReadBuffer)["type"];
-	// Log(LOG_DEBUG, ("Routing message of type: " + std::string(messageType)).c_str());
-	
+
+	// Vox Deorum: Every const char* returned by ArduinoJson aliases m_pMainThreadReadBuffer.
+	// If any downstream handler (HandleLuaCall -> lua_pcall, etc.) transitively re-enters
+	// RouteMessage, that buffer will be cleared and our pointers will dangle. Copy every
+	// string we need into std::string locals up front so their lifetime is tied to this
+	// stack frame, not the shared document.
+	const char* rawMessageType = (*m_pMainThreadReadBuffer)["type"];
+	if (rawMessageType == NULL)
+	{
+		Log(LOG_WARNING, "RouteMessage - Message missing 'type' field");
+		return;
+	}
+	std::string messageType(rawMessageType);
+
 	// Route to appropriate handler based on message type
-	if (strcmp(messageType, "lua_execute") == 0)
+	if (messageType == "lua_execute")
 	{
-		// Extract parameters from JSON message
-		const char* script = (*m_pMainThreadReadBuffer)["script"];
-		const char* id = (*m_pMainThreadReadBuffer)["id"];
-		
-		// Call handler with extracted parameters
-		if (script && id) HandleLuaExecute(script, id);
+		// Extract parameters from JSON message and copy into stable locals
+		const char* rawScript = (*m_pMainThreadReadBuffer)["script"];
+		const char* rawId = (*m_pMainThreadReadBuffer)["id"];
+
+		if (rawScript && rawId)
+		{
+			std::string script(rawScript);
+			std::string id(rawId);
+			HandleLuaExecute(script.c_str(), id.c_str());
+		}
 	}
-	else if (strcmp(messageType, "lua_call") == 0)
+	else if (messageType == "lua_call")
 	{
-		// Extract parameters from JSON message
-		const char* functionName = (*m_pMainThreadReadBuffer)["function"];
-		const char* id = (*m_pMainThreadReadBuffer)["id"];
-		JsonArray args = (*m_pMainThreadReadBuffer)["args"].as<JsonArray>();
-		
-		// Call handler with extracted parameters
-		if (functionName && id) HandleLuaCall(functionName, args, id);
+		// Extract parameters from JSON message and copy into stable locals
+		const char* rawFunctionName = (*m_pMainThreadReadBuffer)["function"];
+		const char* rawId = (*m_pMainThreadReadBuffer)["id"];
+
+		if (rawFunctionName && rawId)
+		{
+			std::string functionName(rawFunctionName);
+			std::string id(rawId);
+
+			// Vox Deorum: Re-parse args into a function-scoped document so the
+			// JsonArray passed to HandleLuaCall does not alias m_pMainThreadReadBuffer.
+			std::string argsStr;
+			serializeJson((*m_pMainThreadReadBuffer)["args"], argsStr);
+
+			DynamicJsonDocument argsDoc(16384);
+			DeserializationError argsError = deserializeJson(argsDoc, argsStr);
+			if (argsError)
+			{
+				std::stringstream ss;
+				ss << "RouteMessage - Failed to isolate lua_call args: " << argsError.c_str();
+				Log(LOG_WARNING, ss.str().c_str());
+				// Fall through with an empty args array
+				argsDoc.clear();
+				argsDoc.to<JsonArray>();
+			}
+
+			JsonArray stableArgs = argsDoc.as<JsonArray>();
+			HandleLuaCall(functionName.c_str(), stableArgs, id.c_str());
+		}
 	}
-	else if (strcmp(messageType, "external_register") == 0)
+	else if (messageType == "external_register")
 	{
 		// Extract parameters for external function registration
-		const char* functionName = (*m_pMainThreadReadBuffer)["name"];
+		const char* rawFunctionName = (*m_pMainThreadReadBuffer)["name"];
 		bool bAsync = (*m_pMainThreadReadBuffer)["async"];
-		
-		// Register the external function
-		if (functionName) RegisterExternalFunction(functionName, bAsync);
+
+		if (rawFunctionName)
+		{
+			std::string functionName(rawFunctionName);
+			RegisterExternalFunction(functionName.c_str(), bAsync);
+		}
 	}
-	else if (strcmp(messageType, "external_unregister") == 0)
+	else if (messageType == "external_unregister")
 	{
 		// Extract function name for unregistration
-		const char* functionName = (*m_pMainThreadReadBuffer)["name"];
-		
-		// Unregister the external function
-		if (functionName) UnregisterExternalFunction(functionName);
+		const char* rawFunctionName = (*m_pMainThreadReadBuffer)["name"];
+
+		if (rawFunctionName)
+		{
+			std::string functionName(rawFunctionName);
+			UnregisterExternalFunction(functionName.c_str());
+		}
 	}
-	else if (strcmp(messageType, "external_response") == 0)
+	else if (messageType == "external_response")
 	{
 		// Extract parameters for external call response
-		const char* callId = (*m_pMainThreadReadBuffer)["id"];
+		const char* rawCallId = (*m_pMainThreadReadBuffer)["id"];
 		bool bSuccess = (*m_pMainThreadReadBuffer)["success"];
 
+		if (rawCallId == NULL)
+		{
+			return;
+		}
+
+		std::string callId(rawCallId);
+
 		// Parse error code from error object if present
-		const char* error = (char*)0;
+		std::string errorStr;
+		bool bHasError = false;
 		if (m_pMainThreadReadBuffer->containsKey("error") && (*m_pMainThreadReadBuffer)["error"].containsKey("code"))
 		{
-			error = (*m_pMainThreadReadBuffer)["error"]["code"];
+			const char* rawErr = (*m_pMainThreadReadBuffer)["error"]["code"];
+			if (rawErr)
+			{
+				errorStr = rawErr;
+				bHasError = true;
+			}
 		}
 
 		// Convert result to string if present (protocol uses "result" field)
-		const char* data = (char*)0;
 		std::string dataStr;
+		bool bHasData = false;
 		if (m_pMainThreadReadBuffer->containsKey("result"))
 		{
 			serializeJson((*m_pMainThreadReadBuffer)["result"], dataStr);
-			data = dataStr.c_str();
+			bHasData = true;
 		}
 
 		// Handle the response
-		if (callId) HandleExternalCallResponse(callId, bSuccess, error, data);
+		HandleExternalCallResponse(callId.c_str(),
+			bSuccess,
+			bHasError ? errorStr.c_str() : (const char*)0,
+			bHasData ? dataStr.c_str() : (const char*)0);
 	}
-	else if (strcmp(messageType, "pause_player") == 0)
+	else if (messageType == "pause_player")
 	{
 		// Vox Deorum: Handle player pause request
 		int iPlayerID = (*m_pMainThreadReadBuffer)["playerID"];
 		AddPausedPlayer(iPlayerID);
 	}
-	else if (strcmp(messageType, "unpause_player") == 0)
+	else if (messageType == "unpause_player")
 	{
 		// Vox Deorum: Handle player unpause request
 		int iPlayerID = (*m_pMainThreadReadBuffer)["playerID"];
 		RemovePausedPlayer(iPlayerID);
 	}
-	else if (strcmp(messageType, "clear_paused_players") == 0)
+	else if (messageType == "clear_paused_players")
 	{
 		// Vox Deorum: Handle clear all paused players request
 		ClearPausedPlayers();
@@ -954,10 +1043,10 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 		// Use the write buffer for the response
 		m_pMainThreadWriteBuffer->clear();
 		(*m_pMainThreadWriteBuffer)["type"] = "echo_response";
-		(*m_pMainThreadWriteBuffer)["original"] = messageType;  // Include the unrecognized type
+		(*m_pMainThreadWriteBuffer)["original"] = messageType;  // std::string - safe copy
 		(*m_pMainThreadWriteBuffer)["timestamp"] = GetTickCount();
 		(*m_pMainThreadWriteBuffer)["turn"] = GC.getGame().getElapsedGameTurns();
-		
+
 		// Send the response back to the Bridge Service
 		SendMessage(*m_pMainThreadWriteBuffer);
 	}

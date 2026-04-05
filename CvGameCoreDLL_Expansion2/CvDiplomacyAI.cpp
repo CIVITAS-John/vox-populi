@@ -48899,24 +48899,33 @@ int CvDiplomacyAI::GetScenarioModifier3(PlayerTypes ePlayer)
 	return m_aiScenarioModifier3[ePlayer];
 }
 
+// Vox Deorum: Modifier1 and Modifier2 are the entry points for the MCP `set-relationship`
+// tool. Each setter stores its value in an array on the **caller's own** CvDiplomacyAI,
+// indexed by the target civ ePlayer. The arrays are never read from a foreign civ's
+// DiplomacyAI (all cross-civ reads go through GetCachedOpinionWeight / GetCivOpinion), so
+// the raw modifier values are private to the caller. However, the sum of the modifiers
+// flows through GetDiploModifiers (see line 48750) into the caller's opinion weight,
+// which *is* read cross-civ by VPAI — so a set-relationship call is private at the write
+// site but observable via the opinion cascade. Modifier3 is also exposed but is not
+// currently written by any MCP tool. See mcp-server/docs/TACTICAL_AI_INFLUENCE.md §5 and §6.
 void CvDiplomacyAI::SetScenarioModifier1(PlayerTypes ePlayer, int iValue)
 {
 	if(ePlayer < 0 || ePlayer >= MAX_MAJOR_CIVS) return;
-	
+
 	m_aiScenarioModifier1[ePlayer] = iValue;
 }
 
 void CvDiplomacyAI::SetScenarioModifier2(PlayerTypes ePlayer, int iValue)
 {
 	if(ePlayer < 0 || ePlayer >= MAX_MAJOR_CIVS) return;
-	
+
 	m_aiScenarioModifier2[ePlayer] = iValue;
 }
 
 void CvDiplomacyAI::SetScenarioModifier3(PlayerTypes ePlayer, int iValue)
 {
 	if(ePlayer < 0 || ePlayer >= MAX_MAJOR_CIVS) return;
-	
+
 	m_aiScenarioModifier3[ePlayer] = iValue;
 }
 

@@ -199,6 +199,12 @@ private:
 	
 	// Counter for generating unique call IDs
 	unsigned int m_uiNextCallId;
+
+	// Vox Deorum: Reentrancy guard for ProcessMessages. ForwardGameEvent can call
+	// ProcessMessages from inside Lua event hooks that fire during game-core mutation,
+	// which would otherwise clobber m_pMainThreadReadBuffer while an outer handler
+	// still holds pointers into it. Main-thread only — no atomics needed.
+	bool m_bProcessingMessages;
 	
 	// Event tracking for proper event IDs
 	unsigned int m_uiCurrentTurn;
