@@ -2485,6 +2485,20 @@ void SetPreconditionFired()
 	g_bPreconditionFired = true;
 }
 
+// Vox Deorum: When true, suppress all blocking MessageBoxA dialogs so the process
+// terminates quickly and can be auto-retried by the bridge service.
+static bool g_bVoxDeorumMode = false;
+
+void SetVoxDeorumMode()
+{
+	g_bVoxDeorumMode = true;
+}
+
+bool IsVoxDeorumMode()
+{
+	return g_bVoxDeorumMode;
+}
+
 // MessageBox constants (not included in minimal Windows headers)
 #ifndef MB_OK
 #define MB_OK           0x00000000L
@@ -2861,8 +2875,17 @@ LONG WINAPI CustomFilter(EXCEPTION_POINTERS* ExceptionInfo)
 			szCrashModule);
 	}
 
-	if (!g_bPreconditionFired)
+	// Vox Deorum: In VD mode, log crash details instead of showing a blocking dialog
+	if (g_bVoxDeorumMode)
+	{
+		OutputDebugStringA("[Vox Deorum] Game Crash:\n");
+		OutputDebugStringA(szMessage);
+		OutputDebugStringA("\n");
+	}
+	else if (!g_bPreconditionFired)
+	{
 		MessageBoxA(NULL, szMessage, "Game Crash", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
+	}
 
 	return EXCEPTION_EXECUTE_HANDLER;
 }

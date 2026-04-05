@@ -229,6 +229,14 @@ bool CvAssertDlg(const char* expr, const char* szFile, unsigned int uiLine, bool
 		);
 #endif
 
+		// Vox Deorum: In VD mode, auto-ignore the assertion without showing a dialog
+		if (IsVoxDeorumMode())
+		{
+			g_AssertTracker.asserts[assertKey].isPermanentlyIgnored = true;
+			bIgnoreAlways = true;
+			return false;
+		}
+
 		// Show dialog
 		int nResult = MessageBoxA(NULL, szBuffer, "Assertion Failed",
 			MB_OKCANCEL | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_DEFBUTTON2);
@@ -318,6 +326,14 @@ bool CvAssertDlg(const char* expr, const char* szFile, unsigned int uiLine, bool
 		sessionTime / 1000.0f);
 #endif
 
+	// Vox Deorum: In VD mode, auto-ignore the assertion without showing a dialog
+	if (IsVoxDeorumMode())
+	{
+		g_AssertTracker.asserts[assertKey].isPermanentlyIgnored = true;
+		bIgnoreAlways = true;
+		return false;
+	}
+
 	// Show dialog
 	int nResult = MessageBoxA(NULL, szBuffer, "Assertion Failed",
 		MB_YESNOCANCEL | MB_ICONERROR | MB_TASKMODAL);
@@ -385,9 +401,13 @@ void CvPreconditionDlg(const char* expr, const char* szFile, unsigned int uiLine
 
 	SetPreconditionFired();
 
-	// Show dialog
-	MessageBoxA(NULL, szBuffer, "Error",
-		MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND);
+	// Vox Deorum: In VD mode, skip the dialog; BUILTIN_TRAP fires after this function returns
+	if (!IsVoxDeorumMode())
+	{
+		// Show dialog
+		MessageBoxA(NULL, szBuffer, "Error",
+			MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND);
+	}
 
 #else // VPRELEASE_ERRORMSG
 	bool bIgnoreAlways = false;

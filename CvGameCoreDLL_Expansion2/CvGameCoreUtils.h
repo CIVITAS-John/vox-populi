@@ -25,6 +25,10 @@ const char* GetLastMiniDumpPath();
 
 void SetPreconditionFired();
 
+// Vox Deorum: Dialog suppression for crash auto-retry
+void SetVoxDeorumMode();
+bool IsVoxDeorumMode();
+
 inline int sqrti(int input)
 {
 	return int(sqrt((float)abs(input)));

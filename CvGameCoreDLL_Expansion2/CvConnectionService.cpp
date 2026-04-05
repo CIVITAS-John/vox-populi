@@ -6,6 +6,7 @@ Opens an IPC channel that exposes the game's internal state to external services
 #include "CvConnectionService.h"
 #include "CvConnectionSchema.h"
 #include "CvGlobals.h"
+#include "CvGameCoreUtils.h"
 #include "CvGame.h"
 #include "CvPlayer.h"
 #include "CustomMods.h"
@@ -143,6 +144,7 @@ bool CvConnectionService::Setup()
 	}
 
 	m_bInitialized = true;
+	SetVoxDeorumMode();  // Enable dialog suppression for crash auto-retry
 	std::stringstream ss;
 	ss << "ConnectionService::Setup() - Successfully initialized with thread ID: " << m_dwThreadId;
 	Log(LOG_INFO, ss.str().c_str());
