@@ -41915,6 +41915,19 @@ int CvDiplomacyAI::GetCoopWarDesireScore(PlayerTypes eAllyPlayer, PlayerTypes eT
 		}
 	}
 
+	// Vox Deorum: LLM diplomatic modifiers affect coop war desire against target.
+	// Placed before target-value/economic scaling so the modifier is naturally
+	// amplified against soft targets and dampened (or blocked) against hard targets.
+	// Sign: stored positive (hostile toward target) increases desire to coop war against them.
+	if (MOD_IPC_CHANNEL)
+	{
+		// Don't do it if objectively not a good idea
+		if (iScore <= 0)
+			return 0;
+		int iDiploModifier = GetCachedScenarioModifier1(eTargetPlayer) + GetCachedScenarioModifier2(eTargetPlayer);
+		iScore += iDiploModifier / 20;  // combined range (-200,+200) => (-10,+10) raw points
+	}
+
 	if (iScore <= 0)
 		return 0;
 
