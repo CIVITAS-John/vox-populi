@@ -274,11 +274,15 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 		return;
 	}
 
-	FILogFile* pLog = GetLogFile();
+	// Vox Deorum: Use a separate FILogFile for the pipe thread to avoid lock contention.
+	// FILogFile::Msg holds an internal critical section during disk I/O; if both threads
+	// share one instance, the main thread can block waiting for the pipe thread's write.
+	bool bIsPipeThread = (GetCurrentThreadId() == m_dwThreadId);
+	FILogFile* pLog = bIsPipeThread ? GetPipeLogFile() : GetLogFile();
 	if (pLog)
 	{
 		std::stringstream ss;
-		
+
 		// Add timestamp
 		SYSTEMTIME st;
 		GetLocalTime(&st);
@@ -286,9 +290,17 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 		   << std::setfill('0') << std::setw(2) << st.wMinute << ":"
 		   << std::setfill('0') << std::setw(2) << st.wSecond << "."
 		   << std::setfill('0') << std::setw(3) << st.wMilliseconds << "] ";
-		
-		// Add turn number prefix
-		ss << "[Turn " << GC.getGame().getElapsedGameTurns() << "] ";
+
+		// Add turn number prefix. GC.getGame() is NOT thread-safe, so the pipe
+		// thread uses the cached m_uiCurrentTurn (updated once per turn on the main thread).
+		if (bIsPipeThread)
+		{
+			ss << "[Turn ~" << m_uiCurrentTurn << "] ";
+		}
+		else
+		{
+			ss << "[Turn " << GC.getGame().getElapsedGameTurns() << "] ";
+		}
 		
 		// Add log level prefix
 		switch (level)
@@ -349,10 +361,18 @@ void CvConnectionService::SafeLogMessage(FILogFile* pLog, const char* message)
 	}
 }
 
-// Get the log file for writing
+// Get the log file for writing (main thread)
 FILogFile* CvConnectionService::GetLogFile()
 {
 	return LOGFILEMGR.GetLog("connection.log", FILogFile::kDontTimeStamp);
+}
+
+// Vox Deorum: Separate log file for the pipe thread. FILogFile::Msg holds an internal
+// critical section for the duration of its disk write. If both threads share one FILogFile,
+// the main thread can block on the lock while the pipe thread is mid-write, causing hangs.
+FILogFile* CvConnectionService::GetPipeLogFile()
+{
+	return LOGFILEMGR.GetLog("connection-pipe.log", FILogFile::kDontTimeStamp);
 }
 
 // Named Pipe server thread function

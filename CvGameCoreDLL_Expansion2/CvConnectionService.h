@@ -106,8 +106,11 @@ private:
 	CvConnectionService(const CvConnectionService&);
 	CvConnectionService& operator=(const CvConnectionService&);
 
-	// Get the log file for writing
+	// Get the log file for writing (main thread)
 	FILogFile* GetLogFile();
+
+	// Vox Deorum: Separate log file for the pipe thread to avoid FILogFile lock contention
+	FILogFile* GetPipeLogFile();
 
 	// Vox Deorum: Safe logging with SEH to avoid C2712 error
 	static void SafeLogMessage(FILogFile* pLog, const char* message);
