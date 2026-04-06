@@ -99,6 +99,11 @@ public:
 
 	// Check if the core thread should be paused
 	bool ShouldPauseGameCore();
+
+	// Vox Deorum: AI turn cooldown — delays next AI turn in production mode
+	void OnAITurnDeactivated();
+	void SetProductionMode(bool bEnabled);
+	static const DWORD AI_TURN_COOLDOWN_MS = 5000;
 	
 private:
 	// Private constructor for singleton
@@ -211,7 +216,12 @@ private:
 	// which would otherwise clobber m_pMainThreadReadBuffer while an outer handler
 	// still holds pointers into it. Main-thread only — no atomics needed.
 	bool m_bProcessingMessages;
-	
+
+	// Vox Deorum: AI turn cooldown state
+	DWORD m_dwLastAITurnDeactivatedTime;  // GetTickCount() timestamp of last AI deactivation
+	bool m_bAICooldownActive;             // Whether cooldown timer is running
+	bool m_bProductionMode;               // Whether vox-agents is in a visual production mode
+
 	// Event tracking for proper event IDs
 	unsigned int m_uiCurrentTurn;
 	unsigned int m_uiEventSequence;

@@ -41,6 +41,9 @@ CvConnectionService::CvConnectionService()
 	, m_bShutdownRequested(false)
 	, m_uiNextCallId(1)
 	, m_bProcessingMessages(false)  // Vox Deorum: reentrancy guard for ProcessMessages
+	, m_dwLastAITurnDeactivatedTime(0)
+	, m_bAICooldownActive(false)
+	, m_bProductionMode(false)
 	, m_uiCurrentTurn(0)
 	, m_uiEventSequence(1)
 	, m_dwLastGCTime(0)
@@ -472,10 +475,12 @@ DWORD WINAPI CvConnectionService::NamedPipeServerThread(LPVOID lpParam)
 		pService->m_bClientConnected = false;
 		pService->Log(LOG_INFO, "NamedPipeServerThread - Bridge Service disconnected");
 
-		// Vox Deorum: Clear paused players list when pipe disconnects
+		// Vox Deorum: Clear paused players list and reset production mode when pipe disconnects
 		EnterCriticalSection(&pService->m_csPausedPlayers);
 		pService->m_pausedPlayers.clear();
 		LeaveCriticalSection(&pService->m_csPausedPlayers);
+		pService->m_bAICooldownActive = false;
+		pService->m_bProductionMode = false;
 		
 		// Cleanup
 		if (pService->m_hPipe != INVALID_HANDLE_VALUE) {
@@ -1041,6 +1046,12 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 	{
 		// Vox Deorum: Handle clear all paused players request
 		ClearPausedPlayers();
+	}
+	else if (messageType == "set_production_mode")
+	{
+		// Vox Deorum: Handle production mode toggle from bridge service
+		bool bEnabled = (*m_pMainThreadReadBuffer)["enabled"];
+		SetProductionMode(bEnabled);
 	}
 	else
 	{
@@ -2893,5 +2904,48 @@ bool CvConnectionService::ShouldPauseGameCore()
 	}
 
 	LeaveCriticalSection(const_cast<CRITICAL_SECTION*>(&m_csPausedPlayers));
+
+	// Vox Deorum: AI turn cooldown — 5s delay between sequential AI turns in production mode
+	if (m_bAICooldownActive)
+	{
+		DWORD elapsed = GetTickCount() - m_dwLastAITurnDeactivatedTime;
+		if (elapsed >= AI_TURN_COOLDOWN_MS)
+		{
+			m_bAICooldownActive = false;
+		}
+		else
+		{
+			// Only block if there's an active non-human player
+			for (int i = 0; i < MAX_MAJOR_CIVS; i++)
+			{
+				CvPlayer& player = GET_PLAYER((PlayerTypes)i);
+				if (player.isAlive() && player.isTurnActive() && !player.isHuman())
+					return true;  // Active AI during cooldown - pause
+			}
+			// No active AI (e.g., last AI finished, human turn next) - cancel cooldown
+			m_bAICooldownActive = false;
+		}
+	}
+
 	return false;  // No need to pause
+}
+
+// Vox Deorum: Called when a non-human player's turn is deactivated
+void CvConnectionService::OnAITurnDeactivated()
+{
+	if (!m_bProductionMode) return;  // Only in production mode
+
+	m_dwLastAITurnDeactivatedTime = GetTickCount();
+	m_bAICooldownActive = true;
+	Log(LOG_DEBUG, "OnAITurnDeactivated - AI turn cooldown started (5s)");
+}
+
+// Vox Deorum: Set production mode (called via IPC from bridge service)
+void CvConnectionService::SetProductionMode(bool bEnabled)
+{
+	m_bProductionMode = bEnabled;
+	if (!bEnabled)
+		m_bAICooldownActive = false;  // Cancel active cooldown when leaving production mode
+
+	Log(LOG_INFO, bEnabled ? "SetProductionMode - Production mode enabled" : "SetProductionMode - Production mode disabled");
 }
