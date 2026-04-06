@@ -29374,7 +29374,7 @@ void CvCity::popOrder(int iNum, bool bFinish, bool bChoose)
 				localizedText = Localization::Lookup(((isProductionLimited()) ? "TXT_KEY_MISC_WORK_HAS_BEGUN_IN_CITY_LIMITED" : "TXT_KEY_MISC_WORK_HAS_BEGUN_IN_CITY"));
 				localizedText << getProductionNameKey() << getNameKey();
 			}
-			DLLUI->AddCityMessage(0, GetIDInfo(), getOwner(), false, /*10*/ GD_INT_GET(EVENT_MESSAGE_TIME), localizedText.toUTF8()/*, szSound, MESSAGE_TYPE_MINOR_EVENT, szIcon, (ColorTypes)GC.getInfoTypeForString("COLOR_WHITE"), getX(), getY(), true, true*/);
+			DLLUI->AddCityMessage(0, GetIDInfo(), GC.getGame().getActivePlayer(), false, /*10*/ GD_INT_GET(EVENT_MESSAGE_TIME), localizedText.toUTF8()/*, szSound, MESSAGE_TYPE_MINOR_EVENT, szIcon, (ColorTypes)GC.getInfoTypeForString("COLOR_WHITE"), getX(), getY(), true, true*/);
 		}
 	}
 	if (bUpdateStrength)
