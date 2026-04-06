@@ -1549,15 +1549,9 @@ bool ExternalPause()
 		{
 			//couldn't acquire it, we should pause
 			bPause = true;
-			
-			if (MOD_IPC_CHANNEL) {
-				// Process messages from the Connection Service
-				CvConnectionService::GetInstance().ProcessMessages();
-				Sleep(20);
-			} else {
-				//sleep a little bit for simple rate limiting
-				Sleep(200);
-			}
+
+			//sleep a little bit for simple rate limiting
+			Sleep(MOD_IPC_CHANNEL ? 20 : 200);
 		}
 		//close the handle in any case
 		CloseHandle(hMutex);
@@ -1573,6 +1567,10 @@ void CvGame::update()
 	if (MOD_IPC_CHANNEL) {
 		// Process messages from the Connection Service
 		CvConnectionService::GetInstance().ProcessMessages();
+		// Vox Deorum: If a player is paused, skip game logic but let the
+		// engine continue rendering/UI so camera operations like UI.LookAt work.
+		if (CvConnectionService::GetInstance().ShouldPauseGameCore())
+			return;
 	}
 
 	if(IsWaitingForBlockingInput())

@@ -97,6 +97,9 @@ public:
 	void RemovePausedPlayer(int iPlayerID);
 	void ClearPausedPlayers();
 
+	// Check if the core thread should be paused
+	bool ShouldPauseGameCore();
+	
 private:
 	// Private constructor for singleton
 	CvConnectionService();
@@ -245,9 +248,6 @@ private:
 
 	// Static callback handler for external function calls
 	static void HandleExternalCallCallback(const ExternalCallResult& result, void* userData);
-
-	// Check if the core thread should be paused
-	bool ShouldPauseGameCore();
 };
 
 #endif // CIV5_CONNECTION_SERVICE_H

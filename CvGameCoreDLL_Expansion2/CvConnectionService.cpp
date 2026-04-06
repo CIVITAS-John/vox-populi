@@ -773,10 +773,11 @@ void CvConnectionService::ProcessMessages()
 
 	int processedCount = 0;
 
-	// Loop and wait while a pause is imposed externally
-	while (true)
+	// Vox Deorum: Drain all queued messages in a single pass. Pause logic
+	// is now handled by the caller (CvGame::update) so the engine's UI/render
+	// loop keeps running during pauses, allowing camera ops like UI.LookAt.
 	{
-		// Vox Deorum: Track whether m_csIncoming is held so the exception handler
+		// Track whether m_csIncoming is held so the exception handler
 		// can release it if needed, preventing permanent deadlock of the pipe thread
 		bool bCsHeld = false;
 		try {
@@ -818,22 +819,6 @@ void CvConnectionService::ProcessMessages()
 			std::stringstream ss;
 			ss << "ProcessMessages - Unknown exception processing messages";
 			Log(LOG_ERROR, ss.str().c_str());
-		}
-		
-		// If we are pausing, sleep for 20ms before checking again
-		if (!ShouldPauseGameCore()) break;
-
-		// We need to release the game lock to prevent clogging
-		bool bHadLock = gDLL->HasGameCoreLock();
-		if (bHadLock)
-		{
-			gDLL->ReleaseGameCoreLock();
-		}
-		Sleep(20);
-		// Restore game core lock if we had it
-		if (bHadLock)
-		{
-			gDLL->GetGameCoreLock();
 		}
 	}
 
