@@ -1722,7 +1722,7 @@ void CvGame::CheckPlayerTurnDeactivate()
 						kPlayer.setTurnActive(false);
 
 						// Vox Deorum: Start cooldown timer when an AI player's turn ends
-						if (MOD_IPC_CHANNEL && !kPlayer.isHuman() && !kPlayer.isMinorCiv()) {
+						if (MOD_IPC_CHANNEL && !kPlayer.isHuman() && !kPlayer.isMinorCiv() && !kPlayer.isBarbarian()) {
 							CvConnectionService::GetInstance().OnAITurnDeactivated();
 						}
 
