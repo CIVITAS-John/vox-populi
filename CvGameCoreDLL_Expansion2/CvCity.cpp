@@ -29343,7 +29343,7 @@ void CvCity::popOrder(int iNum, bool bFinish, bool bChoose)
 
 	if (bFinish && !bMessage)
 	{
-		if (getOwner() == GC.getGame().getActivePlayer() || GET_PLAYER(GC.getGame().getActivePlayer()).isObserver()) // Vox Deorum: show production messages for all civs when observer is watching
+		if (getOwner() == GC.getGame().getActivePlayer())
 		{
 			Localization::String localizedText;
 			if (eTrainUnit != NO_UNIT)
