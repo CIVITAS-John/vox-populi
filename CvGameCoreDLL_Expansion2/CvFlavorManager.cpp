@@ -457,13 +457,6 @@ void CvFlavorManager::RandomizeWeights()
 	}
 }
 
-/// Add a random plus/minus to an integer (but keep it in range)
-int CvFlavorManager::GetAdjustedValue(int iOriginalValue, int iPlusMinus, int iMin, int iMax, const CvSeeder& seed)
-{
-	// Randomize!
-	return range(GC.getGame().randRangeInclusive(iOriginalValue - iPlusMinus, iOriginalValue + iPlusMinus, seed), iMin, iMax);
-}
-
 // Vox Deorum: Set custom flavors that auto-expire after 10 turns
 // Accepts MCP range (0-100), stores raw values, converts to game range (-300 to 300) for strategies
 void CvFlavorManager::SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors)

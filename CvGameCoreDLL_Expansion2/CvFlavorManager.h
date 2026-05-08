@@ -89,8 +89,6 @@ public:
 	CvEnumMap<FlavorTypes, int>& GetAllPersonalityFlavors();
 	int GetPersonalityFlavorForDiplomacy(FlavorTypes eType);
 
-	int GetAdjustedValue(int iOriginalValue, int iPlusMinus, int iMin, int iMax, const CvSeeder& seed);
-
 	// Vox Deorum: Custom flavor management
 	void SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors);
 	void UnsetCustomFlavors();
