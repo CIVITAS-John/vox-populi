@@ -253,6 +253,7 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 	Method(SetName);
 	Method(GetName);
 	Method(Rand);
+	Method(GetRandomSeeds);
 	Method(CalculateSyncChecksum);
 	Method(CalculateOptionsChecksum);
 
@@ -1710,6 +1711,23 @@ int CvLuaGame::lRand(lua_State* L)
 	const int rand_val = GetInstance()->getJonRandNum(max_num, strLog);
 
 	lua_pushinteger(L, rand_val);
+	return 1;
+}
+//------------------------------------------------------------------------------
+// table GetRandomSeeds()
+int CvLuaGame::lGetRandomSeeds(lua_State* L)
+{
+	// Return CvPreGame's original seed inputs, not the mutable live RNG states.
+	// Vox uses these values to verify that config.ini seed locking took effect.
+	lua_createtable(L, 0, 2);
+	const int t = lua_gettop(L);
+
+	lua_pushnumber(L, static_cast<lua_Number>(CvPreGame::syncRandomSeed()));
+	lua_setfield(L, t, "SyncRandSeed");
+
+	lua_pushnumber(L, static_cast<lua_Number>(CvPreGame::mapRandomSeed()));
+	lua_setfield(L, t, "MapRandSeed");
+
 	return 1;
 }
 //------------------------------------------------------------------------------

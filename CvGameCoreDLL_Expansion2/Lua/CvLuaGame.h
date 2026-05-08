@@ -235,6 +235,7 @@ protected:
 	static int lSetName(lua_State* L);
 	static int lGetName(lua_State* L);
 	static int lRand(lua_State* L);
+	static int lGetRandomSeeds(lua_State* L);
 	static int lCalculateSyncChecksum(lua_State* L);
 	static int lCalculateOptionsChecksum(lua_State* L);
 

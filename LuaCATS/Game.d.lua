@@ -12,6 +12,10 @@ function Game.GetActivePlayer() end
 --- @return TeamId
 function Game.GetActiveTeam() end
 
+--- Return Civ's pregame random seed inputs, not mutable live RNG state.
+--- @return { SyncRandSeed: integer, MapRandSeed: integer }
+function Game.GetRandomSeeds() end
+
 --- Given an in-game great work ID, return its database row ID
 --- @param eGreatWork GreatWorkId
 --- @return GreatWorkType eGreatWorkType
