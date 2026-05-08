@@ -862,7 +862,7 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 						return false;
 
 					PlayerTypes eAlly = GET_PLAYER(vMembers[i]).GetMinorCivAI()->GetAlly();
-					if (GET_PLAYER(eAlly).getTeam() != eToTeam)
+					if (eAlly == NO_PLAYER || GET_PLAYER(eAlly).getTeam() != eToTeam)
 						return false;
 				}
 			}
@@ -5549,6 +5549,7 @@ void CvGameDeals::DoCancelDealsBetweenPlayers(PlayerTypes eFromPlayer, PlayerTyp
 
 					DoEndTradedItem(&*itemIter, eToPlayer, true);
 				}
+				SetRenewDealID(it->m_eFromPlayer, it->m_eToPlayer, -1);
 				m_HistoricalDeals.push_back(*it);
 			}
 			else
@@ -6693,7 +6694,7 @@ CvDeal* CvGameDeals::GetDeal(uint index)
 //------------------------------------------------------------------------------
 void CvGameDeals::DestroyDeal(uint index)
 {
-	std::vector<std::pair<uint, CvDeal*> >::iterator it = m_Deals.end();
+	std::vector<std::pair<uint, CvDeal*> >::iterator it;
 	for(it = m_Deals.begin();
 	        it != m_Deals.end(); ++it)
 	{

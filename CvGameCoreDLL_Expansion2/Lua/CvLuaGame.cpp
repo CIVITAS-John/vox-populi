@@ -4106,10 +4106,6 @@ int CvLuaGame::lGetInactiveContractUnitList(lua_State* L)
 			for(int j = 0; j < GC.getNumUnitInfos(); j++)
 			{
 				UnitTypes eUnit = (UnitTypes)j;
-			
-				if(eUnit == NO_UNIT)
-					continue;
-
 				CvUnitEntry* pkUnitInfo = GC.getUnitInfo(eUnit);
 				if(!pkUnitInfo)
 					continue;
@@ -4154,10 +4150,6 @@ int CvLuaGame::lGetActiveContractUnitList(lua_State* L)
 			for(int j = 0; j < GC.getNumUnitInfos(); j++)
 			{
 				UnitTypes eUnit = (UnitTypes)j;
-			
-				if(eUnit == NO_UNIT)
-					continue;
-
 				CvUnitEntry* pkUnitInfo = GC.getUnitInfo(eUnit);
 				if(!pkUnitInfo)
 					continue;

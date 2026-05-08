@@ -1990,12 +1990,16 @@ fraction fraction::operator/(const fraction &rhs)
 bool fraction::operator==(const fraction &rhs) const
 {
 	fraction lhs = *this;
-	return lhs.num * rhs.den == rhs.num * lhs.den;
+	return (long long)lhs.num * rhs.den == (long long)rhs.num * lhs.den;
 }
 bool fraction::operator<(const fraction &rhs) const
 {
-	fraction lhs = *this;
-	return lhs.num * rhs.den < rhs.num * lhs.den;
+	// Make sure we don't multiply with negative denominators as that would flip the inequality (a < b <=> -a > -b)
+	const int lnum = (den < 0) ? -num : num;
+	const int lden = (den < 0) ? -den : den;
+	const int rnum = (rhs.den < 0) ? -rhs.num : rhs.num;
+	const int rden = (rhs.den < 0) ? -rhs.den : rhs.den;
+	return (long long)lnum * rden < (long long)rnum * lden;
 }
 
 fraction abs(const fraction &lhs)
@@ -2004,7 +2008,7 @@ fraction abs(const fraction &lhs)
 }
 bool operator==(const int lhs, const fraction &rhs)
 {
-	return lhs * rhs.den == rhs.num;
+	return (long long)lhs * rhs.den == (long long)rhs.num;
 }
 bool operator!=(const int lhs, const fraction &rhs)
 {
@@ -2059,6 +2063,11 @@ fraction& fraction::Reduce()
 	int cd = gcd(num, den);
 	num /= cd;
 	den /= cd;
+	if (num <= 0 && den < 0)
+	{
+		num *= -1;
+		den *= -1;
+	}
 	return *this;
 }
 int fraction::gcd(int a, int b)
