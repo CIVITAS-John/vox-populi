@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      vp_version: ${{ steps.version.outputs.vp_version }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -39,10 +40,14 @@ jobs:
           # "Release-5.1.3-0-g9fb5755" → "5.1.3-0-g9fb5755"
           # "No-Tag-abc123d" → "abc123d"
           VERSION=$(echo "$FULL_VERSION" | sed 's/^[^-]*-//')
+          RELEASE_TAG=$(git describe --tags --match 'Release-[0-9]*.[0-9]*.[0-9]*' --abbrev=0 2>/dev/null || true)
+          VP_VERSION="${RELEASE_TAG#Release-}"
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "vp_version=$VP_VERSION" >> $GITHUB_OUTPUT
           echo "Full version: $FULL_VERSION"
           echo "Artifact version: $VERSION"
+          echo "VP version: $VP_VERSION"
 
   detect-changes:
     name: Detect File Changes
@@ -721,6 +726,7 @@ jobs:
           find msvc-debug -type f -name "*.pdb" -exec bash -c 'cp "$0" "release-files/$(basename "$0" .pdb)-Debug.pdb"' {} \;
 
           # List files to verify
+          echo "${{ needs.get-version.outputs.vp_version }}" > release-files/version.txt
           echo "Release files to be included:"
           ls -lh release-files/
 
@@ -743,12 +749,14 @@ jobs:
             **Commit:** ${{ github.sha }}
             **Branch:** ${{ github.ref_name }}
             **Event:** ${{ github.event_name }}
+            **VP Version:** ${{ needs.get-version.outputs.vp_version }}
 
             This release contains both Debug and Release builds:
             - CvGameCore_Expansion2-Release.dll (Release build)
             - CvGameCore_Expansion2-Release.pdb (Release debug symbols)
             - CvGameCore_Expansion2-Debug.dll (Debug build)
             - CvGameCore_Expansion2-Debug.pdb (Debug symbols)
+            - version.txt (Associated VP version)
           files: release-files/*
           draft: false
           prerelease: false
