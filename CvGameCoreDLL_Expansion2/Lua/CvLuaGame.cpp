@@ -4301,7 +4301,11 @@ int CvLuaGame::lCallExternal(lua_State* L)
 
 //------------------------------------------------------------------------------
 // Vox Deorum: Broadcast a custom game event from Lua through the IPC pipe.
-// Args: eventName (string, required), payload (table, optional)
+// Args: eventName (string, required), payload (table, optional),
+//       generateId (bool, optional) -- when true, attach a real turn-scoped
+//       event id so the event flows through the mcp-server's id-based handling
+//       (storage key, lastID resume marker, resync) rather than being treated
+//       as an id-less broadcast. Defaults to false; render events omit it.
 int CvLuaGame::lBroadcastEvent(lua_State* L)
 {
 	return CvConnectionService::GetInstance().BroadcastEventFromLua(L);

@@ -2192,6 +2192,18 @@ int CvConnectionService::BroadcastEventFromLua(lua_State* L)
 		JsonObject payloadObj = message.createNestedObject("payload");
 		ConvertLuaToJsonValue(L, 2, payloadObj, NULL);
 	}
+	// Vox Deorum: when the caller passes a truthy third argument, attach a real
+	// turn-scoped event id (turn * 1000000 + sequence) exactly as ForwardGameEvent
+	// does. This lets the event flow through the mcp-server's id-based handling
+	// (turn tracking, the lastID resume marker, resync, and the GameEvents primary
+	// key) instead of being treated as an id-less broadcast. Off by default: most
+	// Lua broadcasts (e.g. the render events VoxDeorumTest fires) are intentionally
+	// id-less and are stored out of the main event stream. Safe to call here: Lua
+	// executes on the main thread, the same thread GenerateEventId/ForwardGameEvent
+	// run on, so the shared event-sequence counter is never touched concurrently.
+	if (lua_toboolean(L, 3)) {
+		message["id"] = GenerateEventId();
+	}
 	SendMessage(message);
 	return 0;
 }
