@@ -947,10 +947,14 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 
 			// Vox Deorum: Re-parse args into a function-scoped document so the
 			// JsonArray passed to HandleLuaCall does not alias m_pMainThreadReadBuffer.
+			// 64KB: the human-control panel receives the whole Flavor-mode
+			// OptionsReport (~10KB content mid-game plus ArduinoJson node
+			// overhead) as a single structured argument, and a late-game report
+			// must not overflow into the "no options" degradation path.
 			std::string argsStr;
 			serializeJson((*m_pMainThreadReadBuffer)["args"], argsStr);
 
-			DynamicJsonDocument argsDoc(16384);
+			DynamicJsonDocument argsDoc(65536);
 			DeserializationError argsError = deserializeJson(argsDoc, argsStr);
 			if (argsError)
 			{
