@@ -13522,7 +13522,11 @@ void CvPlot::showPopupText(PlayerTypes ePlayer, const char* szMessage)
 	if (ePlayer == NO_PLAYER || isVisible(GET_PLAYER(ePlayer).getTeam()))
 	{
 		//show the popup only if we're not on autoplay - too many stored popups seems to lead to crashes
-		if (!GET_PLAYER( GC.getGame().getActivePlayer() ).isObserver())
+		//exception: in human-control mode the observer follows one specific player
+		//(getObserverUIOverridePlayer) who is still watching their own civ, so show
+		//that player's own floating tips (a single civ's worth, no popup pile-up).
+		if (!GET_PLAYER( GC.getGame().getActivePlayer() ).isObserver()
+			|| (ePlayer != NO_PLAYER && GC.getGame().getObserverUIOverridePlayer() == ePlayer))
 		{
 			DLLUI->AddPopupText(getX(), getY(), szMessage, GC.getMap().GetPopupCount(m_iPlotIndex)*0.5f);
 			GC.getMap().IncreasePopupCount(m_iPlotIndex);
