@@ -1578,13 +1578,16 @@ bool ExternalPause()
 //	---------------------------------------------------------------------------
 void CvGame::update()
 {
+	bool bVoxDeorumPause = false;
 	if (MOD_IPC_CHANNEL) {
 		// Process messages from the Connection Service
 		CvConnectionService::GetInstance().ProcessMessages();
-		// Vox Deorum: If a player is paused, skip game logic but let the
-		// engine continue rendering/UI so camera operations like UI.LookAt work.
-		if (CvConnectionService::GetInstance().ShouldPauseGameCore())
-			return;
+		// Vox Deorum: skip turn-advancing logic while a player is paused, but let
+		// the rest of update() (Lua hooks, normal return) run so the engine keeps
+		// pumping its UI/popup queue (Civilopedia, Demographics, dialogs) instead
+		// of freezing them until resume. Folded into bExternalPause below so the
+		// pause reuses the proven external-pause control flow.
+		bVoxDeorumPause = CvConnectionService::GetInstance().ShouldPauseGameCore();
 	}
 
 	if(IsWaitingForBlockingInput())
@@ -1639,9 +1642,9 @@ void CvGame::update()
 			}
 
 #if defined(EXTERNAL_PAUSING)
-			bool bExternalPause = ExternalPause();
+			bool bExternalPause = ExternalPause() || bVoxDeorumPause;
 #else
-			bool bExternalPause = false;
+			bool bExternalPause = bVoxDeorumPause;
 #endif
 
 			// If there are no active players, move on to the AI
