@@ -197,12 +197,18 @@ public:
 	bool AreAllTradeItemsValid();
 #endif
 
-	bool IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1 = -1, int iData2 = -1, int iData3 = -1, bool bFlag1 = false, bool bFinalizing = false);
+	// Vox Deorum: bTreatAsHumanToHuman is a defaulted, backward-compatible override (default false
+	// reproduces the existing computed human-to-human classification). The agent inspection/enactment
+	// path passes true so structural guards that branch on isHuman are evaluated in their most
+	// permissive (human<->human) form; every stock caller is unchanged. See specs.md (Interactive Diplomacy) §4.
+	bool IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1 = -1, int iData2 = -1, int iData3 = -1, bool bFlag1 = false, bool bFinalizing = false, bool bTreatAsHumanToHuman = false);
 	bool ContainsPermanentItems(PlayerTypes eFromPlayer);
 	bool ContainsTemporaryItems(PlayerTypes eFromPlayer, PlayerTypes eToPlayer);
 	bool BlockTemporaryForPermanentTrade(TradeableItems eItemType, PlayerTypes eFromPlayer, PlayerTypes eToPlayer);
 	bool BlockGoldOnlyTrade(TradeableItems eItemType, PlayerTypes eFromPlayer, PlayerTypes eToPlayer);
-	CvString GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1, int iData2, int iData3, bool bFlag1);
+	// Vox Deorum: bTreatAsHumanToHuman mirrors the IsPossibleToTradeItem override so the reason
+	// string is computed under the same legality semantics. Default false preserves stock behavior.
+	CvString GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1, int iData2, int iData3, bool bFlag1, bool bTreatAsHumanToHuman = false);
 
 	bool ContainsItemType(TradeableItems eItemType, PlayerTypes eFrom = NO_PLAYER, ResourceTypes eResource = NO_RESOURCE);
 	bool ContainsItemTypes(vector<TradeableItems> vItemTypes, PlayerTypes eFrom = NO_PLAYER);

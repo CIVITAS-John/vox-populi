@@ -55,6 +55,7 @@ void CvLuaDeal::PushMethods(lua_State* L, int t)
 
 	Method(IsPossibleToTradeItem);
 	Method(GetReasonsItemUntradeable);
+	Method(GetTradeItemValue);
 	Method(BlockTemporaryForPermanentTrade);
 
 	Method(GetRenewDealMessage);
@@ -145,8 +146,10 @@ int CvLuaDeal::lIsPossibleToTradeItem(lua_State* L)
 	const int iData2 = lua_tointeger(L, 6);
 	const int iData3 = lua_tointeger(L, 7);
 	const bool bFlag1 = lua_toboolean(L, 8);
+	// Vox Deorum: optional human-to-human override (default false preserves stock behavior).
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 9, false);
 
-	const bool bResult = pkDeal->IsPossibleToTradeItem(eFromPlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1);
+	const bool bResult = pkDeal->IsPossibleToTradeItem(eFromPlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1, /*bFinalizing*/ false, bTreatAsHumanToHuman);
 	lua_pushboolean(L, bResult);
 	return 1;
 }
@@ -161,10 +164,44 @@ int CvLuaDeal::lGetReasonsItemUntradeable(lua_State* L)
 	const int iData2 = lua_tointeger(L, 6);
 	const int iData3 = lua_tointeger(L, 7);
 	const bool bFlag1 = lua_toboolean(L, 8);
+	// Vox Deorum: optional human-to-human override (default false preserves stock behavior).
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 9, false);
 
-	CvString sResult = pkDeal->GetReasonsItemUntradeable(eFromPlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1);
+	CvString sResult = pkDeal->GetReasonsItemUntradeable(eFromPlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1, bTreatAsHumanToHuman);
 	lua_pushstring(L, sResult);
 	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: read-only per-item AI value estimate, computed BOTH directions.
+// Wraps CvDealAI::GetTradeItemValue without ever touching the acceptance/enact path.
+// Returns two integers: the value to the giver of parting with the item (bFromMe = true,
+// from eFromPlayer's perspective) and the value to the receiver of gaining it
+// (bFromMe = false, from eToPlayer's perspective). The valuation-layer anti-exploit
+// INT_MAX sentinels (last strategic resource, last luxury while unhappy) surface here
+// as estimates but gate nothing — acceptance is decided by the negotiation. (specs.md §4)
+// Args: deal:GetTradeItemValue(eFromPlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1, iDuration)
+int CvLuaDeal::lGetTradeItemValue(lua_State* L)
+{
+	const PlayerTypes eFromPlayer = (PlayerTypes) lua_tointeger(L, 2);
+	const PlayerTypes eToPlayer = (PlayerTypes) lua_tointeger(L, 3);
+	const TradeableItems eItem = (TradeableItems) lua_tointeger(L, 4);
+	const int iData1 = luaL_optint(L, 5, -1);
+	const int iData2 = luaL_optint(L, 6, -1);
+	const int iData3 = luaL_optint(L, 7, -1);
+	const bool bFlag1 = luaL_optbool(L, 8, false);
+	const int iDuration = luaL_optint(L, 9, -1);
+
+	// Value to the giver of giving the item away (from eFromPlayer's perspective).
+	const int iValueToGiver = GET_PLAYER(eFromPlayer).GetDealAI()->GetTradeItemValue(
+		eItem, /*bFromMe*/ true, eToPlayer, iData1, iData2, iData3, bFlag1, iDuration, /*bIsAIOffer*/ false, /*bEqualize*/ true);
+	// Value to the receiver of gaining the item (from eToPlayer's perspective).
+	const int iValueToReceiver = GET_PLAYER(eToPlayer).GetDealAI()->GetTradeItemValue(
+		eItem, /*bFromMe*/ false, eFromPlayer, iData1, iData2, iData3, bFlag1, iDuration, /*bIsAIOffer*/ false, /*bEqualize*/ true);
+
+	lua_pushinteger(L, iValueToGiver);
+	lua_pushinteger(L, iValueToReceiver);
+	return 2;
 }
 
 int CvLuaDeal::lBlockTemporaryForPermanentTrade(lua_State* L)

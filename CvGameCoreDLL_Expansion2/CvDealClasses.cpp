@@ -338,7 +338,7 @@ int CvDeal::GetGoldAvailable(PlayerTypes ePlayer, TradeableItems eItemToBeChange
 
 /// Is it actually possible for a player to offer up this trade item?
 /// The Data parameters can be -1, which means we don't care about whatever data is stored there (e.g. -1 for Gold means "can we trade ANY amount of Gold?")
-bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1, int iData2, int iData3, bool bFlag1, bool bFinalizing)
+bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1, int iData2, int iData3, bool bFlag1, bool bFinalizing, bool bTreatAsHumanToHuman)
 {
 	if (eItem <= TRADE_ITEM_NONE || eItem >= NUM_TRADEABLE_ITEMS)
 		return false;
@@ -359,7 +359,9 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 	CvTeam* pToTeam = &GET_TEAM(eToTeam);
 
 	bool bPeaceDeal = pFromTeam->isAtWar(eToTeam);
-	bool bHumanToHuman = pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY);
+	// Vox Deorum: OR in the caller-supplied override (default false). Stock callers leave it false,
+	// reproducing the computed human-to-human classification exactly; the agent path passes true.
+	bool bHumanToHuman = bTreatAsHumanToHuman || (pFromPlayer->isHuman(ISHUMAN_AI_DIPLOMACY) && pToPlayer->isHuman(ISHUMAN_AI_DIPLOMACY));
 	bool bSameTeam = eFromTeam == eToTeam;
 	bool bOneSided = this->GetSurrenderingPlayer() != NO_PLAYER || this->GetDemandingPlayer() != NO_PLAYER || this->GetRequestingPlayer() != NO_PLAYER;
 
@@ -1509,7 +1511,7 @@ bool CvDeal::BlockGoldOnlyTrade(TradeableItems eItemType, PlayerTypes eFromPlaye
 
 /// Why can't this item be traded?
 /// The Data parameters can be -1, which means we don't care about whatever data is stored there (e.g. -1 for Gold means can we trade ANY amount of Gold?)
-CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1, int iData2, int iData3, bool bFlag1)
+CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToPlayer, TradeableItems eItem, int iData1, int iData2, int iData3, bool bFlag1, bool bTreatAsHumanToHuman)
 {
 	CvString strTooltip = "";
 	CvString strReason = "";
@@ -1543,8 +1545,10 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 	if (!GET_PLAYER(ePlayer).isAlive() || !GET_PLAYER(eToPlayer).isAlive())
 		return strError;
 
-	// Item must in fact be untradeable
-	if (IsPossibleToTradeItem(ePlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1, false))
+	// Item must in fact be untradeable (under the same human-to-human semantics as the caller's
+	// legality check, so the reason path never reports a stale reason for an item the agent path
+	// would actually allow).
+	if (IsPossibleToTradeItem(ePlayer, eToPlayer, eItem, iData1, iData2, iData3, bFlag1, false, bTreatAsHumanToHuman))
 		return strError;
 
 	CvPlayer* pFromPlayer = &GET_PLAYER(ePlayer);
