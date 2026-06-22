@@ -6187,7 +6187,16 @@ void CvTeam::setHasTech(TechTypes eIndex, bool bNewValue, PlayerTypes ePlayer, b
 
 			NotificationTypes eNotificationType = NO_NOTIFICATION_TYPE;
 
-			const bool bIsActiveTeam = (GetID() == GC.getGame().getActiveTeam());
+			CvGame& kGame = GC.getGame();
+			const TeamTypes eActiveTeam = kGame.getActiveTeam();
+			const PlayerTypes eObserverUIPlayer = kGame.getObserverUIOverridePlayer();
+			// Vox Deorum: refresh the active observer display when the followed
+			// player's team reveals or unreveals a resource.
+			const bool bIsObserverUIOverrideTeam = eObserverUIPlayer != NO_PLAYER
+				&& eActiveTeam != NO_TEAM
+				&& GET_TEAM(eActiveTeam).isObserver()
+				&& GET_PLAYER(eObserverUIPlayer).getTeam() == GetID();
+			const bool bIsActiveTeam = GetID() == eActiveTeam || bIsObserverUIOverrideTeam;
 			const int iNumPlots = GC.getMap().numPlots();
 			for(int iPlotLoop = 0; iPlotLoop < iNumPlots; iPlotLoop++)
 			{

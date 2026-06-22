@@ -7725,9 +7725,16 @@ ResourceTypes CvPlot::getResourceType(TeamTypes eTeam, bool bIgnoreTechPrereq) c
 				return NO_RESOURCE;
 
 			CvGame& Game = GC.getGame();
-			bool bDebug = Game.isDebugMode() || GET_TEAM(eTeam).isObserver();
+			TeamTypes eResourceVisibilityTeam = eTeam;
+			// Vox Deorum: a semi-observer follows the override player's resource
+			// discovery instead of inheriting the observer team's omniscience.
+			if (GET_TEAM(eTeam).isObserver() && Game.getObserverUIOverridePlayer() != NO_PLAYER)
+			{
+				eResourceVisibilityTeam = GET_PLAYER(Game.getObserverUIOverridePlayer()).getTeam();
+			}
+			bool bDebug = Game.isDebugMode() || GET_TEAM(eResourceVisibilityTeam).isObserver();
 
-			if(!bDebug && !bIgnoreTechPrereq && !GET_TEAM(eTeam).IsResourceRevealed((ResourceTypes)m_eResourceType) && !GET_TEAM(eTeam).isForceRevealedResource((ResourceTypes)m_eResourceType) && !IsResourceForceReveal(eTeam))
+			if(!bDebug && !bIgnoreTechPrereq && !GET_TEAM(eResourceVisibilityTeam).IsResourceRevealed((ResourceTypes)m_eResourceType) && !GET_TEAM(eResourceVisibilityTeam).isForceRevealedResource((ResourceTypes)m_eResourceType) && !IsResourceForceReveal(eResourceVisibilityTeam))
 			{
 				return NO_RESOURCE;
 			}
