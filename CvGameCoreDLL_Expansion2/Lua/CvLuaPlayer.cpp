@@ -1002,6 +1002,7 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(IsFriendDeclaredWarOnUs);
 	Method(GetWeDeclaredWarOnFriendCount);
 	Method(CanRequestCoopWar);
+	Method(IsValidCoopWarTarget); // Vox Deorum: Inspect cooperative-war target eligibility
 	Method(GetCoopWarAcceptedState);
 	Method(GetNumWarsFought);
 
@@ -11405,6 +11406,24 @@ int CvLuaPlayer::lCanRequestCoopWar(lua_State* L)
 	const bool bValue = pkPlayer->GetDiplomacyAI()->CanRequestCoopWar(eAllyPlayer, eTargetPlayer);
 
 	lua_pushinteger(L, bValue);
+	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: Read-only: is eTargetPlayer a structurally valid cooperative-war target for this player?
+// Mirrors the target-validity portion of CanRequestCoopWar without requiring a Declaration
+// of Friendship between the two allies, so agent-mediated diplomacy can inspect coop-war
+// eligibility while bypassing that political prerequisite (interactive-diplomacy).
+// bAtWarException (default false) follows CanRequestCoopWar's request-phase semantics: an
+// already-at-war target is NOT eligible. Pass true for the CanStartCoopWar execution phase.
+int CvLuaPlayer::lIsValidCoopWarTarget(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	PlayerTypes eTargetPlayer = (PlayerTypes) lua_tointeger(L, 2);
+	const bool bAtWarException = luaL_optbool(L, 3, false);
+
+	const bool bValue = pkPlayer->GetDiplomacyAI()->IsValidCoopWarTarget(eTargetPlayer, bAtWarException);
+
+	lua_pushboolean(L, bValue);
 	return 1;
 }
 //------------------------------------------------------------------------------

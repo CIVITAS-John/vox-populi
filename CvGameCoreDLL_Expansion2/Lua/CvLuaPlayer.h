@@ -1064,6 +1064,7 @@ protected:
 	static int lIsFriendDeclaredWarOnUs(lua_State* L);
 	static int lGetWeDeclaredWarOnFriendCount(lua_State* L);
 	static int lCanRequestCoopWar(lua_State* L);
+	static int lIsValidCoopWarTarget(lua_State* L); // Vox Deorum: Inspect cooperative-war target eligibility
 	static int lGetCoopWarAcceptedState(lua_State* L);
 	static int lGetNumWarsFought(lua_State* L);
 	static int lGetLandDisputeLevel(lua_State* L);
