@@ -56,6 +56,7 @@ void CvLuaDeal::PushMethods(lua_State* L, int t)
 	Method(IsPossibleToTradeItem);
 	Method(GetReasonsItemUntradeable);
 	Method(GetTradeItemValue);
+	Method(Enact); // Vox Deorum: enact an agreed agent deal for real (interactive-diplomacy stage 6)
 	Method(BlockTemporaryForPermanentTrade);
 
 	Method(GetRenewDealMessage);
@@ -204,6 +205,31 @@ int CvLuaDeal::lGetTradeItemValue(lua_State* L)
 	return 2;
 }
 
+//------------------------------------------------------------------------------
+// Vox Deorum: enact this (scratch) deal for real — the agent-diplomacy write path
+// (interactive-diplomacy stage 6). A thin wrapper over the existing FinalizeMPDeal chain:
+// acceptance is PRE-DECIDED (bAccepted = true), so CvDealAI is NEVER consulted, and the
+// human-to-human override (bTreatAsHumanToHuman = true) is threaded through so AI-only
+// structural restrictions don't gate the deal while structural legality is still honored.
+// The renew-deal ID for the pair is pre-cleared so ActivateDeal's renewal diff can't clobber
+// an unrelated pending renewal. FinalizeMPDeal takes a copy of the deal (the scratch deal is
+// cleared by the caller afterward). Returns the enactment success bool.
+// Usage: local ok = deal:Enact()
+int CvLuaDeal::lEnact(lua_State* L)
+{
+	CvDeal* pkDeal = GetInstance(L);
+	const PlayerTypes eFromPlayer = pkDeal->GetFromPlayer();
+	const PlayerTypes eToPlayer = pkDeal->GetToPlayer();
+
+	// Pre-clear any pending renewal for this pair so it is not clobbered by ActivateDeal.
+	GC.getGame().GetGameDeals().SetRenewDealID(eFromPlayer, eToPlayer, -1);
+
+	const bool bResult = GC.getGame().GetGameDeals().FinalizeMPDeal(*pkDeal, /*bAccepted*/ true, /*bTreatAsHumanToHuman*/ true);
+
+	lua_pushboolean(L, bResult);
+	return 1;
+}
+//------------------------------------------------------------------------------
 int CvLuaDeal::lBlockTemporaryForPermanentTrade(lua_State* L)
 {
 	CvDeal* pkDeal = GetInstance(L);
@@ -268,8 +294,11 @@ int CvLuaDeal::lAddGoldTrade(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iAmount = lua_tointeger(L, 3);
+	// Vox Deorum: optional human-to-human override (default false = stock). The game's own
+	// TradeLogic.lua callers pass fewer args and keep stock behavior; the enact path passes true.
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddGoldTrade(eFromPlayer, iAmount);
+	pkDeal->AddGoldTrade(eFromPlayer, iAmount, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -279,8 +308,9 @@ int CvLuaDeal::lAddGoldPerTurnTrade(lua_State* L)
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iAmount = lua_tointeger(L, 3);
 	const int iDuration = lua_tointeger(L, 4);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 5, false);
 
-	pkDeal->AddGoldPerTurnTrade(eFromPlayer, iAmount, iDuration);
+	pkDeal->AddGoldPerTurnTrade(eFromPlayer, iAmount, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -288,8 +318,9 @@ int CvLuaDeal::lAddMapTrade(lua_State* L)
 {
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
 
-	pkDeal->AddMapTrade(eFromPlayer);
+	pkDeal->AddMapTrade(eFromPlayer, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -300,8 +331,9 @@ int CvLuaDeal::lAddResourceTrade(lua_State* L)
 	const ResourceTypes eResource = (ResourceTypes)lua_tointeger(L, 3);
 	const int iAmount = lua_tointeger(L, 4);
 	const int iDuration = lua_tointeger(L, 5);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 6, false);
 
-	pkDeal->AddResourceTrade(eFromPlayer, eResource, iAmount, iDuration);
+	pkDeal->AddResourceTrade(eFromPlayer, eResource, iAmount, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -310,8 +342,9 @@ int CvLuaDeal::lAddCityTrade(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iCityID = lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddCityTrade(eFromPlayer, iCityID);
+	pkDeal->AddCityTrade(eFromPlayer, iCityID, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -319,8 +352,9 @@ int CvLuaDeal::lAddAllowEmbassy(lua_State* L)
 {
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
 
-	pkDeal->AddAllowEmbassy(eFromPlayer);
+	pkDeal->AddAllowEmbassy(eFromPlayer, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -329,8 +363,9 @@ int CvLuaDeal::lAddOpenBorders(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iDuration = lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddOpenBorders(eFromPlayer, iDuration);
+	pkDeal->AddOpenBorders(eFromPlayer, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -339,8 +374,9 @@ int CvLuaDeal::lAddDefensivePact(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iDuration = lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddDefensivePact(eFromPlayer, iDuration);
+	pkDeal->AddDefensivePact(eFromPlayer, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -349,8 +385,9 @@ int CvLuaDeal::lAddResearchAgreement(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iDuration = lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddResearchAgreement(eFromPlayer, iDuration);
+	pkDeal->AddResearchAgreement(eFromPlayer, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -359,8 +396,9 @@ int CvLuaDeal::lAddPeaceTreaty(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const int iDuration = lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddPeaceTreaty(eFromPlayer, iDuration);
+	pkDeal->AddPeaceTreaty(eFromPlayer, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -370,8 +408,9 @@ int CvLuaDeal::lAddThirdPartyPeace(lua_State* L)
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const TeamTypes eThirdPartyTeam = (TeamTypes)lua_tointeger(L, 3);
 	const int iDuration = lua_tointeger(L, 4);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 5, false);
 
-	pkDeal->AddThirdPartyPeace(eFromPlayer, eThirdPartyTeam, iDuration);
+	pkDeal->AddThirdPartyPeace(eFromPlayer, eThirdPartyTeam, iDuration, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -380,8 +419,9 @@ int CvLuaDeal::lAddThirdPartyWar(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const TeamTypes eThirdPartyTeam = (TeamTypes)lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddThirdPartyWar(eFromPlayer, eThirdPartyTeam);
+	pkDeal->AddThirdPartyWar(eFromPlayer, eThirdPartyTeam, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -389,8 +429,9 @@ int CvLuaDeal::lAddDeclarationOfFriendship(lua_State* L)
 {
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
 
-	pkDeal->AddDeclarationOfFriendship(eFromPlayer);
+	pkDeal->AddDeclarationOfFriendship(eFromPlayer, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -402,8 +443,9 @@ int CvLuaDeal::lAddVoteCommitment(lua_State* L)
 	const int iVoteChoice = lua_tointeger(L, 4);
 	const int iNumVotes = lua_tointeger(L, 5);
 	const bool bRepeal = lua_toboolean(L, 6);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 7, false);
 
-	pkDeal->AddVoteCommitment(eFromPlayer, iResolutionID, iVoteChoice, iNumVotes, bRepeal);
+	pkDeal->AddVoteCommitment(eFromPlayer, iResolutionID, iVoteChoice, iNumVotes, bRepeal, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -412,8 +454,9 @@ int CvLuaDeal::lAddTechTrade(lua_State* L)
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
 	const TechTypes eTech = (TechTypes)lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
 
-	pkDeal->AddTechTrade(eFromPlayer, eTech);
+	pkDeal->AddTechTrade(eFromPlayer, eTech, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -421,8 +464,9 @@ int CvLuaDeal::lAddVassalageTrade(lua_State* L)
 {
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
 
-	pkDeal->AddVassalageTrade(eFromPlayer);
+	pkDeal->AddVassalageTrade(eFromPlayer, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 //------------------------------------------------------------------------------
@@ -430,8 +474,9 @@ int CvLuaDeal::lAddRevokeVassalageTrade(lua_State* L)
 {
 	CvDeal* pkDeal = GetInstance(L);
 	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
 
-	pkDeal->AddRevokeVassalageTrade(eFromPlayer);
+	pkDeal->AddRevokeVassalageTrade(eFromPlayer, /*bDoNotRemove*/ true, bTreatAsHumanToHuman);
 	return 0;
 }
 

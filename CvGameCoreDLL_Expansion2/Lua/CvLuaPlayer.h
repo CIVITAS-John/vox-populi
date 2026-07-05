@@ -1066,6 +1066,7 @@ protected:
 	static int lCanRequestCoopWar(lua_State* L);
 	static int lIsValidCoopWarTarget(lua_State* L); // Vox Deorum: Inspect cooperative-war target eligibility
 	static int lGetCoopWarAcceptedState(lua_State* L);
+	static int lSetPromise(lua_State* L); // Vox Deorum: apply/clear an agent-diplomacy promise (interactive-diplomacy stage 6)
 	static int lGetNumWarsFought(lua_State* L);
 	static int lGetLandDisputeLevel(lua_State* L);
 	static int lGetVictoryDisputeLevel(lua_State* L);

@@ -1004,6 +1004,7 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(CanRequestCoopWar);
 	Method(IsValidCoopWarTarget); // Vox Deorum: Inspect cooperative-war target eligibility
 	Method(GetCoopWarAcceptedState);
+	Method(SetPromise); // Vox Deorum: apply/clear an agent-diplomacy promise (interactive-diplomacy stage 6)
 	Method(GetNumWarsFought);
 
 	Method(GetLandDisputeLevel);
@@ -11437,6 +11438,104 @@ int CvLuaPlayer::lGetCoopWarAcceptedState(lua_State* L)
 
 	lua_pushinteger(L, iState);
 	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: apply (or clear) a diplomatic promise the promiser (fromPlayerID) makes toward THIS
+// player, the recipient — the agent-diplomacy promise write path (interactive-diplomacy stage 6).
+// Promise state lives on the recipient's CvDiplomacyAI keyed by the giver, so this is called on the
+// recipient. It dispatches over all nine promise kinds (forward-compatible beyond the five the shipped
+// ledger authorizes) to the existing SetXxxPromiseState setters — which stamp their own turn and carry
+// their reciprocal side-effects — plus the companion calls the stock accept flow performs outside the
+// setters (Spy -> EvaluateSpiesAssignedToTargetPlayer; No-Convert / No-Digging -> SetPlayerAskedNotTo*;
+// Coop War -> paired SetCoopWarState on both principals plus approach = WAR and the recent-assist bonus).
+// This is a fire-and-forget void write: all structural validation is done UPFRONT by the enact-mode
+// script (distinct living majors, not-already-made via the exposed reads, valid coop-war target) before
+// any write, so there is no runtime return value and no rollback — a setter that silently declines
+// (e.g. the military setter's vassal / mutual-human guards, or an idempotent re-set of an already-made
+// promise) simply leaves that term unenforced. apply = false clears (NO_PROMISE_STATE / NO_COOP_WAR_STATE).
+// No CvDealAI / acceptability logic is ever consulted.
+// Usage: Players[recipient]:SetPromise(fromPlayerID, kind, targetID, apply)
+//   kind     : "MILITARY" | "EXPANSION" | "BORDER" | "NO_CONVERT" | "NO_DIGGING" | "SPY" |
+//              "BULLY_CITY_STATE" | "ATTACK_CITY_STATE" | "COOP_WAR"
+//   targetID : third-party target player ID for COOP_WAR (-1 / omitted otherwise)
+//   apply    : true to make the promise, false to clear it (defaults true)
+int CvLuaPlayer::lSetPromise(lua_State* L)
+{
+	CvPlayerAI* pkRecipient = GetInstance(L);
+	const PlayerTypes eRecipient = pkRecipient->GetID();
+	const PlayerTypes ePromiser = (PlayerTypes) lua_tointeger(L, 2);
+	const char* szKind = luaL_checkstring(L, 3);
+	const PlayerTypes eTarget = (PlayerTypes) luaL_optint(L, 4, -1);
+	const bool bApply = luaL_optbool(L, 5, true);
+
+	CvDiplomacyAI* pRecipientDiplo = pkRecipient->GetDiplomacyAI();
+	const PromiseStates eNewState = bApply ? PROMISE_STATE_MADE : NO_PROMISE_STATE;
+
+	// Coop War is structurally different (three-party, its own saved cooperative-war state), so it is
+	// handled apart from the SetXxxPromiseState setters.
+	if (strcmp(szKind, "COOP_WAR") == 0)
+	{
+		const CoopWarStates eNewCW = bApply ? COOP_WAR_STATE_PREPARING : NO_COOP_WAR_STATE;
+
+		// Paired write on BOTH principals (a coop war binds the two of them jointly against the target).
+		pRecipientDiplo->SetCoopWarState(ePromiser, eTarget, eNewCW);
+		GET_PLAYER(ePromiser).GetDiplomacyAI()->SetCoopWarState(eRecipient, eTarget, eNewCW);
+
+		if (bApply)
+		{
+			// The stock accept block's companions, applied to both principals since the promise is mutual:
+			// pursue the target (approach = WAR) and record the reciprocal recent-assist bonus.
+			pRecipientDiplo->SetCivApproach(eTarget, CIV_APPROACH_WAR);
+			GET_PLAYER(ePromiser).GetDiplomacyAI()->SetCivApproach(eTarget, CIV_APPROACH_WAR);
+			pRecipientDiplo->ChangeRecentAssistValue(ePromiser, 300);
+			GET_PLAYER(ePromiser).GetDiplomacyAI()->ChangeRecentAssistValue(eRecipient, 300);
+		}
+		return 0;
+	}
+
+	if (strcmp(szKind, "MILITARY") == 0)
+	{
+		pRecipientDiplo->SetMilitaryPromiseState(ePromiser, eNewState);
+	}
+	else if (strcmp(szKind, "EXPANSION") == 0)
+	{
+		pRecipientDiplo->SetExpansionPromiseState(ePromiser, eNewState);
+	}
+	else if (strcmp(szKind, "BORDER") == 0)
+	{
+		pRecipientDiplo->SetBorderPromiseState(ePromiser, eNewState);
+	}
+	else if (strcmp(szKind, "NO_CONVERT") == 0)
+	{
+		pRecipientDiplo->SetNoConvertPromiseState(ePromiser, eNewState);
+		// The promiser records that the recipient asked it not to convert (stock accept companion).
+		GET_PLAYER(ePromiser).GetDiplomacyAI()->SetPlayerAskedNotToConvert(eRecipient, bApply);
+	}
+	else if (strcmp(szKind, "NO_DIGGING") == 0)
+	{
+		pRecipientDiplo->SetNoDiggingPromiseState(ePromiser, eNewState);
+		GET_PLAYER(ePromiser).GetDiplomacyAI()->SetPlayerAskedNotToDig(eRecipient, bApply);
+	}
+	else if (strcmp(szKind, "SPY") == 0)
+	{
+		pRecipientDiplo->SetSpyPromiseState(ePromiser, eNewState);
+		// Re-evaluate the promiser's spies now assigned to the recipient (stock accept companion).
+		GET_PLAYER(ePromiser).GetEspionageAI()->EvaluateSpiesAssignedToTargetPlayer(eRecipient);
+	}
+	else if (strcmp(szKind, "BULLY_CITY_STATE") == 0)
+	{
+		pRecipientDiplo->SetBullyCityStatePromiseState(ePromiser, eNewState);
+	}
+	else if (strcmp(szKind, "ATTACK_CITY_STATE") == 0)
+	{
+		pRecipientDiplo->SetAttackCityStatePromiseState(ePromiser, eNewState);
+	}
+	else
+	{
+		return luaL_error(L, "SetPromise: unknown promise kind '%s'", szKind);
+	}
+
+	return 0;
 }
 //------------------------------------------------------------------------------
 int CvLuaPlayer::lGetNumWarsFought(lua_State* L)

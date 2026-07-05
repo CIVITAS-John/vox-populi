@@ -104,6 +104,7 @@ protected:
 	static int lIsPossibleToTradeItem(lua_State* L);
 	static int lGetReasonsItemUntradeable(lua_State* L);
 	static int lGetTradeItemValue(lua_State* L);
+	static int lEnact(lua_State* L); // Vox Deorum: enact an agreed agent deal for real (interactive-diplomacy stage 6)
 	static int lBlockTemporaryForPermanentTrade(lua_State* L);
 
 	static int lAddGoldTrade(lua_State* L);

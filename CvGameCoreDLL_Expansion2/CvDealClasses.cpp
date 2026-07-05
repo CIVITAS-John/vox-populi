@@ -3237,12 +3237,12 @@ void CvDeal::SetRequestingPlayer(PlayerTypes ePlayer)
 // METHODS TO ADD A CvTradedItem TO A DEAL
 
 /// Insert an immediate gold trade
-void CvDeal::AddGoldTrade(PlayerTypes eFrom, int iAmount, bool bDoNotRemove)
+void CvDeal::AddGoldTrade(PlayerTypes eFrom, int iAmount, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iAmount >= 0, "DEAL: Trying to add a negative amount of Gold to a deal.");
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD, iAmount))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD, iAmount, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_GOLD;
@@ -3256,14 +3256,14 @@ void CvDeal::AddGoldTrade(PlayerTypes eFrom, int iAmount, bool bDoNotRemove)
 }
 
 /// Insert a gold per turn trade
-void CvDeal::AddGoldPerTurnTrade(PlayerTypes eFrom, int iAmount, int iDuration, bool bDoNotRemove)
+void CvDeal::AddGoldPerTurnTrade(PlayerTypes eFrom, int iAmount, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iAmount >= 0, "DEAL: Trying to add a negative amount of GPT to a deal.");
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD_PER_TURN, iAmount, iDuration))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD_PER_TURN, iAmount, iDuration, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_GOLD_PER_TURN;
@@ -3282,11 +3282,11 @@ void CvDeal::AddGoldPerTurnTrade(PlayerTypes eFrom, int iAmount, int iDuration, 
 }
 
 /// Insert a map trade
-void CvDeal::AddMapTrade(PlayerTypes eFrom, bool bDoNotRemove)
+void CvDeal::AddMapTrade(PlayerTypes eFrom, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_MAPS))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_MAPS, -1, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_MAPS;
@@ -3303,14 +3303,14 @@ void CvDeal::AddMapTrade(PlayerTypes eFrom, bool bDoNotRemove)
 }
 
 /// Insert a resource trade
-void CvDeal::AddResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration, bool bDoNotRemove)
+void CvDeal::AddResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iAmount >= 0, "DEAL: Trying to add a negative amount of a Resource to a deal.");
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_RESOURCES, eResource, iAmount))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_RESOURCES, eResource, iAmount, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_RESOURCES;
@@ -3330,7 +3330,7 @@ void CvDeal::AddResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iA
 }
 
 /// Insert a city trade
-void CvDeal::AddCityTrade(PlayerTypes eFrom, int iCityID, bool bDoNotRemove)
+void CvDeal::AddCityTrade(PlayerTypes eFrom, int iCityID, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
@@ -3341,7 +3341,7 @@ void CvDeal::AddCityTrade(PlayerTypes eFrom, int iCityID, bool bDoNotRemove)
 	int x = pCity->getX();
 	int y = pCity->getY();
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_CITIES, x, y))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_CITIES, x, y, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_CITIES;
@@ -3362,11 +3362,11 @@ void CvDeal::AddCityTrade(PlayerTypes eFrom, int iCityID, bool bDoNotRemove)
 }
 
 /// Insert adding an embassy to the deal
-void CvDeal::AddAllowEmbassy(PlayerTypes eFrom, bool bDoNotRemove)
+void CvDeal::AddAllowEmbassy(PlayerTypes eFrom, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_ALLOW_EMBASSY))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_ALLOW_EMBASSY, -1, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_ALLOW_EMBASSY;
@@ -3381,13 +3381,13 @@ void CvDeal::AddAllowEmbassy(PlayerTypes eFrom, bool bDoNotRemove)
 }
 
 /// Insert an open borders pact
-void CvDeal::AddOpenBorders(PlayerTypes eFrom, int iDuration, bool bDoNotRemove)
+void CvDeal::AddOpenBorders(PlayerTypes eFrom, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_OPEN_BORDERS, iDuration))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_OPEN_BORDERS, iDuration, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_OPEN_BORDERS;
@@ -3405,13 +3405,13 @@ void CvDeal::AddOpenBorders(PlayerTypes eFrom, int iDuration, bool bDoNotRemove)
 }
 
 /// Insert a defensive pact
-void CvDeal::AddDefensivePact(PlayerTypes eFrom, int iDuration, bool bDoNotRemove)
+void CvDeal::AddDefensivePact(PlayerTypes eFrom, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_DEFENSIVE_PACT, iDuration))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_DEFENSIVE_PACT, iDuration, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_DEFENSIVE_PACT;
@@ -3429,13 +3429,13 @@ void CvDeal::AddDefensivePact(PlayerTypes eFrom, int iDuration, bool bDoNotRemov
 }
 
 /// Insert a Research Agreement
-void CvDeal::AddResearchAgreement(PlayerTypes eFrom, int iDuration, bool bDoNotRemove)
+void CvDeal::AddResearchAgreement(PlayerTypes eFrom, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_RESEARCH_AGREEMENT, iDuration))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_RESEARCH_AGREEMENT, iDuration, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_RESEARCH_AGREEMENT;
@@ -3453,11 +3453,11 @@ void CvDeal::AddResearchAgreement(PlayerTypes eFrom, int iDuration, bool bDoNotR
 }
 
 /// Insert ending a war
-void CvDeal::AddPeaceTreaty(PlayerTypes eFrom, int iDuration, bool bDoNotRemove)
+void CvDeal::AddPeaceTreaty(PlayerTypes eFrom, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_PEACE_TREATY))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_PEACE_TREATY, -1, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_PEACE_TREATY;
@@ -3474,11 +3474,11 @@ void CvDeal::AddPeaceTreaty(PlayerTypes eFrom, int iDuration, bool bDoNotRemove)
 }
 
 /// Insert going to peace with a third party
-void CvDeal::AddThirdPartyPeace(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, int iDuration, bool bDoNotRemove)
+void CvDeal::AddThirdPartyPeace(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, int iDuration, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_THIRD_PARTY_PEACE, eThirdPartyTeam))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_THIRD_PARTY_PEACE, eThirdPartyTeam, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_THIRD_PARTY_PEACE;
@@ -3496,11 +3496,11 @@ void CvDeal::AddThirdPartyPeace(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, in
 }
 
 /// Insert going to war with a third party
-void CvDeal::AddThirdPartyWar(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, bool bDoNotRemove)
+void CvDeal::AddThirdPartyWar(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_THIRD_PARTY_WAR, eThirdPartyTeam))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_THIRD_PARTY_WAR, eThirdPartyTeam, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_THIRD_PARTY_WAR;
@@ -3518,11 +3518,11 @@ void CvDeal::AddThirdPartyWar(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, bool
 }
 
 /// Insert adding a declaration of peace to the deal
-void CvDeal::AddDeclarationOfFriendship(PlayerTypes eFrom, bool bDoNotRemove)
+void CvDeal::AddDeclarationOfFriendship(PlayerTypes eFrom, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_DECLARATION_OF_FRIENDSHIP))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_DECLARATION_OF_FRIENDSHIP, -1, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		if (!ContainsItemType(TRADE_ITEM_DECLARATION_OF_FRIENDSHIP, eFrom))
 		{
@@ -3540,11 +3540,11 @@ void CvDeal::AddDeclarationOfFriendship(PlayerTypes eFrom, bool bDoNotRemove)
 }
 
 /// Insert a vote commitment to the deal
-void CvDeal::AddVoteCommitment(PlayerTypes eFrom, int iResolutionID, int iVoteChoice, int iNumVotes, bool bRepeal, bool bDoNotRemove)
+void CvDeal::AddVoteCommitment(PlayerTypes eFrom, int iResolutionID, int iVoteChoice, int iNumVotes, bool bRepeal, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_VOTE_COMMITMENT, iResolutionID, iVoteChoice, iNumVotes, bRepeal))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_VOTE_COMMITMENT, iResolutionID, iVoteChoice, iNumVotes, bRepeal, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_VOTE_COMMITMENT;
@@ -4056,11 +4056,11 @@ FDataStream& operator<<(FDataStream& saveTo, const CvDeal& readFrom)
 }
 
 /// Insert a tech trade
-void CvDeal::AddTechTrade(PlayerTypes eFrom, TechTypes eTech, bool bDoNotRemove)
+void CvDeal::AddTechTrade(PlayerTypes eFrom, TechTypes eTech, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_TECHS, eTech))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_TECHS, eTech, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_TECHS;
@@ -4078,11 +4078,11 @@ void CvDeal::AddTechTrade(PlayerTypes eFrom, TechTypes eTech, bool bDoNotRemove)
 }
 
 /// Insert Vassalage Trade
-void CvDeal::AddVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove)
+void CvDeal::AddVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_VASSALAGE))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_VASSALAGE, -1, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_VASSALAGE;
@@ -4097,11 +4097,11 @@ void CvDeal::AddVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove)
 }
 
 /// Insert Vassalage Trade
-void CvDeal::AddRevokeVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove)
+void CvDeal::AddRevokeVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Adding deal item for a player that's not actually in this deal!");
 
-	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_VASSALAGE_REVOKE))
+	if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_VASSALAGE_REVOKE, -1, -1, -1, false, /*bFinalizing*/ false, bTreatAsHumanToHuman))
 	{
 		CvTradedItem item;
 		item.m_eItemType = TRADE_ITEM_VASSALAGE_REVOKE;
@@ -4330,12 +4330,14 @@ bool CvGameDeals::RemoveProposedDeal(PlayerTypes eFromPlayer, PlayerTypes eToPla
 	return true;
 }
 
-bool CvDeal::AreAllTradeItemsValid()
+bool CvDeal::AreAllTradeItemsValid(bool bTreatAsHumanToHuman)
 {
 	TradedItemList::iterator iter;
 	for (iter = m_TradedItems.begin(); iter != m_TradedItems.end(); ++iter)
 	{
-		if (!IsPossibleToTradeItem(iter->m_eFromPlayer, GetOtherPlayer(iter->m_eFromPlayer), iter->m_eItemType, iter->m_iData1, iter->m_iData2, iter->m_iData3, iter->m_bFlag1, true))
+		// Vox Deorum: thread the override into the 9th arg (bTreatAsHumanToHuman); the 8th (bFinalizing)
+		// stays true as before. Default false leaves stock validation unchanged.
+		if (!IsPossibleToTradeItem(iter->m_eFromPlayer, GetOtherPlayer(iter->m_eFromPlayer), iter->m_eItemType, iter->m_iData1, iter->m_iData2, iter->m_iData3, iter->m_bFlag1, /*bFinalizing*/ true, bTreatAsHumanToHuman))
 			return false;
 	}
 	return true;
@@ -4354,12 +4356,13 @@ bool CvGameDeals::FinalizeMPDealLatest(PlayerTypes eFromPlayer, PlayerTypes eToP
 }
 
 /// Moves a deal from the proposed list to the active one (returns FALSE if deal not valid)
-bool CvGameDeals::FinalizeMPDeal(CvDeal kDeal, bool bAccepted)
+bool CvGameDeals::FinalizeMPDeal(CvDeal kDeal, bool bAccepted, bool bTreatAsHumanToHuman)
 {
 	PlayerTypes eFromPlayer = kDeal.m_eFromPlayer;
 	PlayerTypes eToPlayer = kDeal.m_eToPlayer;
 	bool bFoundIt = true;
-	bool bValid = kDeal.AreAllTradeItemsValid();
+	// Vox Deorum: validate under the caller-supplied override (default false = stock).
+	bool bValid = kDeal.AreAllTradeItemsValid(bTreatAsHumanToHuman);
 	CvWeightedVector<TeamTypes> veNowAtPeacePairs; // hacked CvWeighedVector to keep track of third party minors that this deal makes at peace
 	{
 		if(!bValid || !bAccepted)
@@ -4369,7 +4372,7 @@ bool CvGameDeals::FinalizeMPDeal(CvDeal kDeal, bool bAccepted)
 
 		if(bValid && bAccepted)
 		{
-			FinalizeDealValidAndAccepted(eFromPlayer, eToPlayer, kDeal, bAccepted, veNowAtPeacePairs);
+			FinalizeDealValidAndAccepted(eFromPlayer, eToPlayer, kDeal, bAccepted, veNowAtPeacePairs, bTreatAsHumanToHuman);
 			PlayerTypes eLoopPlayer;
 			for (int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
 			{
@@ -4394,7 +4397,7 @@ bool CvGameDeals::FinalizeMPDeal(CvDeal kDeal, bool bAccepted)
 	return bFoundIt && bValid;
 }
 
-void CvGameDeals::FinalizeDealValidAndAccepted(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, bool bAccepted, CvWeightedVector<TeamTypes>& veNowAtPeacePairs)
+void CvGameDeals::FinalizeDealValidAndAccepted(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, bool bAccepted, CvWeightedVector<TeamTypes>& veNowAtPeacePairs, bool bTreatAsHumanToHuman)
 {
 	if (!bAccepted)
 		return;
@@ -4402,7 +4405,8 @@ void CvGameDeals::FinalizeDealValidAndAccepted(PlayerTypes eFromPlayer, PlayerTy
 	if (kDeal.m_TradedItems.empty())
 		return;
 
-	ActivateDeal(eFromPlayer, eToPlayer, kDeal, veNowAtPeacePairs);
+	// Vox Deorum: pass the override through to the peace-surrender assignment (default false = stock).
+	ActivateDeal(eFromPlayer, eToPlayer, kDeal, veNowAtPeacePairs, bTreatAsHumanToHuman);
 }
 
 #endif
@@ -4461,7 +4465,7 @@ bool CvGameDeals::FinalizeDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, b
 	return bFoundIt && bValid;
 }
 
-void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, CvWeightedVector<TeamTypes>& veNowAtPeacePairs)
+void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, CvWeightedVector<TeamTypes>& veNowAtPeacePairs, bool bTreatAsHumanToHuman)
 {
 	// Determine total duration of the Deal
 	int iLatestItemLastTurn = 0;
@@ -4469,8 +4473,12 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 
 	// Set the surrendering player for a human v. human war (based on who puts what where).
 	bool bIsPeaceDeal = kDeal.IsPeaceTreatyTrade(eFromPlayer) || kDeal.IsPeaceTreatyTrade(eToPlayer);
+	// Vox Deorum: bHumanToHuman stays the true computed classification — the observer/debug notification
+	// gates below must keep using it so agent-brokered third-party war/peace still notifies observers.
+	// The peace-surrender assignment, however, ORs in the override: an agent peace deal is built from
+	// scratch with no surrendering side, so without it ActivateDeal would activate with none assigned.
 	bool bHumanToHuman = GET_PLAYER(eFromPlayer).isHuman(ISHUMAN_AI_DIPLOMACY) && GET_PLAYER(eToPlayer).isHuman(ISHUMAN_AI_DIPLOMACY);
-	bool bShouldSetHumanSurrender = bHumanToHuman && bIsPeaceDeal;
+	bool bShouldSetHumanSurrender = (bHumanToHuman || bTreatAsHumanToHuman) && bIsPeaceDeal;
 	bool bFromPlayerItem = false;
 	bool bToPlayerItem = false;
 

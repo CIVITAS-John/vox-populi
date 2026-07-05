@@ -194,7 +194,11 @@ public:
 	int GetGoldAvailable(PlayerTypes ePlayer, TradeableItems eItemToBeChanged);
 
 #if defined(MOD_ACTIVE_DIPLOMACY)
-	bool AreAllTradeItemsValid();
+	// Vox Deorum: bTreatAsHumanToHuman is a defaulted, backward-compatible override (default false
+	// reproduces the existing computed classification). The agent enactment path passes true so the
+	// per-item IsPossibleToTradeItem guards evaluate structural restrictions in their most permissive
+	// (human<->human) form. See specs.md (Interactive Diplomacy) §4.
+	bool AreAllTradeItemsValid(bool bTreatAsHumanToHuman = false);
 #endif
 
 	// Vox Deorum: bTreatAsHumanToHuman is a defaulted, backward-compatible override (default false
@@ -217,24 +221,28 @@ public:
 	int GetNumCitiesInDeal(PlayerTypes ePlayer);
 
 	// Methods to add a CvTradedItem to a deal
-	void AddGoldTrade(PlayerTypes eFrom, int iAmount, bool bDoNotRemove = true);
-	void AddGoldPerTurnTrade(PlayerTypes eFrom, int iAmount, int iDuration, bool bDoNotRemove = true);
-	void AddMapTrade(PlayerTypes eFrom, bool bDoNotRemove = true);
-	void AddResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration, bool bDoNotRemove = true);
-	void AddCityTrade(PlayerTypes eFrom, int iCityID, bool bDoNotRemove = true);
-	void AddAllowEmbassy(PlayerTypes eFrom, bool bDoNotRemove = true);
-	void AddOpenBorders(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true);
-	void AddDefensivePact(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true);
-	void AddResearchAgreement(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true);
-	void AddPeaceTreaty(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true);
-	void AddThirdPartyPeace(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, int iDuration, bool bDoNotRemove = true);
-	void AddThirdPartyWar(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, bool bDoNotRemove = true);
-	void AddDeclarationOfFriendship(PlayerTypes eFrom, bool bDoNotRemove = true);
-	void AddVoteCommitment(PlayerTypes eFrom, int iResolutionID, int iVoteChoice, int iNumVotes, bool bRepeal, bool bDoNotRemove = true);
+	// Vox Deorum: each Add* gains a defaulted bTreatAsHumanToHuman (after bDoNotRemove, so positional
+	// callers are unchanged) that is threaded into its internal IsPossibleToTradeItem guard. Default
+	// false reproduces stock behavior; the agent enactment path passes true so override-only items are
+	// no longer silently refused at construction. See specs.md (Interactive Diplomacy) §4.
+	void AddGoldTrade(PlayerTypes eFrom, int iAmount, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddGoldPerTurnTrade(PlayerTypes eFrom, int iAmount, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddMapTrade(PlayerTypes eFrom, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddCityTrade(PlayerTypes eFrom, int iCityID, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddAllowEmbassy(PlayerTypes eFrom, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddOpenBorders(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddDefensivePact(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddResearchAgreement(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddPeaceTreaty(PlayerTypes eFrom, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddThirdPartyPeace(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, int iDuration, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddThirdPartyWar(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddDeclarationOfFriendship(PlayerTypes eFrom, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddVoteCommitment(PlayerTypes eFrom, int iResolutionID, int iVoteChoice, int iNumVotes, bool bRepeal, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
 
-	void AddTechTrade(PlayerTypes eFrom, TechTypes eTech, bool bDoNotRemove = true);
-	void AddVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove = true);
-	void AddRevokeVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove = true);
+	void AddTechTrade(PlayerTypes eFrom, TechTypes eTech, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
+	void AddRevokeVassalageTrade(PlayerTypes eFrom, bool bDoNotRemove = true, bool bTreatAsHumanToHuman = false);
 
 	void RemoveTechTrade(TechTypes eTech);
 
@@ -307,14 +315,20 @@ public:
 	void AddProposedDeal(const CvDeal& kDeal);
 	bool RemoveProposedDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal* pDealOut, bool latest);
 
-	bool FinalizeMPDeal(CvDeal kDeal, bool bAccepted);
+	// Vox Deorum: the defaulted bTreatAsHumanToHuman override is threaded through the finalize chain
+	// (default false reproduces stock behavior). It is consumed in exactly two places — the
+	// AreAllTradeItemsValid validation and ActivateDeal's peace-surrender assignment — never the
+	// observer/debug notification gates. The agent enactment path (Deal:Enact) passes true.
+	bool FinalizeMPDeal(CvDeal kDeal, bool bAccepted, bool bTreatAsHumanToHuman = false);
 	bool FinalizeMPDealLatest(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, bool bAccepted, bool latest);
-	void FinalizeDealValidAndAccepted(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, bool bAccepted, CvWeightedVector<TeamTypes>& veNowAtPeacePairs);
+	void FinalizeDealValidAndAccepted(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, bool bAccepted, CvWeightedVector<TeamTypes>& veNowAtPeacePairs, bool bTreatAsHumanToHuman = false);
 	CvDeal* GetProposedMPDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, bool latest = false);
 	void DoCancelAllProposedMPDealsWithPlayer(PlayerTypes eCancelPlayer, DiplomacyMode eTargetPlayers);
 
 	bool FinalizeDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, bool bAccepted);
-	void ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, CvWeightedVector<TeamTypes>& veNowAtPeacePairs);
+	// Vox Deorum: bTreatAsHumanToHuman (default false = stock) forces the peace-surrender assignment on
+	// for an agent-built peace deal; it does NOT touch the observer/debug notification gates.
+	void ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, CvDeal& kDeal, CvWeightedVector<TeamTypes>& veNowAtPeacePairs, bool bTreatAsHumanToHuman = false);
 	void DoTurn();
 
 	void DoUpdateCurrentDealsList(int iTurnOffset = 0);
