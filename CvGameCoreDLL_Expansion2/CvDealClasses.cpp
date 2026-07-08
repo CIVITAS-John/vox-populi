@@ -487,6 +487,11 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 			// Already have a DoF?
 			if (pFromPlayer->GetDiplomacyAI()->IsDoFAccepted(eToPlayer))
 				return false;
+
+			// Vox Deorum: a Declaration of Friendship carries no gold cost. Without this break the case fell
+			// through into TRADE_ITEM_GOLD below, wrongly gating DoF legality on the giver's gold
+			// (GetGoldAvailable <= 0 rejected it) - a latent stock bug.
+			break;
 		}
 
 	case TRADE_ITEM_GOLD:
