@@ -484,6 +484,13 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 			if (!bHumanToHuman || bPeaceDeal) // Recursive: Would be nice to allow this to be tradeable in a peace treaty, but unsure if this breaks functionality
 				return false;
 
+			// Vox Deorum: can't declare friendship with a team you haven't met. The stock trade screen never
+			// opens for an un-met civ, so stock code relied on that entry gate; the agent/inspect path
+			// evaluates un-met pairs directly, so gate it explicitly here. (Unlike an embassy, which is a
+			// valid first-contact exchange and deliberately carries no met requirement.)
+			if (!pFromTeam->isHasMet(eToTeam))
+				return false;
+
 			// Already have a DoF?
 			if (pFromPlayer->GetDiplomacyAI()->IsDoFAccepted(eToPlayer))
 				return false;
