@@ -2578,21 +2578,14 @@ int CvConnectionService::CallExternalFunction(lua_State* L)
 	// Validate the call
 	if (!ValidateExternalCall(functionName, result))
 	{
-		// For async calls, call the callback with an error immediately
+		// For async calls, call the callback with an error immediately.
+		// HandleExternalCallCallback owns the callback data: it unrefs the Lua
+		// callback and deletes the struct itself. We must not clean it up again
+		// here (doing so read freed memory and double-unref/double-deleted it).
 		if (callback)
 		{
 			callback(result, userData);
-			// Clean up the callback data after calling it
-			if (userData)
-			{
-				LuaExternalCallbackData* pCallbackData = static_cast<LuaExternalCallbackData*>(userData);
-				if (pCallbackData && pCallbackData->L)
-				{
-					luaL_unref(pCallbackData->L, LUA_REGISTRYINDEX, pCallbackData->callbackRef);
-					delete pCallbackData;
-				}
-			}
-			return 0;  // Async call, callback will handle the result
+			return 0;  // Async call, callback handled the result and its own cleanup
 		}
 		// For sync calls, push error to Lua stack
 		else
