@@ -138,6 +138,7 @@ local g_mouseExit = true
 local g_SpareNotifications = {}
 local g_ActiveNotifications = {}
 local g_NotificationButtons = {}
+local g_voxDeorumDiplomacyData = {}
 --[[
 	{ (controls) Button etc..., (bundle) { { Id, type, toolTip, strSummary, iGameValue, iExtraGameData, playerID }, ... } }
 --]]
@@ -555,6 +556,12 @@ local function GenericLeftClick( Id )
 			end
 		end
 	end
+	-- Vox Deorum: open the diplomacy panel for bundled and generic notification instances
+	local voxDeorumDiplomacyData = g_voxDeorumDiplomacyData[ Id ]
+	if NotificationTypes.NOTIFICATION_VOX_DEORUM_DIPLOMACY and voxDeorumDiplomacyData then
+		LuaEvents.VoxDeorumDiplomacyNotificationActivated( Id, voxDeorumDiplomacyData.counterpartID, voxDeorumDiplomacyData.extra )
+		return
+	end
 	UI.ActivateNotification( Id )
 end
 
@@ -589,6 +596,12 @@ end
 -------------------------------------------------
 Events.NotificationAdded.Add(
 function( Id, type, ... ) -- toolTip, strSummary, iGameValue, iExtraGameData, playerID )
+
+	local voxDeorumDiplomacyType = NotificationTypes.NOTIFICATION_VOX_DEORUM_DIPLOMACY
+	if voxDeorumDiplomacyType and type == voxDeorumDiplomacyType then
+		local _, _, counterpartID, extra = ...
+		g_voxDeorumDiplomacyData[ Id ] = { counterpartID = counterpartID, extra = extra }
+	end
 
 	local name = not g_ActiveNotifications[ Id ] and (g_notificationNames[ type ] or "Generic")
 	if name then
@@ -649,6 +662,7 @@ local function RemoveNotificationID( Id )
 
 	local index = g_ActiveNotifications[ Id ]
 	g_ActiveNotifications[ Id ] = nil
+	g_voxDeorumDiplomacyData[ Id ] = nil
 	local instance = g_NotificationButtons[ index ]
 	if instance then
 		for i = 1, #instance do

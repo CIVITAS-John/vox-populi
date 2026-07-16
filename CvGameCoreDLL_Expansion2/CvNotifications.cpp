@@ -1998,6 +1998,12 @@ bool CvNotifications::IsNotificationExpired(int iIndex)
 //	---------------------------------------------------------------------------
 bool CvNotifications::IsNotificationTypeEndOfTurnExpired(NotificationTypes eNotificationType, int iForSpecificEntry /*= -1*/)
 {
+	// Vox Deorum: Diplomacy correspondence remains until the player explicitly dismisses it.
+	if(eNotificationType == (NotificationTypes)FStringHash("NOTIFICATION_VOX_DEORUM_DIPLOMACY"))
+	{
+		return false;
+	}
+
 	switch(eNotificationType)
 	{
 	case NOTIFICATION_POLICY:
