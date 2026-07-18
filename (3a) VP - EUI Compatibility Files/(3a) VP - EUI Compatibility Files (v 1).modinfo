@@ -47,7 +47,7 @@
     <File md5="B3FA1EB3C9C21C348FD178C7CE3D8393" import="1">LUA/HappinessInfo.xml</File>
     <File md5="259A1E0254E50892AEC8DD5E6E2CC602" import="1">LUA/IconSupport.lua</File>
     <File md5="6CC7084FD99DCF947D900457C6D459F5" import="1">LUA/LeaderHeadRoot.lua</File>
-    <File md5="CC39FBB2AB99A56A37D07160C4683244" import="1">LUA/LeaderHeadRoot.xml</File>
+    <File md5="B9AEF2178F780FF72B0E4B6B9D859742" import="1">LUA/LeaderHeadRoot.xml</File>
     <File md5="1703629C4CC87BC00CC86932CFA2EA49" import="1">LUA/LoadScreen.xml</File>
     <File md5="46FEDBB660D14A051F85D6D52D53BE69" import="1">LUA/LoadScreen.lua</File>
     <File md5="98B1FEF84BBAD42685E34EB5B558911A" import="1">LUA/MonopoliesInfo.lua</File>
