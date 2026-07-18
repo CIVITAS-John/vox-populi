@@ -22,7 +22,8 @@
 		</Grid>
 
 
-		<Stack Anchor="R,B" Offset="40,40" Padding="10" StackGrowth="Top" >
+		<!-- VD: named so the Vox Deorum Converse addin can reparent its button into this stack -->
+		<Stack Anchor="R,B" Offset="40,40" Padding="10" StackGrowth="Top" ID="VoxDeorumDiploStack" >
 			<!-- Diplo Mode buttons -->
 
 			<GridButton Style="FrameButton200"  Offset="0,0" String="TXT_KEY_GOODBYE_BUTTON" ID="BackButton" />
