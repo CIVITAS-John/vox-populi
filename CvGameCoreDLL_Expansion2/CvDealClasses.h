@@ -252,10 +252,13 @@ public:
 	bool IsRevokeVassalageTrade(PlayerTypes eFrom);
 
 	int GetGoldTrade(PlayerTypes eFrom);
-	bool ChangeGoldTrade(PlayerTypes eFrom, int iNewAmount);
+	// Vox Deorum: the defaulted override keeps stock amount edits unchanged unless Vox explicitly
+	// evaluates them as human-to-human.
+	bool ChangeGoldTrade(PlayerTypes eFrom, int iNewAmount, bool bTreatAsHumanToHuman = false);
 
 	int GetGoldPerTurnTrade(PlayerTypes eFrom);
-	bool ChangeGoldPerTurnTrade(PlayerTypes eFrom, int iNewAmount, int iDuration);
+	// Vox Deorum: see ChangeGoldTrade for the backward-compatible legality override.
+	bool ChangeGoldPerTurnTrade(PlayerTypes eFrom, int iNewAmount, int iDuration, bool bTreatAsHumanToHuman = false);
 
 	bool IsStrategicsTrade();
 	int GetNumStrategicsOnTheirSide(PlayerTypes eFrom);
@@ -263,7 +266,8 @@ public:
 	bool IsGoldOnlyTrade();
 	bool IsResourceTrade(PlayerTypes eFrom, ResourceTypes eResource);
 	int GetNumResourcesInDeal(PlayerTypes eFrom, ResourceTypes eResource);
-	bool ChangeResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration);
+	// Vox Deorum: see ChangeGoldTrade for the backward-compatible legality override.
+	bool ChangeResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration, bool bTreatAsHumanToHuman = false);
 	bool IsCityTrade(PlayerTypes eFrom, int x, int y);
 	void ChangeThirdPartyWarDuration(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, int iNewDuration);
 	void ChangeThirdPartyPeaceDuration(PlayerTypes eFrom, TeamTypes eThirdPartyTeam, int iNewDuration);

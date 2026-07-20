@@ -105,6 +105,9 @@ protected:
 	static int lGetReasonsItemUntradeable(lua_State* L);
 	static int lGetTradeItemValue(lua_State* L);
 	static int lEnact(lua_State* L); // Vox Deorum: enact an agreed agent deal for real (interactive-diplomacy stage 6)
+#if defined(MOD_ACTIVE_DIPLOMACY)
+	static int lAreAllTradeItemsValid(lua_State* L); // Vox Deorum: expose guarded final validation to the stage 7 deal editor.
+#endif
 	static int lBlockTemporaryForPermanentTrade(lua_State* L);
 
 	static int lAddGoldTrade(lua_State* L);
@@ -122,18 +125,10 @@ protected:
 	static int lAddDeclarationOfFriendship(lua_State* L);
 	static int lAddVoteCommitment(lua_State* L);
 	static int lGetRenewDealMessage(lua_State* L);
-	static int lChangeGoldTrade(lua_State* L)
-	{
-		return BasicLuaMethod(L, &CvDeal::ChangeGoldTrade);
-	};
-	static int lChangeGoldPerTurnTrade(lua_State* L)
-	{
-		return BasicLuaMethod(L, &CvDeal::ChangeGoldPerTurnTrade);
-	};
-	static int lChangeResourceTrade(lua_State* L)
-	{
-		return BasicLuaMethod(L, &CvDeal::ChangeResourceTrade);
-	};
+	// Vox Deorum: custom wrappers parse the optional human-to-human override explicitly.
+	static int lChangeGoldTrade(lua_State* L);
+	static int lChangeGoldPerTurnTrade(lua_State* L);
+	static int lChangeResourceTrade(lua_State* L);
 	static int lChangeThirdPartyWarDuration(lua_State* L)
 	{
 		return BasicLuaMethod(L, &CvDeal::ChangeThirdPartyWarDuration);

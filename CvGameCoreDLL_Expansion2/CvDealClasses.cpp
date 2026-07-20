@@ -3574,7 +3574,8 @@ void CvDeal::AddVoteCommitment(PlayerTypes eFrom, int iResolutionID, int iVoteCh
 	}
 }
 
-bool CvDeal::ChangeGoldTrade(PlayerTypes eFrom, int iNewAmount)
+// Vox Deorum: preserve stock legality by default, with an explicit human-to-human override for Vox edits.
+bool CvDeal::ChangeGoldTrade(PlayerTypes eFrom, int iNewAmount, bool bTreatAsHumanToHuman)
 {
 	ASSERT(eFrom == m_eFromPlayer || eFrom == m_eToPlayer, "DEAL: Changing deal item for a player that's not actually in this deal!");
 
@@ -3589,7 +3590,7 @@ bool CvDeal::ChangeGoldTrade(PlayerTypes eFrom, int iNewAmount)
 			iOldValue = it->m_iData1;
 			it->m_iData1 = 0;
 
-			if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD, iNewAmount))
+			if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD, iNewAmount, -1, -1, false, false, bTreatAsHumanToHuman))
 			{
 				it->m_iData1 = iNewAmount;
 				return true;
@@ -3604,7 +3605,8 @@ bool CvDeal::ChangeGoldTrade(PlayerTypes eFrom, int iNewAmount)
 	return false;
 }
 
-bool CvDeal::ChangeGoldPerTurnTrade(PlayerTypes eFrom, int iNewAmount, int iDuration)
+// Vox Deorum: preserve stock legality by default, with an explicit human-to-human override for Vox edits.
+bool CvDeal::ChangeGoldPerTurnTrade(PlayerTypes eFrom, int iNewAmount, int iDuration, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
@@ -3615,7 +3617,7 @@ bool CvDeal::ChangeGoldPerTurnTrade(PlayerTypes eFrom, int iNewAmount, int iDura
 	{
 		if(it->m_eItemType == TRADE_ITEM_GOLD_PER_TURN && it->m_eFromPlayer == eFrom)
 		{
-			if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD_PER_TURN, iNewAmount, iDuration))
+			if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_GOLD_PER_TURN, iNewAmount, iDuration, -1, false, false, bTreatAsHumanToHuman))
 			{
 				it->m_iData1 = iNewAmount;
 				it->m_iDuration = iDuration;
@@ -3703,7 +3705,8 @@ int CvDeal::GetNumStrategicsOnTheirSide(PlayerTypes eFrom)
 	return iNum;
 }
 
-bool CvDeal::ChangeResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration)
+// Vox Deorum: preserve stock legality by default, with an explicit human-to-human override for Vox edits.
+bool CvDeal::ChangeResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int iAmount, int iDuration, bool bTreatAsHumanToHuman)
 {
 	ASSERT(iDuration >= 0, "DEAL: Trying to add a negative duration to a TradeItem.");
 	ASSERT(iDuration < GC.getGame().getEstimateEndTurn() * 2, "DEAL: Trade item has a crazy long duration (probably invalid).");
@@ -3716,7 +3719,7 @@ bool CvDeal::ChangeResourceTrade(PlayerTypes eFrom, ResourceTypes eResource, int
 		        it->m_eFromPlayer == eFrom &&
 		        (ResourceTypes)it->m_iData1 == eResource)
 		{
-			if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_RESOURCES, eResource, iAmount))
+			if(IsPossibleToTradeItem(eFrom, GetOtherPlayer(eFrom), TRADE_ITEM_RESOURCES, eResource, iAmount, -1, false, false, bTreatAsHumanToHuman))
 			{
 				it->m_iData2 = iAmount;
 				it->m_iDuration = iDuration;

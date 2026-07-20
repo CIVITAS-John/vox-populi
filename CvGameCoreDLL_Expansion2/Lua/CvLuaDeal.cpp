@@ -57,6 +57,9 @@ void CvLuaDeal::PushMethods(lua_State* L, int t)
 	Method(GetReasonsItemUntradeable);
 	Method(GetTradeItemValue);
 	Method(Enact); // Vox Deorum: enact an agreed agent deal for real (interactive-diplomacy stage 6)
+#if defined(MOD_ACTIVE_DIPLOMACY)
+	Method(AreAllTradeItemsValid); // Vox Deorum: expose guarded final validation to the stage 7 deal editor.
+#endif
 	Method(BlockTemporaryForPermanentTrade);
 
 	Method(GetRenewDealMessage);
@@ -173,6 +176,20 @@ int CvLuaDeal::lGetReasonsItemUntradeable(lua_State* L)
 	return 1;
 }
 
+#if defined(MOD_ACTIVE_DIPLOMACY)
+//------------------------------------------------------------------------------
+// Vox Deorum: validate the complete scratch deal with an optional human-to-human override.
+int CvLuaDeal::lAreAllTradeItemsValid(lua_State* L)
+{
+	CvDeal* pkDeal = GetInstance(L);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 2, false);
+	const bool bResult = pkDeal->AreAllTradeItemsValid(bTreatAsHumanToHuman);
+
+	lua_pushboolean(L, bResult);
+	return 1;
+}
+#endif
+
 //------------------------------------------------------------------------------
 // Vox Deorum: read-only per-item AI value estimate, computed BOTH directions.
 // Wraps CvDealAI::GetTradeItemValue without ever touching the acceptance/enact path.
@@ -286,6 +303,48 @@ int CvLuaDeal::lGetRenewDealMessage(lua_State* L)
 	bool bDealAcceptable = GET_PLAYER(eFromPlayer).GetDealAI()->IsDealWithHumanAcceptable(pkDeal, eOtherPlayer, iDealValueToMe, &bCantMatchOffer, false);
 	DiploMessageTypes eMessage = bDealAcceptable ? DIPLO_MESSAGE_RENEW_DEAL : DIPLO_MESSAGE_WANT_MORE_RENEW_DEAL;
 	lua_pushstring(L, GET_PLAYER(eFromPlayer).GetDiplomacyAI()->GetDiploStringForMessage(eMessage));
+	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: change gold with an optional human-to-human legality override.
+int CvLuaDeal::lChangeGoldTrade(lua_State* L)
+{
+	CvDeal* pkDeal = GetInstance(L);
+	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const int iAmount = lua_tointeger(L, 3);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 4, false);
+	const bool bResult = pkDeal->ChangeGoldTrade(eFromPlayer, iAmount, bTreatAsHumanToHuman);
+
+	lua_pushboolean(L, bResult);
+	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: change gold per turn with an optional human-to-human legality override.
+int CvLuaDeal::lChangeGoldPerTurnTrade(lua_State* L)
+{
+	CvDeal* pkDeal = GetInstance(L);
+	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const int iAmount = lua_tointeger(L, 3);
+	const int iDuration = lua_tointeger(L, 4);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 5, false);
+	const bool bResult = pkDeal->ChangeGoldPerTurnTrade(eFromPlayer, iAmount, iDuration, bTreatAsHumanToHuman);
+
+	lua_pushboolean(L, bResult);
+	return 1;
+}
+//------------------------------------------------------------------------------
+// Vox Deorum: change a resource amount with an optional human-to-human legality override.
+int CvLuaDeal::lChangeResourceTrade(lua_State* L)
+{
+	CvDeal* pkDeal = GetInstance(L);
+	const PlayerTypes eFromPlayer = (PlayerTypes)lua_tointeger(L, 2);
+	const ResourceTypes eResource = (ResourceTypes)lua_tointeger(L, 3);
+	const int iAmount = lua_tointeger(L, 4);
+	const int iDuration = lua_tointeger(L, 5);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 6, false);
+	const bool bResult = pkDeal->ChangeResourceTrade(eFromPlayer, eResource, iAmount, iDuration, bTreatAsHumanToHuman);
+
+	lua_pushboolean(L, bResult);
 	return 1;
 }
 //------------------------------------------------------------------------------
