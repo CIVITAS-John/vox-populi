@@ -48,6 +48,13 @@ local g_Deal = UI.GetScratchDeal();
 local g_iDiploUIState;
 local g_bPVPTrade;
 local g_bTradeReview = false;
+-- Vox Deorum: state is inactive until the wrapper opens a human-to-human editor.
+local g_bVDHumanToHuman = false;
+
+-- Vox Deorum: clear wrapper state before a native screen can reuse this context.
+local function ResetVoxDeorumTradeLogicState()
+	g_bVDHumanToHuman = false;
+end
 local g_iNumOthers = 0;
 local g_iNumOtherNonVassals = 0;
 local g_bEnableThirdParty = true;
@@ -144,6 +151,8 @@ end
 -- LEADER MESSAGE HANDLER
 ---------------------------------------------------------
 function LeaderMessageHandler( iPlayer, iDiploUIState, szLeaderMessage, iAnimationAction, iData1 )
+	-- Vox Deorum: native leader messages always use stock trade-screen state.
+	ResetVoxDeorumTradeLogicState();
 	g_bPVPTrade = false;
 
 	-- If we were just in discussion mode and the human offered to make concessions, make a note of that
@@ -413,6 +422,8 @@ end
 -- Used by SimpleDiploTrade to display pvp deals
 ----------------------------------------------------------------
 function OnOpenPlayerDealScreen( iOtherPlayer )
+	-- Vox Deorum: native player deals always use stock trade-screen state.
+	ResetVoxDeorumTradeLogicState();
 
 	--print( "OpenPlayerDealScreen: " .. iOtherPlayer );
 
@@ -465,8 +476,8 @@ function OnOpenPlayerDealScreen( iOtherPlayer )
 		g_Deal:SetToPlayer( g_iThem );
 
 		if( g_pUsTeam:IsAtWar( g_iThemTeam ) ) then
-			g_Deal:AddPeaceTreaty( g_iUs, g_PeaceDealDuration );
-			g_Deal:AddPeaceTreaty( g_iThem, g_PeaceDealDuration );
+			g_Deal:AddPeaceTreaty( g_iUs, g_PeaceDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
+			g_Deal:AddPeaceTreaty( g_iThem, g_PeaceDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 		end
 
 		DoUpdateButtons();
@@ -481,10 +492,82 @@ function OnOpenPlayerDealScreen( iOtherPlayer )
 end
 
 
+-- Vox Deorum: initialize the native editor without changing wrapper visibility or callbacks.
+function VoxDeorumOpenDeal( actorID, counterpartID )
+	-- Vox Deorum: initialize seat state before the wrapper shows this context.
+	if (not ContextPtr:IsHidden()) then
+		return false;
+	end
+
+	local iMaxMajorCivs = GameDefines and GameDefines.MAX_MAJOR_CIVS;
+	if (type(iMaxMajorCivs) ~= "number" or
+		type(actorID) ~= "number" or type(counterpartID) ~= "number" or
+		actorID < 0 or counterpartID < 0 or
+		actorID >= iMaxMajorCivs or counterpartID >= iMaxMajorCivs or
+		actorID ~= math.floor(actorID) or counterpartID ~= math.floor(counterpartID) or
+		actorID == counterpartID) then
+		return false;
+	end
+
+	local pUs = Players[ actorID ];
+	local pThem = Players[ counterpartID ];
+	if (not pUs or not pThem) then
+		return false;
+	end
+
+	local iUsTeam = pUs:GetTeam();
+	local iThemTeam = pThem:GetTeam();
+	local pUsTeam = Teams[ iUsTeam ];
+	local pThemTeam = Teams[ iThemTeam ];
+	if (not pUsTeam or not pThemTeam) then
+		return false;
+	end
+
+	g_bVDHumanToHuman = true;
+	g_iUs = actorID;
+	g_pUs = pUs;
+	g_iUsTeam = iUsTeam;
+	g_pUsTeam = pUsTeam;
+	g_iThem = counterpartID;
+	g_pThem = pThem;
+	g_iThemTeam = iThemTeam;
+	g_pThemTeam = pThemTeam;
+	-- Vox Deorum: prevent native AI dialogue state from changing the wrapper's editor.
+	g_iDiploUIState = DiploUIStateTypes.DIPLO_UI_STATE_TRADE;
+	g_bMessageFromDiploAI = false;
+	g_bAIMakingOffer = false;
+	g_iConcessionsPreviousDiploUIState = -1;
+	g_bHumanOfferingConcessions = false;
+	g_bPVPTrade = false;
+	g_bTradeReview = false;
+	g_bNewDeal = true;
+	g_Deal:ClearItems();
+	g_Deal:SetFromPlayer( g_iUs );
+	g_Deal:SetToPlayer( g_iThem );
+	-- Vox Deorum: war deals require paired peace terms before they can validate.
+	if (g_pUsTeam:IsAtWar( g_iThemTeam )) then
+		g_Deal:AddPeaceTreaty( g_iUs, g_PeaceDealDuration, g_bVDHumanToHuman );
+		g_Deal:AddPeaceTreaty( g_iThem, g_PeaceDealDuration, g_bVDHumanToHuman );
+	end
+	-- Vox Deorum: restore the ordinary trade panels without touching the popup queue.
+	Controls.UsPanel:SetHide(false);
+	Controls.UsGlass:SetHide(false);
+	Controls.ThemPanel:SetHide(false);
+	Controls.ThemGlass:SetHide(false);
+	Controls.UsTableCover:SetHide(true);
+	Controls.ThemTableCover:SetHide(true);
+	DoClearTable();
+	DisplayDeal();
+	return true;
+end
+
+
 ----------------------------------------------------------------
 -- used by DiploOverview to display active deals
 ----------------------------------------------------------------
 function OpenDealReview(OverridePlayer)
+	-- Vox Deorum: native deal reviews always use stock trade-screen state.
+	ResetVoxDeorumTradeLogicState();
 
 	--print( "OpenDealReview" );
 
@@ -721,6 +804,8 @@ function OnShowHide( isHide, bIsInit )
             
         -- Hiding screen
         else
+			-- Vox Deorum: do not let a later stock screen inherit wrapper state.
+			ResetVoxDeorumTradeLogicState();
     		UIManager:SetUICursor(oldCursor); -- make sure we retrun the cursor to the previous state
     		LuaEvents.TryDismissTutorial("DIPLO_TRADE_SCREEN");
         end
@@ -973,6 +1058,13 @@ function DoUpdateButtons()
 		else
  			Controls.ProposeButton:SetHide(false);
 		end
+	end
+
+	-- Vox Deorum: leave native footer callbacks inert until the wrapper reclaims them.
+	if (g_bVDHumanToHuman) then
+		Controls.ProposeButton:SetDisabled(true);
+		Controls.CancelButton:SetDisabled(true);
+		LuaEvents.VoxDeorumTradeLogicUpdateButtons();
 	end
 end
 
@@ -1424,7 +1516,7 @@ function ResetDisplay()
     local iGold = g_Deal:GetGoldAvailable(g_iUs, iItemToBeChanged);
     Controls.UsPocketGold:SetText( iGold .. " " .. Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD") );
 
-    local bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD, 1);	-- 1 here is 1 Gold, which is the minimum possible
+    local bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD, 1, nil, nil, nil, g_bVDHumanToHuman);	-- Vox Deorum: 1 here is 1 Gold, which is the minimum possible.
 
     if (not bTradeAllowed) then
 	    Controls.UsPocketGold:SetDisabled(true);
@@ -1435,7 +1527,7 @@ function ResetDisplay()
 		elseif (bSanctioned) then
 			Controls.UsPocketGold:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 		else
-			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD, 1);
+			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD, 1, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 			if (strTooltip ~= "") then
 				Controls.UsPocketGold:SetToolTipString(strTooltip);
 			else
@@ -1454,7 +1546,7 @@ function ResetDisplay()
     iGold = g_Deal:GetGoldAvailable(g_iThem, iItemToBeChanged);
     Controls.ThemPocketGold:SetText( iGold .. " " .. Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD") );
     
-    bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD, 1);	-- 1 here is 1 Gold, which is the minimum possible
+    bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD, 1, nil, nil, nil, g_bVDHumanToHuman);	-- Vox Deorum: 1 here is 1 Gold, which is the minimum possible.
     
     if (not bTradeAllowed) then
 	    Controls.ThemPocketGold:SetDisabled(true);
@@ -1465,7 +1557,7 @@ function ResetDisplay()
 		elseif (bSanctioned) then
 			Controls.ThemPocketGold:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 		else
-			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD, 1);
+			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD, 1, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 			if (strTooltip ~= "") then
 				Controls.ThemPocketGold:SetToolTipString(strTooltip);
 			else
@@ -1487,7 +1579,7 @@ function ResetDisplay()
 	local iGoldPerTurn = GetEffectiveGoldRate(g_pUs, g_iUs, g_iThem);
     Controls.UsPocketGoldPerTurn:SetText( iGoldPerTurn .. " " .. Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD_PER_TURN") );
 
-    bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration);	-- 1 here is 1 GPT, which is the minimum possible
+    bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration, nil, nil, g_bVDHumanToHuman);	-- Vox Deorum: 1 here is 1 GPT, which is the minimum possible.
 
     if (not bTradeAllowed) then
 	    Controls.UsPocketGoldPerTurn:SetDisabled(true);
@@ -1498,7 +1590,7 @@ function ResetDisplay()
 		elseif (bSanctioned) then
 			Controls.UsPocketGoldPerTurn:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 		else
-			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration);
+			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 			if (strTooltip ~= "") then
 				Controls.UsPocketGoldPerTurn:SetToolTipString(strTooltip);
 			else
@@ -1521,7 +1613,7 @@ function ResetDisplay()
 	iGoldPerTurn = GetEffectiveGoldRate(g_pThem, g_iThem, g_iUs);
     Controls.ThemPocketGoldPerTurn:SetText( iGoldPerTurn .. " " .. Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD_PER_TURN") );
 
-    bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration);	-- 1 here is 1 GPT, which is the minimum possible
+    bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration, nil, nil, g_bVDHumanToHuman);	-- Vox Deorum: 1 here is 1 GPT, which is the minimum possible.
 
     if (not bTradeAllowed) then
 	    Controls.ThemPocketGoldPerTurn:SetDisabled(true);
@@ -1532,7 +1624,7 @@ function ResetDisplay()
 		elseif (bSanctioned) then
 			Controls.ThemPocketGoldPerTurn:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 		else
-			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration);
+			strTooltip = g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_GOLD_PER_TURN, 1, g_iDealDuration, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 			if (strTooltip ~= "") then
 				Controls.ThemPocketGoldPerTurn:SetToolTipString(strTooltip);
 			else
@@ -1558,7 +1650,7 @@ function ResetDisplay()
 		strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_ALLOW_EMBASSY_TT");
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketAllowEmbassy:SetDisabled(true);
@@ -1569,7 +1661,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketAllowEmbassy:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketAllowEmbassy:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration));
+				Controls.UsPocketAllowEmbassy:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketAllowEmbassy:SetDisabled(false);
@@ -1584,7 +1676,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketAllowEmbassy:SetDisabled(true);
@@ -1595,7 +1687,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketAllowEmbassy:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketAllowEmbassy:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration));
+				Controls.ThemPocketAllowEmbassy:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_ALLOW_EMBASSY, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketAllowEmbassy:SetDisabled(false);
@@ -1617,7 +1709,7 @@ function ResetDisplay()
 		strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_OPEN_BORDERS_TT", g_iDealDuration);
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketOpenBorders:SetDisabled(true);
@@ -1628,7 +1720,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketOpenBorders:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketOpenBorders:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration));
+				Controls.UsPocketOpenBorders:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketOpenBorders:SetDisabled(false);
@@ -1643,7 +1735,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketOpenBorders:SetDisabled(true);
@@ -1654,7 +1746,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketOpenBorders:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketOpenBorders:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration));
+				Controls.ThemPocketOpenBorders:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_OPEN_BORDERS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketOpenBorders:SetDisabled(false);
@@ -1682,7 +1774,7 @@ function ResetDisplay()
 		end
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketDefensivePact:SetDisabled(true);
@@ -1693,7 +1785,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketDefensivePact:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketDefensivePact:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration));
+				Controls.UsPocketDefensivePact:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketDefensivePact:SetDisabled(false);
@@ -1708,7 +1800,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketDefensivePact:SetDisabled(true);
@@ -1719,7 +1811,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketDefensivePact:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketDefensivePact:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration));
+				Controls.ThemPocketDefensivePact:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_DEFENSIVE_PACT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketDefensivePact:SetDisabled(false);
@@ -1741,7 +1833,7 @@ function ResetDisplay()
 		strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_RESCH_AGREEMENT_TT", iRACost, g_iDealDuration);
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketResearchAgreement:SetDisabled(true);
@@ -1752,7 +1844,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketResearchAgreement:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketResearchAgreement:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration));
+				Controls.UsPocketResearchAgreement:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketResearchAgreement:SetDisabled(false);
@@ -1767,7 +1859,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketResearchAgreement:SetDisabled(true);
@@ -1778,7 +1870,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketResearchAgreement:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketResearchAgreement:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration));
+				Controls.ThemPocketResearchAgreement:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketResearchAgreement:SetDisabled(false);
@@ -1797,10 +1889,10 @@ function ResetDisplay()
     ----------------------------------------------------------------------------------
 
 	if (Controls.UsPocketDoF ~= nil and Controls.ThemPocketDoF ~= nil) then
-		if (g_bPVPTrade) then	-- Only PvP trade, with the AI there is a dedicated interface for this trade.
+		if (g_bPVPTrade or g_bVDHumanToHuman) then	-- Vox Deorum: allow human-to-human friendship in the wrapper editor.
 		
 			strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_DISCUSS_MESSAGE_DEC_FRIENDSHIP_TT");
-			bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_DECLARATION_OF_FRIENDSHIP, g_iDealDuration);
+			bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_DECLARATION_OF_FRIENDSHIP, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 			if (not bTradeAllowed) then
 				Controls.UsPocketDoF:SetDisabled(true);
@@ -1835,7 +1927,7 @@ function ResetDisplay()
 
 	local bFound = false;
 	for pCity in g_pUs:Cities() do
-		if (g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_CITIES, pCity:GetX(), pCity:GetY())) then
+		if (g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_CITIES, pCity:GetX(), pCity:GetY(), nil, nil, g_bVDHumanToHuman)) then -- Vox Deorum: preserve omitted native arguments.
 			bFound = true;
 			break;
 		end
@@ -1862,7 +1954,7 @@ function ResetDisplay()
 
 	bFound = false;
 	for pCity in g_pThem:Cities() do
-		if (g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_CITIES, pCity:GetX(), pCity:GetY())) then
+		if (g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_CITIES, pCity:GetX(), pCity:GetY(), nil, nil, g_bVDHumanToHuman)) then -- Vox Deorum: preserve omitted native arguments.
 			bFound = true;
 			break;
 		end
@@ -1946,7 +2038,7 @@ function ResetDisplay()
 	-- Loop over all resources
 	for resType, instance in pairs(g_UsPocketResources) do
 		
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_RESOURCES, resType, 1);	-- 1 here is 1 quantity of the Resource, which is the minimum possible
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_RESOURCES, resType, 1, nil, nil, g_bVDHumanToHuman);	-- Vox Deorum: 1 here is 1 quantity of the Resource, which is the minimum possible.
 		
 		if (bTradeAllowed) then
 			if (g_LuxuryList[resType] == true) then
@@ -2032,7 +2124,7 @@ function ResetDisplay()
 	-- Loop over all resources
 	for resType, instance in pairs(g_ThemPocketResources) do
 
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_RESOURCES, resType, 1);	-- 1 here is 1 quantity of the Resource, which is the minimum possible
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_RESOURCES, resType, 1, nil, nil, g_bVDHumanToHuman);	-- Vox Deorum: 1 here is 1 quantity of the Resource, which is the minimum possible.
 		
 		if (bTradeAllowed) then
 			if (g_LuxuryList[resType] == true) then
@@ -2211,7 +2303,7 @@ function ResetDisplay()
 		strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_TRADE_MAP_TT", g_iDealDuration);
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketTradeMap:SetDisabled(true);
@@ -2222,7 +2314,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketTradeMap:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketTradeMap:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration));
+				Controls.UsPocketTradeMap:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketTradeMap:SetDisabled(false);
@@ -2237,7 +2329,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketTradeMap:SetDisabled(true);
@@ -2248,7 +2340,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketTradeMap:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketTradeMap:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration));
+				Controls.ThemPocketTradeMap:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_MAPS, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketTradeMap:SetDisabled(false);
@@ -2278,7 +2370,7 @@ function ResetDisplay()
 		end
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketVassalage:SetDisabled(true);
@@ -2289,7 +2381,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketVassalage:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration));
+				Controls.UsPocketVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketVassalage:SetDisabled(false);
@@ -2304,7 +2396,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketVassalage:SetDisabled(true);
@@ -2315,7 +2407,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketVassalage:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration));
+				Controls.ThemPocketVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketVassalage:SetDisabled(false);
@@ -2337,7 +2429,7 @@ function ResetDisplay()
 		strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_VASSALAGE_REVOKE_TT");
 
 		-- Our Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.UsPocketRevokeVassalage:SetDisabled(true);
@@ -2348,7 +2440,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.UsPocketRevokeVassalage:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.UsPocketRevokeVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration));
+				Controls.UsPocketRevokeVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.UsPocketRevokeVassalage:SetDisabled(false);
@@ -2363,7 +2455,7 @@ function ResetDisplay()
 		----------------------------------------------------------------------------------
 
 		-- Their Side
-		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration);
+		bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 		if (not bTradeAllowed) then
 			Controls.ThemPocketRevokeVassalage:SetDisabled(true);
@@ -2374,7 +2466,7 @@ function ResetDisplay()
 			elseif (bSanctioned) then
 				Controls.ThemPocketRevokeVassalage:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT"));
 			else
-				Controls.ThemPocketRevokeVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration));
+				Controls.ThemPocketRevokeVassalage:SetToolTipString(strTooltip .. g_Deal:GetReasonsItemUntradeable(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iDealDuration, nil, nil, nil, g_bVDHumanToHuman)); -- Vox Deorum: preserve omitted native arguments.
 			end
 		else
 			Controls.ThemPocketRevokeVassalage:SetDisabled(false);
@@ -2399,7 +2491,7 @@ function ResetDisplay()
 		-- Our Side
 		-- Loop through all technologies
 		for techType, instance in pairs(g_UsPocketTechs) do
-			bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_TECHS, techType);
+			bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_TECHS, techType, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 			if (bTradeAllowed) then
 				bFoundTech = true;
@@ -2467,7 +2559,7 @@ function ResetDisplay()
 		-- Their Side
 		-- Loop through all technologies
 		for techType, instance in pairs(g_ThemPocketTechs) do
-			bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_TECHS, techType);
+			bTradeAllowed = g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_TECHS, techType, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 
 			if (bTradeAllowed) then
 				bFoundTech = true;
@@ -2533,6 +2625,11 @@ function ResetDisplay()
 	end
 
     ResizeStacks();
+
+	-- Vox Deorum: notify the wrapper after the native pocket display refreshes in Vox mode.
+	if (g_bVDHumanToHuman) then
+		LuaEvents.VoxDeorumTradeLogicResetDisplay();
+	end
 end
 
 
@@ -2620,6 +2717,10 @@ function DoClearTable()
 
 	ResizeStacks();
 
+	-- Vox Deorum: notify the wrapper after the native table clears in Vox mode.
+	if (g_bVDHumanToHuman) then
+		LuaEvents.VoxDeorumTradeLogicClearTable();
+	end
 end
 
 
@@ -2696,6 +2797,8 @@ function DisplayDeal(OverridePlayer)
 	local data1;
 	local data2;
 	local data3;
+	-- Vox Deorum: render the wrapper seat as the human column while it is active.
+	local iDisplayPlayer = OverridePlayer or (g_bVDHumanToHuman and g_iUs) or Game.GetActivePlayer();
 	local flag1;
 	local fromPlayer;
 
@@ -2723,7 +2826,7 @@ function DisplayDeal(OverridePlayer)
 
 		--print("Adding trade item to active deal: " .. itemType);
 
-		if( fromPlayer == (OverridePlayer or Game.GetActivePlayer()) ) then
+		if( fromPlayer == iDisplayPlayer ) then
 			bFromUs = true;
 			iNumItemsFromUs = iNumItemsFromUs + 1;
 		else
@@ -3001,6 +3104,11 @@ function DisplayDeal(OverridePlayer)
 	DoUpdateButtons();
 
 	ResizeStacks();
+
+	-- Vox Deorum: notify the wrapper after the native deal display refreshes in Vox mode.
+	if (g_bVDHumanToHuman) then
+		LuaEvents.VoxDeorumTradeLogicDisplayDeal();
+	end
 end
 
 
@@ -3084,14 +3192,14 @@ function PocketGoldHandler( isUs )
 		if (iAmount > iAmountAvailable) then
 			iAmount = iAmountAvailable;
 		end
-		g_Deal:AddGoldTrade( g_iUs, iAmount );
+		g_Deal:AddGoldTrade( g_iUs, iAmount, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 
 	else
 		iAmountAvailable = g_Deal:GetGoldAvailable(g_iThem, iItemToBeChanged);
 		if (iAmount > iAmountAvailable) then
 			iAmount = iAmountAvailable;
 		end
-		g_Deal:AddGoldTrade( g_iThem, iAmount );
+		g_Deal:AddGoldTrade( g_iThem, iAmount, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3140,7 +3248,7 @@ function ChangeGoldAmount( string, control )
 			Controls.UsGoldAmount:SetText(iGold);
 		end
 
-		g_Deal:ChangeGoldTrade( g_iUs, iGold );
+		g_Deal:ChangeGoldTrade( g_iUs, iGold, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 
 		local iItemToBeChanged = -1;
 		local strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GOLD", g_Deal:GetGoldAvailable(g_iUs, iItemToBeChanged) );
@@ -3159,7 +3267,7 @@ function ChangeGoldAmount( string, control )
 			Controls.ThemGoldAmount:SetText(iGold);
 		end
 
-		g_Deal:ChangeGoldTrade( g_iThem, iGold );
+		g_Deal:ChangeGoldTrade( g_iThem, iGold, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 
 		local iItemToBeChanged = -1;
 		local strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GOLD", g_Deal:GetGoldAvailable(g_iThem, iItemToBeChanged) );
@@ -3196,14 +3304,14 @@ function PocketGoldPerTurnHandler( isUs )
 			iGoldPerTurn = iEffectiveRate;
 		end
 
-		g_Deal:AddGoldPerTurnTrade( g_iUs, iGoldPerTurn, g_iDealDuration );
+		g_Deal:AddGoldPerTurnTrade( g_iUs, iGoldPerTurn, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
 		local iEffectiveRate = GetEffectiveGoldRate(g_pThem, g_iThem, g_iUs);
 		if (iGoldPerTurn > iEffectiveRate) then
 			iGoldPerTurn = iEffectiveRate;
 		end
 
-		g_Deal:AddGoldPerTurnTrade( g_iThem, iGoldPerTurn, g_iDealDuration );
+		g_Deal:AddGoldPerTurnTrade( g_iThem, iGoldPerTurn, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3257,7 +3365,7 @@ function ChangeGoldPerTurnAmount( string, control )
 			Controls.UsGoldPerTurnAmount:SetText(iGoldPerTurn);
 		end
 
-		g_Deal:ChangeGoldPerTurnTrade( g_iUs, iGoldPerTurn, g_iDealDuration );
+		g_Deal:ChangeGoldPerTurnTrade( g_iUs, iGoldPerTurn, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 
 		local strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GPT", iEffectiveRate - iGoldPerTurn );
 		Controls.UsTableGoldPerTurn:SetToolTipString( strTooltip );
@@ -3274,7 +3382,7 @@ function ChangeGoldPerTurnAmount( string, control )
 			Controls.ThemGoldPerTurnAmount:SetText(iGoldPerTurn);
 		end
 
-		g_Deal:ChangeGoldPerTurnTrade( g_iThem, iGoldPerTurn, g_iDealDuration );
+		g_Deal:ChangeGoldPerTurnTrade( g_iThem, iGoldPerTurn, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 
 		local strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GPT", iEffectiveRate - iGoldPerTurn );
 		Controls.ThemTableGoldPerTurn:SetToolTipString( strTooltip );
@@ -3297,9 +3405,9 @@ if gk_mode then
 	function PocketAllowEmbassyHandler( isUs )
 		--print("PocketAllowEmbassyHandler");
 		if( isUs == 1 ) then
-			g_Deal:AddAllowEmbassy(g_iUs);
+			g_Deal:AddAllowEmbassy(g_iUs, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 		else
-			g_Deal:AddAllowEmbassy(g_iThem);
+			g_Deal:AddAllowEmbassy(g_iThem, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 		end
 		DisplayDeal();
 		DoUIDealChangedByHuman();
@@ -3336,8 +3444,8 @@ end -- gk_mode
 function PocketDoFHandler( isUs )
 	--print("PocketDoFHandler");
 	-- The Declaration of Friendship must be on both sides of the deal
-	g_Deal:AddDeclarationOfFriendship(g_iUs);
-	g_Deal:AddDeclarationOfFriendship(g_iThem);
+	g_Deal:AddDeclarationOfFriendship(g_iUs, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
+	g_Deal:AddDeclarationOfFriendship(g_iThem, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3361,9 +3469,9 @@ end
 function PocketOpenBordersHandler( isUs )
 
 	if( isUs == 1 ) then
-		g_Deal:AddOpenBorders( g_iUs, g_iDealDuration );
+		g_Deal:AddOpenBorders( g_iUs, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:AddOpenBorders( g_iThem, g_iDealDuration );
+		g_Deal:AddOpenBorders( g_iThem, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3404,11 +3512,11 @@ function PocketDefensivePactHandler( isUs )
 	-- Note that currently Defensive Pact is required on both sides
 
 	if( isUs == 1 ) then
-		g_Deal:AddDefensivePact( g_iUs, g_iDealDuration );
-		g_Deal:AddDefensivePact( g_iThem, g_iDealDuration );
+		g_Deal:AddDefensivePact( g_iUs, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
+		g_Deal:AddDefensivePact( g_iThem, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:AddDefensivePact( g_iUs, g_iDealDuration );
-		g_Deal:AddDefensivePact( g_iThem, g_iDealDuration );
+		g_Deal:AddDefensivePact( g_iUs, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
+		g_Deal:AddDefensivePact( g_iThem, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3440,11 +3548,11 @@ function PocketResearchAgreementHandler( isUs )
 	-- Note that currently Research Agreement is required on both sides
 
 	if( isUs == 1 ) then
-		g_Deal:AddResearchAgreement( g_iUs, g_iDealDuration );
-		g_Deal:AddResearchAgreement( g_iThem, g_iDealDuration );
+		g_Deal:AddResearchAgreement( g_iUs, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
+		g_Deal:AddResearchAgreement( g_iThem, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:AddResearchAgreement( g_iUs, g_iDealDuration );
-		g_Deal:AddResearchAgreement( g_iThem, g_iDealDuration );
+		g_Deal:AddResearchAgreement( g_iUs, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
+		g_Deal:AddResearchAgreement( g_iThem, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3480,10 +3588,10 @@ function PocketResourceHandler( isUs, resourceId )
 
 	if( isUs == 1 ) then
 		iAmount = math.min(GetEffectiveResourceCount(g_pUs, g_iUs, g_iThem, resourceId), iAmount);
-		g_Deal:AddResourceTrade( g_iUs, resourceId, iAmount, g_iDealDuration );
+		g_Deal:AddResourceTrade( g_iUs, resourceId, iAmount, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
 		iAmount = math.min(GetEffectiveResourceCount(g_pThem, g_iThem, g_iUs, resourceId), iAmount);
-		g_Deal:AddResourceTrade( g_iThem, resourceId, iAmount, g_iDealDuration );
+		g_Deal:AddResourceTrade( g_iThem, resourceId, iAmount, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 
 	DisplayDeal();
@@ -3591,9 +3699,9 @@ function ChangeResourceAmount( string, control )
 	control:SetText(iNumResource);
 
 	if ( bIsUs ) then
-		g_Deal:ChangeResourceTrade( g_iUs, iResourceID, iNumResource, g_iDealDuration );
+		g_Deal:ChangeResourceTrade( g_iUs, iResourceID, iNumResource, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:ChangeResourceTrade( g_iThem, iResourceID, iNumResource, g_iDealDuration );
+		g_Deal:ChangeResourceTrade( g_iThem, iResourceID, iNumResource, g_iDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 
 	--CBP
@@ -3607,9 +3715,9 @@ end
 function PocketTradeMapHandler( isUs )
 	print("PocketTradeMapHandler");
 	if (isUs == 1 ) then
-		g_Deal:AddMapTrade(g_iUs);
+		g_Deal:AddMapTrade(g_iUs, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:AddMapTrade(g_iThem);
+		g_Deal:AddMapTrade(g_iThem, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 	end
 	DisplayDeal();
 	DoUIDealChangedByHuman();
@@ -3643,11 +3751,11 @@ Controls.ThemTableTradeMap:SetVoid1( 0 );
 function PocketVassalageHandler( isUs )
 	print("PocketVassalageHandler");
 	if(isUs == 1) then
-		g_Deal:AddVassalageTrade(g_iUs);
+		g_Deal:AddVassalageTrade(g_iUs, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 		g_Deal:RemoveByType( TradeableItems.TRADE_ITEM_VASSALAGE, g_iThem );
 		--print("Calling PocketVassalageHandler with isUs = 1. WHY YOU DO THIS GAME.");
 	else
-		g_Deal:AddVassalageTrade(g_iThem);
+		g_Deal:AddVassalageTrade(g_iThem, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 		g_Deal:RemoveByType( TradeableItems.TRADE_ITEM_VASSALAGE, g_iUs );
 	end
 	DisplayDeal();
@@ -3683,11 +3791,11 @@ Controls.ThemTableVassalage:SetVoid1( 0 );
 function PocketRevokeVassalageHandler( isUs )
 	print("PocketRevokeVassalageHandler");
 	if(isUs == 1) then
-		g_Deal:AddRevokeVassalageTrade(g_iUs);
+		g_Deal:AddRevokeVassalageTrade(g_iUs, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 		g_Deal:RemoveByType( TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iThem );
 		--print("Calling PocketVassalageHandler with isUs = 1. WHY YOU DO THIS GAME.");
 	else
-		g_Deal:AddRevokeVassalageTrade(g_iThem);
+		g_Deal:AddRevokeVassalageTrade(g_iThem, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 		g_Deal:RemoveByType( TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE, g_iUs );
 	end
 	DisplayDeal();
@@ -3722,9 +3830,9 @@ Controls.ThemTableRevokeVassalage:SetVoid1( 0 );
 -----------------------------------------------------------------------------------------------------------------------
 function PocketTechHandler( isUs, techId )
 	if( isUs == 1 ) then
-		g_Deal:AddTechTrade( g_iUs, techId );
+		g_Deal:AddTechTrade( g_iUs, techId, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:AddTechTrade( g_iThem, techId );
+		g_Deal:AddTechTrade( g_iThem, techId, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 	
 	DisplayDeal();
@@ -3875,7 +3983,7 @@ if bnw_mode then
 			--local iNumVotes = pLeague:GetCoreVotesForMember(iFromPlayer);
 			local bRepeal = g_LeagueVoteList[iVoteIndex].Repeal;
 			--print("==debug== Vote added to deal, ID=" .. iResolutionID .. ", VoteChoice=" .. iVoteChoice .. ", NumVotes=" .. iNumVotes);
-			g_Deal:AddVoteCommitment(iFromPlayer, iResolutionID, iVoteChoice, iNumChooseVotes, bRepeal);
+			g_Deal:AddVoteCommitment(iFromPlayer, iResolutionID, iVoteChoice, iNumChooseVotes, bRepeal, g_bVDHumanToHuman); -- Vox Deorum: preserve human-to-human legality.
 
 			DisplayDeal();
 			DoUIDealChangedByHuman();
@@ -3907,7 +4015,7 @@ function RefreshPocketVotes(iIsUs)
 				local sProposalText = GetVoteText(pLeague, i, tVote.Repeal, iNumUsVotes);
 				local sChoiceText = pLeague:GetTextForChoice(tVote.VoteDecision, tVote.VoteChoice);
 				local sTooltip = GetVoteTooltip(pLeague, i, tVote.Repeal, iNumUsVotes);
-				if (g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VOTE_COMMITMENT, tVote.ID, tVote.VoteChoice, iNumUsVotes, tVote.Repeal)) then
+				if (g_Deal:IsPossibleToTradeItem(g_iUs, g_iThem, TradeableItems.TRADE_ITEM_VOTE_COMMITMENT, tVote.ID, tVote.VoteChoice, iNumUsVotes, tVote.Repeal, g_bVDHumanToHuman)) then -- Vox Deorum: preserve human-to-human legality.
 					g_bAnyVoteUs = true;
 					local cInstance = g_UsPocketVoteIM:GetInstance();
 					cInstance.ProposalLabel:SetText(sProposalText);
@@ -3925,7 +4033,7 @@ function RefreshPocketVotes(iIsUs)
 				local sProposalText = GetVoteText(pLeague, i, tVote.Repeal, iNumThemVotes);
 				local sChoiceText = pLeague:GetTextForChoice(tVote.VoteDecision, tVote.VoteChoice);
 				local sTooltip = GetVoteTooltip(pLeague, i, tVote.Repeal, iNumThemVotes);
-				if (g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VOTE_COMMITMENT, tVote.ID, tVote.VoteChoice, iNumThemVotes, tVote.Repeal)) then
+				if (g_Deal:IsPossibleToTradeItem(g_iThem, g_iUs, TradeableItems.TRADE_ITEM_VOTE_COMMITMENT, tVote.ID, tVote.VoteChoice, iNumThemVotes, tVote.Repeal, g_bVDHumanToHuman)) then -- Vox Deorum: preserve human-to-human legality.
 					g_bAnyVoteThem = true;
 					local cInstance = g_ThemPocketVoteIM:GetInstance();
 					cInstance.ProposalLabel:SetText(sProposalText);
@@ -4020,7 +4128,7 @@ end --bnw_mode
 -----------------------------------------------------------------------------------------------------------------------
 -----------------------------------------------------------------------------------------------------------------------
 function OnChooseCity( playerID, cityID )
-	g_Deal:AddCityTrade( playerID, cityID );
+	g_Deal:AddCityTrade( playerID, cityID, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 
 	if( playerID == g_iUs ) then
 		CityClose( 0, 1 );
@@ -4115,7 +4223,7 @@ function ShowCityChooser( isUs )
 
 		local iCityID = pCity:GetID();
 
-		if ( g_Deal:IsPossibleToTradeItem( m_iFrom, m_iTo, TradeableItems.TRADE_ITEM_CITIES, pCity:GetX(), pCity:GetY() ) ) then
+		if ( g_Deal:IsPossibleToTradeItem( m_iFrom, m_iTo, TradeableItems.TRADE_ITEM_CITIES, pCity:GetX(), pCity:GetY(), nil, nil, g_bVDHumanToHuman ) ) then -- Vox Deorum: preserve omitted native arguments.
 			local instance = m_pIM:GetInstance();
 			if(g_pThem:IsTradeItemValuedImpossible(TradeableItems.TRADE_ITEM_CITIES, g_iUs, isUs==0
 			, g_iDealDuration, pCity:GetX(), pCity:GetY())) then
@@ -4225,7 +4333,7 @@ function ShowOtherPlayerChooser(isUs, type)
 				end
 				szName = szName .. " (" .. Locale.ConvertTextKey(GameInfo.Civilizations[pLoopPlayer:GetCivilizationType()].ShortDescription) .. ")";
 					
-				if (g_Deal:IsPossibleToTradeItem(iFromPlayer, iToPlayer, tradeType, iLoopTeam)) then
+				if (g_Deal:IsPossibleToTradeItem(iFromPlayer, iToPlayer, tradeType, iLoopTeam, nil, nil, nil, g_bVDHumanToHuman)) then -- Vox Deorum: preserve omitted native arguments.
 					otherPlayerButtonSubTableNameButton:SetDisabled(false);
 					if(g_pThem:IsTradeItemValuedImpossible(tradeType, g_iUs, isUs==0, g_iDealDuration, iLoopTeam)) then
 						szName = "[COLOR_NEGATIVE_TEXT]" .. szName .. "[ENDCOLOR]";
@@ -4240,7 +4348,7 @@ function ShowOtherPlayerChooser(isUs, type)
 					elseif (bSanctioned) then
 						strTooltip = Locale.ConvertTextKey("TXT_KEY_DIPLO_DEAL_VALUE_STR_EMBARGO_TT");
 					else
-						strTooltip = g_Deal:GetReasonsItemUntradeable(iFromPlayer, iToPlayer, tradeType, iLoopTeam);
+						strTooltip = g_Deal:GetReasonsItemUntradeable(iFromPlayer, iToPlayer, tradeType, iLoopTeam, nil, nil, nil, g_bVDHumanToHuman); -- Vox Deorum: preserve omitted native arguments.
 					end
 				end
 
@@ -4322,9 +4430,9 @@ function LeaderSelected( iOtherPlayer, isUs )
 	local iOtherTeam = pOtherPlayer:GetTeam();
 
 	if( mode == WAR ) then
-		g_Deal:AddThirdPartyWar( iWho, iOtherTeam );
+		g_Deal:AddThirdPartyWar( iWho, iOtherTeam, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	else
-		g_Deal:AddThirdPartyPeace( iWho, iOtherTeam, g_PeaceDealDuration );
+		g_Deal:AddThirdPartyPeace( iWho, iOtherTeam, g_PeaceDealDuration, g_bVDHumanToHuman ); -- Vox Deorum: preserve human-to-human legality.
 	end
 
 	DisplayDeal();
