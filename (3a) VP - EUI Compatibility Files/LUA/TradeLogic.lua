@@ -66,6 +66,13 @@ local function SetVoxDeorumTableItemColor(control, invalid)
 	end
 end
 
+-- Vox Deorum: color one native table label or editor according to aggregate deal legality.
+local function SetVoxDeorumTableTextColor(control, invalid)
+	if control ~= nil then
+		control:SetColorByName(invalid and "Red_Black" or "Beige_Black");
+	end
+end
+
 -- Vox Deorum: color text owned by a dynamic native table instance.
 local function VoxDeorumTableItemText(value, invalid)
 	value = tostring(value or "");
@@ -2878,6 +2885,7 @@ function DisplayDeal(OverridePlayer)
 			-- update quantity
 			if( bFromUs ) then
 				Controls.UsGoldAmount:SetText( data1 );
+				SetVoxDeorumTableTextColor(Controls.UsGoldAmount, bVoxDeorumInvalidCombination);
 
 				strString = Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD");
 				Controls.UsTableGold:SetText( strString );
@@ -2886,6 +2894,7 @@ function DisplayDeal(OverridePlayer)
 				Controls.UsTableGold:SetToolTipString( strTooltip );
 			else
 				Controls.ThemGoldAmount:SetText( data1 );
+				SetVoxDeorumTableTextColor(Controls.ThemGoldAmount, bVoxDeorumInvalidCombination);
 
 				strString = Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD");
 				Controls.ThemTableGold:SetText( strString );
@@ -2903,6 +2912,8 @@ function DisplayDeal(OverridePlayer)
 				Controls.UsTableGoldPerTurn:SetHide( false );
 				Controls.UsGoldPerTurnTurns:LocalizeAndSetText( "TXT_KEY_DIPLO_TURNS", duration );
 				Controls.UsGoldPerTurnAmount:SetText( data1 );
+				SetVoxDeorumTableTextColor(Controls.UsGoldPerTurnTurns, bVoxDeorumInvalidCombination);
+				SetVoxDeorumTableTextColor(Controls.UsGoldPerTurnAmount, bVoxDeorumInvalidCombination);
 
 				strString = Locale.ConvertTextKey( "TXT_KEY_DIPLO_GOLD_PER_TURN" );
 				Controls.UsTableGoldPerTurnButton:SetText( strString );
@@ -2913,6 +2924,8 @@ function DisplayDeal(OverridePlayer)
 				Controls.ThemTableGoldPerTurn:SetHide( false );
 				Controls.ThemGoldPerTurnTurns:LocalizeAndSetText( "TXT_KEY_DIPLO_TURNS", duration );
 				Controls.ThemGoldPerTurnAmount:SetText( data1 );
+				SetVoxDeorumTableTextColor(Controls.ThemGoldPerTurnTurns, bVoxDeorumInvalidCombination);
+				SetVoxDeorumTableTextColor(Controls.ThemGoldPerTurnAmount, bVoxDeorumInvalidCombination);
 
 				strString = Locale.ConvertTextKey( "TXT_KEY_DIPLO_GOLD_PER_TURN" );
 				Controls.ThemTableGoldPerTurnButton:SetText( strString );
@@ -3018,6 +3031,8 @@ function DisplayDeal(OverridePlayer)
 
 				g_UsTableResources[ data1 ].Container:SetHide( false );
 				SetVoxDeorumTableItemColor(g_UsTableResources[data1].Button, bVoxDeorumInvalidCombination);
+				SetVoxDeorumTableTextColor(g_UsTableResources[data1].DurationEdit, bVoxDeorumInvalidCombination);
+				SetVoxDeorumTableTextColor(g_UsTableResources[data1].AmountEdit, bVoxDeorumInvalidCombination);
 				g_UsTableResources[ data1 ].DurationEdit:LocalizeAndSetText( "TXT_KEY_DIPLO_TURNS", duration );
 
 				if( GameInfo.Resources[ data1 ].ResourceUsage == 1 ) then -- is strategic
@@ -3030,6 +3045,8 @@ function DisplayDeal(OverridePlayer)
 
 				g_ThemTableResources[ data1 ].Container:SetHide( false );
 				SetVoxDeorumTableItemColor(g_ThemTableResources[data1].Button, bVoxDeorumInvalidCombination);
+				SetVoxDeorumTableTextColor(g_ThemTableResources[data1].DurationEdit, bVoxDeorumInvalidCombination);
+				SetVoxDeorumTableTextColor(g_ThemTableResources[data1].AmountEdit, bVoxDeorumInvalidCombination);
 				g_ThemTableResources[ data1 ].DurationEdit:LocalizeAndSetText( "TXT_KEY_DIPLO_TURNS", duration );
 
 				if( GameInfo.Resources[ data1 ].ResourceUsage == 1 ) then -- is strategic
