@@ -55,6 +55,22 @@ local g_bVDHumanToHuman = false;
 local function ResetVoxDeorumTradeLogicState()
 	g_bVDHumanToHuman = false;
 end
+
+-- Vox Deorum: color one native table button according to aggregate deal legality.
+local function SetVoxDeorumTableItemColor(control, invalid)
+	if control ~= nil then
+		local textControl = control:GetTextControl();
+		if textControl ~= nil then
+			textControl:SetColorByName(invalid and "Red_Black" or "Beige_Black");
+		end
+	end
+end
+
+-- Vox Deorum: color text owned by a dynamic native table instance.
+local function VoxDeorumTableItemText(value, invalid)
+	value = tostring(value or "");
+	return invalid and "[COLOR_NEGATIVE_TEXT]" .. value .. "[ENDCOLOR]" or value;
+end
 local g_iNumOthers = 0;
 local g_iNumOtherNonVassals = 0;
 local g_bEnableThirdParty = true;
@@ -2806,6 +2822,12 @@ function DisplayDeal(OverridePlayer)
 	local strTooltip;
 
 	ResetDisplay();
+	-- Vox Deorum: aggregate validation cannot identify one culprit, so color every visible ordinary term when the combination is illegal.
+	local bVoxDeorumInvalidCombination = false;
+	if g_bVDHumanToHuman and type(g_Deal.AreAllTradeItemsValid) == "function" then
+		local ok, valid = pcall(g_Deal.AreAllTradeItemsValid, g_Deal, true);
+		bVoxDeorumInvalidCombination = not ok or valid ~= true;
+	end
 
 	local iNumItemsFromUs = 0;
 	local iNumItemsFromThem = 0;
@@ -2837,9 +2859,11 @@ function DisplayDeal(OverridePlayer)
 			local str = Locale.ConvertTextKey("TXT_KEY_DIPLO_PEACE_TREATY", g_iPeaceDuration);
 			if( bFromUs ) then
 				Controls.UsTablePeaceTreaty:SetText(str);
+				SetVoxDeorumTableItemColor(Controls.UsTablePeaceTreaty, bVoxDeorumInvalidCombination);
 				Controls.UsTablePeaceTreaty:SetHide( false );
 			else
 				Controls.ThemTablePeaceTreaty:SetText(str);
+				SetVoxDeorumTableItemColor(Controls.ThemTablePeaceTreaty, bVoxDeorumInvalidCombination);
 				Controls.ThemTablePeaceTreaty:SetHide( false );
 			end
 
@@ -2857,6 +2881,7 @@ function DisplayDeal(OverridePlayer)
 
 				strString = Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD");
 				Controls.UsTableGold:SetText( strString );
+				SetVoxDeorumTableItemColor(Controls.UsTableGold, bVoxDeorumInvalidCombination);
 				strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GOLD", g_Deal:GetGoldAvailable(g_iUs, iItemToBeChanged) );
 				Controls.UsTableGold:SetToolTipString( strTooltip );
 			else
@@ -2864,6 +2889,7 @@ function DisplayDeal(OverridePlayer)
 
 				strString = Locale.ConvertTextKey("TXT_KEY_DIPLO_GOLD");
 				Controls.ThemTableGold:SetText( strString );
+				SetVoxDeorumTableItemColor(Controls.ThemTableGold, bVoxDeorumInvalidCombination);
 				strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GOLD", g_Deal:GetGoldAvailable(g_iThem, iItemToBeChanged) );
 				Controls.ThemTableGold:SetToolTipString( strTooltip );
 			end
@@ -2880,6 +2906,7 @@ function DisplayDeal(OverridePlayer)
 
 				strString = Locale.ConvertTextKey( "TXT_KEY_DIPLO_GOLD_PER_TURN" );
 				Controls.UsTableGoldPerTurnButton:SetText( strString );
+				SetVoxDeorumTableItemColor(Controls.UsTableGoldPerTurnButton, bVoxDeorumInvalidCombination);
 				strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GPT", GetEffectiveGoldRate(g_pUs, g_iUs, g_iThem) - data1 );
 				Controls.UsTableGoldPerTurn:SetToolTipString( strTooltip );
 			else
@@ -2889,6 +2916,7 @@ function DisplayDeal(OverridePlayer)
 
 				strString = Locale.ConvertTextKey( "TXT_KEY_DIPLO_GOLD_PER_TURN" );
 				Controls.ThemTableGoldPerTurnButton:SetText( strString );
+				SetVoxDeorumTableItemColor(Controls.ThemTableGoldPerTurnButton, bVoxDeorumInvalidCombination);
 				strTooltip = Locale.ConvertTextKey( "TXT_KEY_DIPLO_CURRENT_GPT", GetEffectiveGoldRate(g_pThem, g_iThem, g_iUs) - data1 );
 				Controls.ThemTableGoldPerTurn:SetToolTipString( strTooltip );
 			end
@@ -2917,8 +2945,8 @@ function DisplayDeal(OverridePlayer)
 					Controls.ThemTableCitiesStack:SetHide( false );
 				end
 
-				instance.CityName:SetText( pCity:GetName() );
-				instance.CityPop:SetText( pCity:GetPopulation() );
+				instance.CityName:SetText(VoxDeorumTableItemText(pCity:GetName(), bVoxDeorumInvalidCombination));
+				instance.CityPop:SetText(VoxDeorumTableItemText(pCity:GetPopulation(), bVoxDeorumInvalidCombination));
 			else
 				if( bFromUs ) then
 					instance = g_UsTableCitiesIM:GetInstance();
@@ -2927,23 +2955,25 @@ function DisplayDeal(OverridePlayer)
 					instance = g_ThemTableCitiesIM:GetInstance();
 					Controls.ThemTableCitiesStack:SetHide( false );
 				end
-				instance.CityName:LocalizeAndSetText( "TXT_KEY_RAZED_CITY" );
+				instance.CityName:SetText(VoxDeorumTableItemText(Locale.ConvertTextKey("TXT_KEY_RAZED_CITY"), bVoxDeorumInvalidCombination));
 				instance.CityPop:SetText( "" );
 			end
 
 		elseif( TradeableItems.TRADE_ITEM_THIRD_PARTY_PEACE == itemType ) then
-			DisplayOtherPlayerItem( bFromUs, itemType, duration, data1 );
+			DisplayOtherPlayerItem( bFromUs, itemType, duration, data1, bVoxDeorumInvalidCombination );
 
 		elseif( TradeableItems.TRADE_ITEM_THIRD_PARTY_WAR == itemType ) then
-			DisplayOtherPlayerItem( bFromUs, itemType, duration, data1 );
+			DisplayOtherPlayerItem( bFromUs, itemType, duration, data1, bVoxDeorumInvalidCombination );
 
 		elseif gk_mode and ( TradeableItems.TRADE_ITEM_ALLOW_EMBASSY == itemType ) then
 			if( bFromUs ) then
 				Controls.UsPocketAllowEmbassy:SetHide( true );
 				Controls.UsTableAllowEmbassy:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableAllowEmbassy, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemPocketAllowEmbassy:SetHide( true );
 				Controls.ThemTableAllowEmbassy:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableAllowEmbassy, bVoxDeorumInvalidCombination);
 			end
 
 		elseif( TradeableItems.TRADE_ITEM_OPEN_BORDERS == itemType ) then
@@ -2951,9 +2981,11 @@ function DisplayDeal(OverridePlayer)
 			if( bFromUs ) then
 				Controls.UsPocketOpenBorders:SetHide( true );
 				Controls.UsTableOpenBorders:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableOpenBorders, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemPocketOpenBorders:SetHide( true );
 				Controls.ThemTableOpenBorders:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableOpenBorders, bVoxDeorumInvalidCombination);
 			end
 
 		elseif( TradeableItems.TRADE_ITEM_DEFENSIVE_PACT == itemType ) then
@@ -2961,9 +2993,11 @@ function DisplayDeal(OverridePlayer)
 			if( bFromUs ) then
 				Controls.UsPocketDefensivePact:SetHide( true );
 				Controls.UsTableDefensivePact:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableDefensivePact, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemPocketDefensivePact:SetHide( true );
 				Controls.ThemTableDefensivePact:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableDefensivePact, bVoxDeorumInvalidCombination);
 			end
 
 		elseif( TradeableItems.TRADE_ITEM_RESEARCH_AGREEMENT == itemType ) then
@@ -2971,9 +3005,11 @@ function DisplayDeal(OverridePlayer)
 			if( bFromUs ) then
 				Controls.UsPocketResearchAgreement:SetHide( true );
 				Controls.UsTableResearchAgreement:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableResearchAgreement, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemPocketResearchAgreement:SetHide( true );
 				Controls.ThemTableResearchAgreement:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableResearchAgreement, bVoxDeorumInvalidCombination);
 			end
 
 		elseif( TradeableItems.TRADE_ITEM_RESOURCES == itemType ) then
@@ -2981,6 +3017,7 @@ function DisplayDeal(OverridePlayer)
 			if( bFromUs ) then
 
 				g_UsTableResources[ data1 ].Container:SetHide( false );
+				SetVoxDeorumTableItemColor(g_UsTableResources[data1].Button, bVoxDeorumInvalidCombination);
 				g_UsTableResources[ data1 ].DurationEdit:LocalizeAndSetText( "TXT_KEY_DIPLO_TURNS", duration );
 
 				if( GameInfo.Resources[ data1 ].ResourceUsage == 1 ) then -- is strategic
@@ -2992,6 +3029,7 @@ function DisplayDeal(OverridePlayer)
 			else
 
 				g_ThemTableResources[ data1 ].Container:SetHide( false );
+				SetVoxDeorumTableItemColor(g_ThemTableResources[data1].Button, bVoxDeorumInvalidCombination);
 				g_ThemTableResources[ data1 ].DurationEdit:LocalizeAndSetText( "TXT_KEY_DIPLO_TURNS", duration );
 
 				if( GameInfo.Resources[ data1 ].ResourceUsage == 1 ) then -- is strategic
@@ -3011,12 +3049,14 @@ function DisplayDeal(OverridePlayer)
 			end
 			if (Controls.UsTableDoF ~= nil) then
 				Controls.UsTableDoF:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableDoF, bVoxDeorumInvalidCombination);
 			end
 			if (Controls.ThemPocketDoF ~= nil) then
 				Controls.ThemPocketDoF:SetHide( true );
 			end
 			if (Controls.ThemTableDoF ~= nil) then
 				Controls.ThemTableDoF:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableDoF, bVoxDeorumInvalidCombination);
 			end
 		elseif bnw_mode and ( TradeableItems.TRADE_ITEM_VOTE_COMMITMENT == itemType ) then
 			--print("==debug== VOTE_COMMITMENT found in DisplayDeal");
@@ -3033,16 +3073,16 @@ function DisplayDeal(OverridePlayer)
 
 						if ( bFromUs ) then
 							local cInstance = g_UsTableVoteIM:GetInstance();
-							cInstance.ProposalLabel:SetText(sProposalText);
-							cInstance.VoteLabel:SetText(sChoiceText);
+							cInstance.ProposalLabel:SetText(VoxDeorumTableItemText(sProposalText, bVoxDeorumInvalidCombination));
+							cInstance.VoteLabel:SetText(VoxDeorumTableItemText(sChoiceText, bVoxDeorumInvalidCombination));
 							cInstance.Button:SetToolTipString(sTooltip);
 							cInstance.Button:SetVoids( g_iUs, iVoteIndex );
 							cInstance.Button:RegisterCallback( Mouse.eLClick, OnChooseTableVote );
 							Controls.UsTableVoteStack:SetHide( false );
 						else
 							local cInstance = g_ThemTableVoteIM:GetInstance();
-							cInstance.ProposalLabel:SetText(sProposalText);
-							cInstance.VoteLabel:SetText(sChoiceText);
+							cInstance.ProposalLabel:SetText(VoxDeorumTableItemText(sProposalText, bVoxDeorumInvalidCombination));
+							cInstance.VoteLabel:SetText(VoxDeorumTableItemText(sChoiceText, bVoxDeorumInvalidCombination));
 							cInstance.Button:SetToolTipString(sTooltip);
 							cInstance.Button:SetVoids( g_iThem, iVoteIndex );
 							cInstance.Button:RegisterCallback( Mouse.eLClick, OnChooseTableVote );
@@ -3059,9 +3099,11 @@ function DisplayDeal(OverridePlayer)
 			if( bFromUs ) then
 				Controls.UsPocketTradeMap:SetHide( true );
 				Controls.UsTableTradeMap:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableTradeMap, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemPocketTradeMap:SetHide( true );
 				Controls.ThemTableTradeMap:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableTradeMap, bVoxDeorumInvalidCombination);
 			end
 		elseif( TradeableItems.TRADE_ITEM_VASSALAGE == itemType ) then
 		    Controls.UsPocketVassalage:SetHide( true );
@@ -3069,8 +3111,10 @@ function DisplayDeal(OverridePlayer)
 			print("Found Vassalage");
 			if( bFromUs ) then
 			 	Controls.UsTableVassalage:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableVassalage, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemTableVassalage:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableVassalage, bVoxDeorumInvalidCombination);
 			end
 		elseif( TradeableItems.TRADE_ITEM_VASSALAGE_REVOKE == itemType ) then
 			Controls.UsPocketRevokeVassalage:SetHide( true );
@@ -3078,15 +3122,19 @@ function DisplayDeal(OverridePlayer)
 			print("Found Revoke Vassalage");
 			if( bFromUs ) then
 			 	Controls.UsTableRevokeVassalage:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.UsTableRevokeVassalage, bVoxDeorumInvalidCombination);
 			else
 				Controls.ThemTableRevokeVassalage:SetHide( false );
+				SetVoxDeorumTableItemColor(Controls.ThemTableRevokeVassalage, bVoxDeorumInvalidCombination);
 			end
 		elseif( TradeableItems.TRADE_ITEM_TECHS == itemType ) then
 			if ( bFromUs ) then
 				g_UsTableTechs[ data1 ].Container:SetHide( false );
+				SetVoxDeorumTableItemColor(g_UsTableTechs[data1].Button, bVoxDeorumInvalidCombination);
 				Controls.UsTableTechnologyStack:SetHide( false );
 			else
 				g_ThemTableTechs[ data1 ].Container:SetHide( false );
+				SetVoxDeorumTableItemColor(g_ThemTableTechs[data1].Button, bVoxDeorumInvalidCombination);
 				Controls.ThemTableTechnologyStack:SetHide( false );
 			end
 			
@@ -3114,7 +3162,7 @@ end
 
 -----------------------------------------------------------------------------------------------------------------------
 -----------------------------------------------------------------------------------------------------------------------
-function DisplayOtherPlayerItem( bFromUs, itemType, duration, iOtherTeam )
+function DisplayOtherPlayerItem( bFromUs, itemType, duration, iOtherTeam, invalid )
 
 	--print("iOtherTeam: " .. iOtherTeam);
 
@@ -3139,12 +3187,14 @@ function DisplayOtherPlayerItem( bFromUs, itemType, duration, iOtherTeam )
 				if( bFromUs ) then
 					--print( "    from us" );
 					g_OtherPlayersButtons[ iOtherPlayer ].UsTablePeace.Button:SetHide( false );
+					g_OtherPlayersButtons[iOtherPlayer].UsTablePeace.Name:SetColorByName(invalid and "Red_Black" or "Beige_Black");
 					Controls.UsTableMakePeaceStack:SetHide( false );
 					Controls.UsTableMakePeaceStack:CalculateSize();
 					Controls.UsTableMakePeaceStack:ReprocessAnchoring();
 				else
 					--print( "    from them" );
 					g_OtherPlayersButtons[ iOtherPlayer ].ThemTablePeace.Button:SetHide( false );
+					g_OtherPlayersButtons[iOtherPlayer].ThemTablePeace.Name:SetColorByName(invalid and "Red_Black" or "Beige_Black");
 					Controls.ThemTableMakePeaceStack:SetHide( false );
 					Controls.ThemTableMakePeaceStack:CalculateSize();
 					Controls.ThemTableMakePeaceStack:ReprocessAnchoring();
@@ -3158,12 +3208,14 @@ function DisplayOtherPlayerItem( bFromUs, itemType, duration, iOtherTeam )
 				if( bFromUs ) then
 					--print( "    from us" );
 					g_OtherPlayersButtons[ iOtherPlayer ].UsTableWar.Button:SetHide( false );
+					g_OtherPlayersButtons[iOtherPlayer].UsTableWar.Name:SetColorByName(invalid and "Red_Black" or "Beige_Black");
 					Controls.UsTableDeclareWarStack:SetHide( false );
 					Controls.UsTableDeclareWarStack:CalculateSize();
 					Controls.UsTableDeclareWarStack:ReprocessAnchoring();
 				else
 					--print( "    from them" );
 					g_OtherPlayersButtons[ iOtherPlayer ].ThemTableWar.Button:SetHide( false );
+					g_OtherPlayersButtons[iOtherPlayer].ThemTableWar.Name:SetColorByName(invalid and "Red_Black" or "Beige_Black");
 					Controls.ThemTableDeclareWarStack:SetHide( false );
 					Controls.ThemTableDeclareWarStack:CalculateSize();
 					Controls.ThemTableDeclareWarStack:ReprocessAnchoring();
