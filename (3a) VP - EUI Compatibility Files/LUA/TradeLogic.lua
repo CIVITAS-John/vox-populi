@@ -50,10 +50,12 @@ local g_bPVPTrade;
 local g_bTradeReview = false;
 -- Vox Deorum: state is inactive until the wrapper opens a human-to-human editor.
 local g_bVDHumanToHuman = false;
+local g_bVDHumanToHumanResumePending = false;
 
 -- Vox Deorum: clear wrapper state before a native screen can reuse this context.
 local function ResetVoxDeorumTradeLogicState()
 	g_bVDHumanToHuman = false;
+	g_bVDHumanToHumanResumePending = false;
 end
 
 -- Vox Deorum: color one native table button according to aggregate deal legality.
@@ -96,6 +98,32 @@ local g_iUsTeam = -1;
 local g_iThemTeam = -1;
 local g_pUsTeam = -1;
 local g_pThemTeam = -1;
+
+-- Vox Deorum: resume a wrapper editor after temporary popup occlusion reset the native flag.
+function VoxDeorumResumeHumanToHumanEditor()
+	if (g_bVDHumanToHuman or not g_bVDHumanToHumanResumePending or ContextPtr:IsHidden()) then
+		return false;
+	end
+	local iMaxMajorCivs = GameDefines and GameDefines.MAX_MAJOR_CIVS;
+	if (type(iMaxMajorCivs) ~= "number" or
+		type(g_iUs) ~= "number" or type(g_iThem) ~= "number" or
+		g_iUs < 0 or g_iThem < 0 or g_iUs >= iMaxMajorCivs or g_iThem >= iMaxMajorCivs or
+		g_iUs ~= math.floor(g_iUs) or g_iThem ~= math.floor(g_iThem) or g_iUs == g_iThem) then
+		return false;
+	end
+	local pUs = Players[g_iUs];
+	local pThem = Players[g_iThem];
+	if (not pUs or not pThem or not pUs:IsAlive() or not pThem:IsAlive() or
+		not pUs:IsMajorCiv() or not pThem:IsMajorCiv() or pUs:IsMinorCiv() or pThem:IsMinorCiv() or
+		pUs:IsBarbarian() or pThem:IsBarbarian() or
+		g_Deal:GetFromPlayer() ~= g_iUs or g_Deal:GetToPlayer() ~= g_iThem) then
+		return false;
+	end
+	g_bVDHumanToHuman = true;
+	g_bVDHumanToHumanResumePending = false;
+	return true;
+end
+
 local g_UsPocketResources = {};
 local g_ThemPocketResources = {};
 local g_UsTableResources = {};
@@ -547,6 +575,7 @@ function VoxDeorumOpenDeal( actorID, counterpartID )
 	end
 
 	g_bVDHumanToHuman = true;
+	g_bVDHumanToHumanResumePending = false;
 	g_iUs = actorID;
 	g_pUs = pUs;
 	g_iUsTeam = iUsTeam;
@@ -828,7 +857,9 @@ function OnShowHide( isHide, bIsInit )
         -- Hiding screen
         else
 			-- Vox Deorum: do not let a later stock screen inherit wrapper state.
+			local bVoxDeorumResumePending = g_bVDHumanToHuman or g_bVDHumanToHumanResumePending;
 			ResetVoxDeorumTradeLogicState();
+			g_bVDHumanToHumanResumePending = bVoxDeorumResumePending;
     		UIManager:SetUICursor(oldCursor); -- make sure we retrun the cursor to the previous state
     		LuaEvents.TryDismissTutorial("DIPLO_TRADE_SCREEN");
         end
