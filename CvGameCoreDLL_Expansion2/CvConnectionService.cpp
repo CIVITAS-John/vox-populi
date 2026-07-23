@@ -947,23 +947,38 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 
 			// Vox Deorum: Re-parse args into a function-scoped document so the
 			// JsonArray passed to HandleLuaCall does not alias m_pMainThreadReadBuffer.
-			// 64KB: the human-control panel receives the whole Flavor-mode
-			// OptionsReport (~10KB content mid-game plus ArduinoJson node
-			// overhead) as a single structured argument, and a late-game report
-			// must not overflow into the "no options" degradation path.
+			// 256KB: structured Lua arguments use an ArduinoJson node pool rather
+			// than a wire-byte buffer. The human-control OptionsReport and nested
+			// diplomacy transcript batches need ample node overhead.
 			std::string argsStr;
-			serializeJson((*m_pMainThreadReadBuffer)["args"], argsStr);
+			if (serializeJson((*m_pMainThreadReadBuffer)["args"], argsStr) == 0)
+			{
+				m_pMainThreadWriteBuffer->clear();
+				(*m_pMainThreadWriteBuffer)["type"] = "lua_response";
+				(*m_pMainThreadWriteBuffer)["id"] = id;
+				(*m_pMainThreadWriteBuffer)["success"] = false;
+				(*m_pMainThreadWriteBuffer)["error"]["code"] = "ARGS_SERIALIZATION_FAILED";
+				(*m_pMainThreadWriteBuffer)["error"]["message"] = "Could not serialize lua_call arguments";
+				SendMessage(*m_pMainThreadWriteBuffer);
+				Log(LOG_ERROR, "RouteMessage - Could not serialize lua_call arguments");
+				return;
+			}
 
-			DynamicJsonDocument argsDoc(65536);
+			DynamicJsonDocument argsDoc(262144);
 			DeserializationError argsError = deserializeJson(argsDoc, argsStr);
 			if (argsError)
 			{
 				std::stringstream ss;
 				ss << "RouteMessage - Failed to isolate lua_call args: " << argsError.c_str();
-				Log(LOG_WARNING, ss.str().c_str());
-				// Fall through with an empty args array
-				argsDoc.clear();
-				argsDoc.to<JsonArray>();
+				Log(LOG_ERROR, ss.str().c_str());
+				m_pMainThreadWriteBuffer->clear();
+				(*m_pMainThreadWriteBuffer)["type"] = "lua_response";
+				(*m_pMainThreadWriteBuffer)["id"] = id;
+				(*m_pMainThreadWriteBuffer)["success"] = false;
+				(*m_pMainThreadWriteBuffer)["error"]["code"] = "ARGS_ISOLATION_FAILED";
+				(*m_pMainThreadWriteBuffer)["error"]["message"] = "Could not isolate lua_call arguments";
+				SendMessage(*m_pMainThreadWriteBuffer);
+				return;
 			}
 
 			JsonArray stableArgs = argsDoc.as<JsonArray>();
@@ -2132,7 +2147,13 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 			}
 		}
 
-		if (hasSchema)
+		if (message.overflowed())
+		{
+			std::stringstream ss;
+			ss << "ForwardGameEvent - Refusing overflowed event '" << eventName << "'";
+			Log(LOG_ERROR, ss.str().c_str());
+		}
+		else if (hasSchema)
 		{
 
 			std::stringstream ss;
@@ -2177,10 +2198,17 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 // Vox Deorum: Broadcast a custom game event from C++ through the IPC pipe.
 void CvConnectionService::BroadcastEvent(const char* eventName, const DynamicJsonDocument& payload)
 {
-	DynamicJsonDocument message(2048);
+	DynamicJsonDocument message(65536);
 	message["type"] = "game_event";
 	message["event"] = eventName;
 	message["payload"] = payload.as<JsonVariantConst>();
+	if (message.overflowed())
+	{
+		std::stringstream ss;
+		ss << "BroadcastEvent - Refusing overflowed event '" << eventName << "'";
+		Log(LOG_ERROR, ss.str().c_str());
+		return;
+	}
 	SendMessage(message);
 }
 
@@ -2189,7 +2217,7 @@ void CvConnectionService::BroadcastEvent(const char* eventName, const DynamicJso
 int CvConnectionService::BroadcastEventFromLua(lua_State* L)
 {
 	const char* eventName = luaL_checkstring(L, 1);
-	DynamicJsonDocument message(2048);
+	DynamicJsonDocument message(65536);
 	message["type"] = "game_event";
 	message["event"] = eventName;
 	if (lua_istable(L, 2)) {
@@ -2207,6 +2235,13 @@ int CvConnectionService::BroadcastEventFromLua(lua_State* L)
 	// run on, so the shared event-sequence counter is never touched concurrently.
 	if (lua_toboolean(L, 3)) {
 		message["id"] = GenerateEventId();
+	}
+	if (message.overflowed())
+	{
+		std::stringstream ss;
+		ss << "BroadcastEventFromLua - Refusing overflowed event '" << eventName << "'";
+		Log(LOG_ERROR, ss.str().c_str());
+		return luaL_error(L, "Vox Deorum could not broadcast '%s': payload exceeds the 64 KB event pool", eventName);
 	}
 	SendMessage(message);
 	return 0;
