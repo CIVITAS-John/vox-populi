@@ -82,18 +82,21 @@ function VoxDeorumResumeHumanToHumanEditor()
 	if (g_bVDHumanToHuman or not g_bVDHumanToHumanResumePending or ContextPtr:IsHidden()) then
 		return false;
 	end
-	local iMaxMajorCivs = GameDefines and GameDefines.MAX_MAJOR_CIVS;
-	if (type(iMaxMajorCivs) ~= "number" or
+	-- Vox Deorum: admit any distinct addressable Civ player slot, matching the native
+	-- OnOpenPlayerDealScreen admission, so an observer seat can resume its editor.
+	local iMaxCivPlayers = GameDefines and GameDefines.MAX_CIV_PLAYERS;
+	if (type(iMaxCivPlayers) ~= "number" or
 		type(g_iUs) ~= "number" or type(g_iThem) ~= "number" or
-		g_iUs < 0 or g_iThem < 0 or g_iUs >= iMaxMajorCivs or g_iThem >= iMaxMajorCivs or
+		g_iUs < 0 or g_iThem < 0 or g_iUs >= iMaxCivPlayers or g_iThem >= iMaxCivPlayers or
 		g_iUs ~= math.floor(g_iUs) or g_iThem ~= math.floor(g_iThem) or g_iUs == g_iThem) then
 		return false;
 	end
 	local pUs = Players[g_iUs];
 	local pThem = Players[g_iThem];
-	if (not pUs or not pThem or not pUs:IsAlive() or not pThem:IsAlive() or
-		not pUs:IsMajorCiv() or not pThem:IsMajorCiv() or pUs:IsMinorCiv() or pThem:IsMinorCiv() or
-		pUs:IsBarbarian() or pThem:IsBarbarian() or
+	-- Vox Deorum: the counterpart must still be a living major civilization; the bound
+	-- seat only has to exist, because presentation is not enactment authority.
+	if (not pUs or not pThem or not pThem:IsAlive() or
+		not pThem:IsMajorCiv() or pThem:IsMinorCiv() or pThem:IsBarbarian() or
 		g_Deal:GetFromPlayer() ~= g_iUs or g_Deal:GetToPlayer() ~= g_iThem) then
 		return false;
 	end
@@ -528,11 +531,15 @@ function VoxDeorumOpenDeal( actorID, counterpartID )
 		return false;
 	end
 
-	local iMaxMajorCivs = GameDefines and GameDefines.MAX_MAJOR_CIVS;
-	if (type(iMaxMajorCivs) ~= "number" or
+	-- Vox Deorum: admit any distinct addressable Civ player slot, matching the native
+	-- OnOpenPlayerDealScreen admission, so an observer seat binds directly as g_iUs.
+	-- Item legality, inspection, archival, and enactment keep their own participant
+	-- limits and still reject an unsupported seat with a clean error.
+	local iMaxCivPlayers = GameDefines and GameDefines.MAX_CIV_PLAYERS;
+	if (type(iMaxCivPlayers) ~= "number" or
 		type(actorID) ~= "number" or type(counterpartID) ~= "number" or
 		actorID < 0 or counterpartID < 0 or
-		actorID >= iMaxMajorCivs or counterpartID >= iMaxMajorCivs or
+		actorID >= iMaxCivPlayers or counterpartID >= iMaxCivPlayers or
 		actorID ~= math.floor(actorID) or counterpartID ~= math.floor(counterpartID) or
 		actorID == counterpartID) then
 		return false;
