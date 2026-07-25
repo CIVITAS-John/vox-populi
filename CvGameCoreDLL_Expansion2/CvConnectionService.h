@@ -48,6 +48,16 @@ public:
 
 	// Process queued messages from the main game thread
 	void ProcessMessages();
+
+	// Vox Deorum: Drain from a UI Lua context (Game.ProcessConnectionMessages).
+	// The engine stops ticking CvGame::update while the leaderhead scene is up, so the
+	// game-core pump points below cannot service the queue for as long as a player sits in
+	// a diplomacy conversation. A UI context that stays alive there pumps on our behalf.
+	//
+	// This is NOT the same drain as ProcessMessages: it runs off the game core's execution
+	// boundary, so it routes only the message types marked UI-safe by IsUiSafeMessageType
+	// and hands everything else back to the queue for the next game-core pump.
+	void ProcessMessagesFromUI();
 	
 	// Send a message to the Bridge Service (called from game code)
 	// Returns the length of the outgoing queue after adding the message
@@ -134,13 +144,65 @@ private:
 	int QueueOutgoingMessage(const std::string& messageJson);
 	bool DequeueOutgoingMessage(std::string& messageJson);
 	
-	// Message routing and handling
-	void RouteMessage(const std::string& messageJson);
+	// Message routing and handling. Returns false when bUiPolicy declined the message
+	// rather than handling it, meaning the caller must hand it back to the queue.
+	bool RouteMessage(const std::string& messageJson, bool bUiPolicy);
+
+	// Vox Deorum: Which pump asked for a drain. The caller settles two separate questions:
+	// whether this drain may nest inside another, and which message types it may route.
+	enum DrainCaller
+	{
+		DRAIN_GAME_CORE,  // CvGame/CvPlayer/AI pump points. Never nests; routes everything.
+		DRAIN_UI,         // Game.ProcessConnectionMessages. Never nests; UI-safe types only.
+		DRAIN_AWAIT,      // CallExternalFunction's wait loop. Nests, inheriting the outer policy.
+	};
+
+	// Vox Deorum: Shared drain body behind all three pumps.
+	void DrainIncomingMessages(DrainCaller eCaller);
+
+	// Vox Deorum: Whether a message type must be held for a game-core pump point rather
+	// than routed off the game core's execution boundary. Everything not named here is
+	// routable from the UI thread, so a message type added later needs review against
+	// this list — see its definition for what makes a type unsafe.
+	static bool IsGameCoreOnlyMessageType(const std::string& messageType);
+
+	// Vox Deorum: Scope-bound ownership of the drain section and its depth counter, so
+	// every exit from DrainIncomingMessages — an early return, or a throw escaping the
+	// routing loop — releases both. Leaking either would wedge every pump in the process.
+	// Deliberately holds references rather than the owning service, so it needs no access
+	// to private members (a nested class has none of its own under this C++03 toolset).
+	class DrainScope
+	{
+	public:
+		DrainScope(CRITICAL_SECTION& kSection, int& iDepth);
+		~DrainScope();
+
+		// False when another thread already holds the section. Never blocks.
+		bool TryAcquire();
+
+		// Count this drain against the nesting cap for as long as the scope lives.
+		void PushDepth();
+
+	private:
+		CRITICAL_SECTION& m_kSection;
+		int& m_iDepth;
+		bool m_bHeld;
+		bool m_bCounted;
+
+		DrainScope(const DrainScope&);
+		DrainScope& operator=(const DrainScope&);
+	};
 	
 	// Lua execution handlers
 	void HandleLuaExecute(const char* script, const char* id);
 	void HandleLuaCall(const char* functionName, const JsonArray& args, const char* id);
-	void ProcessLuaResult(lua_State* L, int executionResult, const char* id);
+
+	// Vox Deorum: iStackBase is lua_gettop as it stood before the call whose result this
+	// reports. Results are everything above it. Never re-derive that from lua_gettop
+	// alone: inside a C function lua_gettop is relative to that function's own frame, so
+	// a drain nested in Game.CallExternal would otherwise serialize and pop the waiting
+	// call's arguments as if they were results.
+	void ProcessLuaResult(lua_State* L, int executionResult, const char* id, int iStackBase);
 	void ConvertLuaToJsonValue(lua_State* L, int index, JsonVariant parent, const char* key);
 	
 	// Shared function to convert Lua values to fill a key in a JsonDocument
@@ -211,11 +273,46 @@ private:
 	// Counter for generating unique call IDs
 	unsigned int m_uiNextCallId;
 
-	// Vox Deorum: Reentrancy guard for ProcessMessages. ForwardGameEvent can call
-	// ProcessMessages from inside Lua event hooks that fire during game-core mutation,
-	// which would otherwise clobber m_pMainThreadReadBuffer while an outer handler
-	// still holds pointers into it. Main-thread only — no atomics needed.
-	bool m_bProcessingMessages;
+	// Vox Deorum: Held for the duration of a drain. The drain was single-threaded until
+	// ProcessMessagesFromUI gave the UI thread a way in, and m_pMainThreadReadBuffer /
+	// m_pMainThreadWriteBuffer are unsynchronized scratch documents shared by every
+	// handler. Contended with TryEnterCriticalSection, never a blocking wait: whichever
+	// thread loses simply skips that pump rather than stalling a render frame or a turn
+	// on the other. Recursive by nature, so same-thread nesting is still decided by
+	// m_iProcessingDepth below.
+	//
+	// Unlike the sections above, this one lives across Setup/Shutdown cycles — it is
+	// created in the constructor and destroyed in the destructor. Shutdown frees the very
+	// buffers a drain is using, so it has to be able to take this section to fence against
+	// an in-flight drain; a section that Shutdown itself destroys could not do that.
+	CRITICAL_SECTION m_csProcessing;
+
+	// Vox Deorum: Routing policy of the outermost drain currently on the stack, so a
+	// nested DRAIN_AWAIT inherits it instead of quietly widening what may run. Only
+	// meaningful while m_iProcessingDepth is above zero, and written under m_csProcessing.
+	bool m_bUiDrainPolicy;
+
+	// Vox Deorum: Number of drains currently on the stack, always read and written under
+	// m_csProcessing. ForwardGameEvent can call ProcessMessages from inside Lua event
+	// hooks that fire during game-core mutation, and an ordinary pump refuses to nest
+	// there: it buys nothing, because the outer drain reaches the same queue as soon as
+	// the hook returns.
+	//
+	// The synchronous CallExternalFunction wait loop is the one exception. It pumps
+	// precisely because its caller cannot make progress until the matching
+	// external_response is routed, so refusing it does not defer work — it deadlocks
+	// the call until it times out. That happens whenever a Lua function invoked by a
+	// lua_call makes a synchronous Game.CallExternal, which is exactly the shape the
+	// diplomacy push handlers are one line away from. Nesting is safe there because
+	// RouteMessage copies every string out of m_pMainThreadReadBuffer before it can
+	// re-enter, and every writer of m_pMainThreadWriteBuffer fills and sends it in one
+	// uninterrupted stretch. Main-thread only — no atomics needed.
+	int m_iProcessingDepth;
+
+	// Vox Deorum: Cap on nested drains. Each level parks another Lua handler on the
+	// stack waiting for the bridge, so beyond a handful the game is misusing
+	// synchronous external calls and one CALL_TIMEOUT beats unbounded recursion.
+	static const int MAX_DRAIN_DEPTH = 4;
 
 	// Vox Deorum: AI turn cooldown state
 	DWORD m_dwLastAITurnDeactivatedTime;  // GetTickCount() timestamp of last AI deactivation

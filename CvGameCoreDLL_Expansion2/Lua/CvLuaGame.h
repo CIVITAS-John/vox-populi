@@ -407,7 +407,8 @@ protected:
 
 	static int lRegisterFunction(lua_State* L);
 	static int lUnregisterFunction(lua_State* L);
-	
+	static int lProcessConnectionMessages(lua_State* L);
+
 	static int lCallExternal(lua_State* L);
 	static int lIsExternalRegistered(lua_State* L);
 	static int lGetCurrentTimeEpochMs(lua_State* L);

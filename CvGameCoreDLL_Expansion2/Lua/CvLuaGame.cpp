@@ -513,6 +513,7 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 	//Connection Service
 	Method(RegisterFunction);
 	Method(UnregisterFunction);
+	Method(ProcessConnectionMessages);
 	Method(CallExternal);
 	Method(IsExternalRegistered);
 	Method(GetCurrentTimeEpochMs);
@@ -4281,6 +4282,20 @@ int CvLuaGame::lRegisterFunction(lua_State* L)
 	return 0;  // No return values
 }
 
+//------------------------------------------------------------------------------
+// Vox Deorum: Let a UI context drain the bridge's incoming queue.
+// The engine stops ticking CvGame::update while the leaderhead scene is up, which is
+// exactly when a diplomacy conversation needs its pushes delivered: without this the
+// queue sits untouched until the player leaves the scene. Call it from a per-frame
+// ContextPtr:SetUpdate on a context that stays alive there. Cheap when the queue is
+// empty, and a no-op if another thread is already draining.
+int CvLuaGame::lProcessConnectionMessages(lua_State* L)
+{
+	CvConnectionService::GetInstance().ProcessMessagesFromUI();
+	return 0;  // No return values
+}
+
+//------------------------------------------------------------------------------
 int CvLuaGame::lUnregisterFunction(lua_State* L)
 {
 	// Get function name from first argument

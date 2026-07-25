@@ -40,7 +40,8 @@ CvConnectionService::CvConnectionService()
 	, m_bClientConnected(false)
 	, m_bShutdownRequested(false)
 	, m_uiNextCallId(1)
-	, m_bProcessingMessages(false)  // Vox Deorum: reentrancy guard for ProcessMessages
+	, m_iProcessingDepth(0)  // Vox Deorum: reentrancy guard for ProcessMessages
+	, m_bUiDrainPolicy(false)  // Vox Deorum: set by whichever drain is outermost
 	, m_dwLastAITurnDeactivatedTime(0)
 	, m_bAICooldownActive(false)
 	, m_bProductionMode(false)
@@ -50,6 +51,10 @@ CvConnectionService::CvConnectionService()
 	, m_pMainThreadReadBuffer(NULL)
 	, m_pMainThreadWriteBuffer(NULL)
 {
+	// Vox Deorum: Outlives every Setup/Shutdown cycle. Shutdown takes this section to
+	// fence against an in-flight drain before freeing the buffers that drain is reading,
+	// which it could not do with a section of its own making.
+	InitializeCriticalSection(&m_csProcessing);
 }
 
 // Destructor
@@ -59,6 +64,45 @@ CvConnectionService::~CvConnectionService()
 	{
 		Shutdown();
 	}
+
+	// Vox Deorum: Safe here and nowhere earlier — Shutdown above has already fenced out
+	// every drain, and the singleton is going away with the process.
+	DeleteCriticalSection(&m_csProcessing);
+}
+
+// Vox Deorum: Scope-bound drain section and depth counter.
+CvConnectionService::DrainScope::DrainScope(CRITICAL_SECTION& kSection, int& iDepth)
+	: m_kSection(kSection)
+	, m_iDepth(iDepth)
+	, m_bHeld(false)
+	, m_bCounted(false)
+{
+}
+
+CvConnectionService::DrainScope::~DrainScope()
+{
+	// Decrement rather than clear: a nested drain runs inside an outer one, and zeroing
+	// here would leave the rest of that outer drain unguarded against reentry.
+	if (m_bCounted)
+	{
+		m_iDepth--;
+	}
+	if (m_bHeld)
+	{
+		LeaveCriticalSection(&m_kSection);
+	}
+}
+
+bool CvConnectionService::DrainScope::TryAcquire()
+{
+	m_bHeld = (TryEnterCriticalSection(&m_kSection) != FALSE);
+	return m_bHeld;
+}
+
+void CvConnectionService::DrainScope::PushDepth()
+{
+	m_iDepth++;
+	m_bCounted = true;
 }
 
 // Initialize the connection service
@@ -83,6 +127,8 @@ bool CvConnectionService::Setup()
 	InitializeCriticalSection(&m_csExternalFunctions);
 	InitializeCriticalSection(&m_csPendingCalls);
 	InitializeCriticalSection(&m_csPausedPlayers);  // Vox Deorum: For thread-safe access to paused players list
+	// Vox Deorum: m_csProcessing is deliberately absent — it is owned by the constructor
+	// so that Shutdown can fence drains out with it. See its declaration.
 
 	// Reset shutdown flag
 	m_bShutdownRequested = false;
@@ -100,9 +146,11 @@ bool CvConnectionService::Setup()
 	LuaSupport::RegisterScriptData(m_pLuaState);
 
 	// Vox Deorum: Clear leftover items from RegisterScriptData (e.g. PushTypeTable leaves
-	// type tables on the stack). ProcessLuaResult uses lua_gettop to count results, so any
-	// stale stack items would be mistaken for return values and serialized - the self-referential
-	// type tables (Type.__index = Type) cause infinite recursion in ConvertLuaToJsonValue.
+	// type tables on the stack), so this state starts every script from an empty frame.
+	// ProcessLuaResult now measures results against a base recorded per call rather than
+	// against the whole frame, so leftovers are no longer mistaken for return values — but
+	// starting clean keeps the self-referential type tables (Type.__index = Type), which
+	// send ConvertLuaToJsonValue into infinite recursion, out of reach either way.
 	lua_settop(m_pLuaState, 0);
 
 	Log(LOG_INFO, "ConnectionService::Setup() - Lua state initialized, creating named pipe server");
@@ -165,7 +213,16 @@ void CvConnectionService::Shutdown()
 	}
 
 	Log(LOG_INFO, "ConnectionService::Shutdown() - Shutting down connection service");
-	
+
+	// Vox Deorum: Close the drain before tearing anything down. Taking the section blocks
+	// until an in-flight drain finishes, and clearing m_bInitialized while holding it means
+	// the next drain — including one already on its way in from a UI update, which is not
+	// on this thread and does not stop when the game core does — halts at the initialized
+	// check rather than reaching the critical sections and JSON buffers freed below.
+	EnterCriticalSection(&m_csProcessing);
+	m_bInitialized = false;
+	LeaveCriticalSection(&m_csProcessing);
+
 	// Save event sequence before shutting down
 	SerializeEventSequence();
 
@@ -233,6 +290,7 @@ void CvConnectionService::Shutdown()
 	DeleteCriticalSection(&m_csExternalFunctions);
 	DeleteCriticalSection(&m_csPendingCalls);
 	DeleteCriticalSection(&m_csPausedPlayers);  // Vox Deorum: Clean up paused players critical section
+	// Vox Deorum: m_csProcessing survives — the destructor owns it. See its declaration.
 
 	// Free the JSON buffers
 	if (m_pMainThreadReadBuffer)
@@ -758,25 +816,83 @@ bool CvConnectionService::DequeueOutgoingMessage(std::string& messageJson)
 // Process queued messages from the main game thread
 void CvConnectionService::ProcessMessages()
 {
-	// Only process if we're initialized
+	DrainIncomingMessages(DRAIN_GAME_CORE);
+}
+
+// Vox Deorum: Drain on behalf of a UI Lua context while the game core is not ticking.
+// Deliberately not the same drain as ProcessMessages: see the header for what a UI-thread
+// caller is and is not allowed to route.
+void CvConnectionService::ProcessMessagesFromUI()
+{
+	DrainIncomingMessages(DRAIN_UI);
+}
+
+// Vox Deorum: Whether this message type has to wait for a game-core pump point.
+bool CvConnectionService::IsGameCoreOnlyMessageType(const std::string& messageType)
+{
+	// stub for now until we find something really bad
+	return false;
+}
+
+// Vox Deorum: Shared drain body. See m_csProcessing and m_iProcessingDepth in the header
+// for why only one thread drains at a time, why an ordinary pump refuses to nest, and why
+// the synchronous external-call wait loop is the one caller allowed through.
+void CvConnectionService::DrainIncomingMessages(DrainCaller eCaller)
+{
+	// Scope-bound so every path out of here — the early returns below, or a throw escaping
+	// the routing loop — pops the depth and releases the section.
+	DrainScope kScope(m_csProcessing, m_iProcessingDepth);
+
+	// Another thread is already draining. Skip this pump rather than waiting: every caller
+	// is latency-sensitive (a render frame, a turn, a blocked Lua call) and the queue is
+	// not going anywhere — whoever holds the section is emptying it right now.
+	if (!kScope.TryAcquire())
+	{
+		return;
+	}
+
+	// Checked under the section, not before it: Shutdown clears this while holding the
+	// section, so reaching this point means the queues and buffers below stay alive for
+	// the rest of this drain.
 	if (!m_bInitialized)
 	{
 		return;
 	}
 
-	// Vox Deorum: Prevent reentrant drain. ForwardGameEvent calls us from inside
-	// Lua event hooks that fire during game-core mutations (e.g. CvUnit::build).
-	// If we allowed reentry, the inner RouteMessage would clobber m_pMainThreadReadBuffer
-	// while the outer HandleLuaCall still holds pointers into it, producing hangs/crashes
-	// in downstream Log/pLog->Msg calls. All callers are on the main game thread, so a
-	// plain flag is sufficient — no atomics needed.
-	if (m_bProcessingMessages)
+	if (m_iProcessingDepth > 0)
 	{
-		return;
+		// Only the external-call wait loop may nest. ForwardGameEvent reaches us from Lua
+		// event hooks that fire during game-core mutations (e.g. CvUnit::build), and
+		// nesting there defers nothing: the outer drain picks the same queue up as soon
+		// as the hook returns.
+		if (eCaller != DRAIN_AWAIT)
+		{
+			return;
+		}
+
+		// The wait loop is different — it cannot make progress until its own response
+		// is routed — but bound how deep that may go.
+		if (m_iProcessingDepth >= MAX_DRAIN_DEPTH)
+		{
+			Log(LOG_WARNING, "DrainIncomingMessages - Reentrant drain depth reached; letting the waiting call time out");
+			return;
+		}
 	}
-	m_bProcessingMessages = true;
+	else
+	{
+		// The outermost drain fixes the routing policy every nested drain then inherits.
+		// A DRAIN_AWAIT that lands here came from Lua on a thread we cannot identify from
+		// here, so it takes the restrictive policy: declining a message costs it a wait,
+		// while routing one wrongly costs game-core work on the wrong thread.
+		m_bUiDrainPolicy = (eCaller != DRAIN_GAME_CORE);
+	}
+	kScope.PushDepth();
+	const bool bUiPolicy = m_bUiDrainPolicy;
 
 	int processedCount = 0;
+
+	// Messages this drain was not allowed to route, handed back below in arrival order.
+	std::vector<std::string> deferredMessages;
 
 	// Vox Deorum: Drain all queued messages in a single pass. Pause logic
 	// is now handled by the caller (CvGame::update) so the engine's UI/render
@@ -802,13 +918,35 @@ void CvConnectionService::ProcessMessages()
 				bCsHeld = false;
 
 				// Route the message to the appropriate handler
-				RouteMessage(msgJson);
-
-				processedCount++;
+				if (RouteMessage(msgJson, bUiPolicy))
+				{
+					processedCount++;
+				}
+				else
+				{
+					// Not this drain's to run. Hold it aside rather than pushing it back
+					// now, which would hand it straight back to this same loop.
+					deferredMessages.push_back(msgJson);
+				}
 
 				// Re-acquire the lock for the next iteration
 				EnterCriticalSection(&m_csIncoming);
 				bCsHeld = true;
+			}
+
+			// Hand back everything this drain declined, in arrival order, for the next
+			// game-core pump. The queue is empty at this point, so they return to the
+			// front unless the pipe thread has since added more.
+			for (size_t i = 0; i < deferredMessages.size(); i++)
+			{
+				m_incomingQueue.push(deferredMessages[i]);
+			}
+			if (!deferredMessages.empty())
+			{
+				std::stringstream ss;
+				ss << "DrainIncomingMessages - Deferred " << deferredMessages.size()
+					<< " game-core-only message(s) to the next game-core pump";
+				Log(LOG_DEBUG, ss.str().c_str());
 			}
 
 			// Release the critical section
@@ -817,12 +955,28 @@ void CvConnectionService::ProcessMessages()
 		}
 		catch (...)
 		{
+			// Give back anything set aside before the throw. A message this drain was not
+			// allowed to route is not a message it is allowed to lose, and the queue is
+			// the only copy — the pipe thread has long since moved on.
+			if (!deferredMessages.empty())
+			{
+				if (!bCsHeld)
+				{
+					EnterCriticalSection(&m_csIncoming);
+					bCsHeld = true;
+				}
+				for (size_t i = 0; i < deferredMessages.size(); i++)
+				{
+					m_incomingQueue.push(deferredMessages[i]);
+				}
+			}
+
 			if (bCsHeld)
 			{
 				LeaveCriticalSection(&m_csIncoming);
 			}
 			std::stringstream ss;
-			ss << "ProcessMessages - Unknown exception processing messages";
+			ss << "DrainIncomingMessages - Unknown exception processing messages";
 			Log(LOG_ERROR, ss.str().c_str());
 		}
 	}
@@ -870,8 +1024,7 @@ void CvConnectionService::ProcessMessages()
 		}
 	}
 
-	// Vox Deorum: Release the reentrancy guard set at function entry.
-	m_bProcessingMessages = false;
+	// Vox Deorum: kScope pops the depth and releases the section as it goes out of scope.
 }
 
 // Send a message to the Bridge Service (called from game code)
@@ -893,7 +1046,7 @@ int CvConnectionService::SendMessage(const DynamicJsonDocument& message)
 }
 
 // Route incoming message to appropriate handler based on type
-void CvConnectionService::RouteMessage(const std::string& messageJson)
+bool CvConnectionService::RouteMessage(const std::string& messageJson, bool bUiPolicy)
 {
 	// Clear and reuse the read buffer for main thread message processing
 	m_pMainThreadReadBuffer->clear();
@@ -904,7 +1057,7 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 		std::stringstream ss;
 		ss << "RouteMessage - Failed to parse JSON: " << error.c_str();
 		Log(LOG_ERROR, ss.str().c_str());
-		return;
+		return true;  // Unparseable: dropping it is the handling, not a deferral
 	}
 
 	// Vox Deorum: Every const char* returned by ArduinoJson aliases m_pMainThreadReadBuffer.
@@ -916,9 +1069,17 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 	if (rawMessageType == NULL)
 	{
 		Log(LOG_WARNING, "RouteMessage - Message missing 'type' field");
-		return;
+		return true;  // Malformed: dropping it is the handling, not a deferral
 	}
 	std::string messageType(rawMessageType);
+
+	// Vox Deorum: A UI-thread drain hands this type back untouched, still queued, for the
+	// next game-core pump. Checked before any handler runs so the decision cannot depend
+	// on work already half-applied.
+	if (bUiPolicy && IsGameCoreOnlyMessageType(messageType))
+	{
+		return false;
+	}
 
 	// Route to appropriate handler based on message type
 	if (messageType == "lua_execute")
@@ -961,7 +1122,7 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 				(*m_pMainThreadWriteBuffer)["error"]["message"] = "Could not serialize lua_call arguments";
 				SendMessage(*m_pMainThreadWriteBuffer);
 				Log(LOG_ERROR, "RouteMessage - Could not serialize lua_call arguments");
-				return;
+				return true;  // Answered with an error response, so it is handled
 			}
 
 			DynamicJsonDocument argsDoc(262144);
@@ -978,7 +1139,7 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 				(*m_pMainThreadWriteBuffer)["error"]["code"] = "ARGS_ISOLATION_FAILED";
 				(*m_pMainThreadWriteBuffer)["error"]["message"] = "Could not isolate lua_call arguments";
 				SendMessage(*m_pMainThreadWriteBuffer);
-				return;
+				return true;  // Answered with an error response, so it is handled
 			}
 
 			JsonArray stableArgs = argsDoc.as<JsonArray>();
@@ -1016,7 +1177,7 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 
 		if (rawCallId == NULL)
 		{
-			return;
+			return true;  // Unroutable without an id: dropping it is the handling
 		}
 
 		std::string callId(rawCallId);
@@ -1085,6 +1246,8 @@ void CvConnectionService::RouteMessage(const std::string& messageJson)
 		// Send the response back to the Bridge Service
 		SendMessage(*m_pMainThreadWriteBuffer);
 	}
+
+	return true;
 }
 
 // Handle Lua execute command from Bridge Service
@@ -1101,11 +1264,16 @@ void CvConnectionService::HandleLuaExecute(const char* script, const char* id)
 		gDLL->ReleaseGameCoreLock();
 	}
 
+	// Vox Deorum: Anything already on this state belongs to a caller further out, not to
+	// us. Record where our own results begin so ProcessLuaResult reports and pops exactly
+	// those. See its declaration for the frame this protects.
+	const int iStackBase = lua_gettop(m_pLuaState);
+
 	// Execute the Lua script using luaL_dostring (which is luaL_loadstring + lua_pcall)
 	int result = luaL_dostring(m_pLuaState, script);
 
 	// Process the Lua execution result
-	ProcessLuaResult(m_pLuaState, result, id);
+	ProcessLuaResult(m_pLuaState, result, id, iStackBase);
 
 	// Restore game core lock if we had it
 	if (bHadLock)
@@ -1160,9 +1328,15 @@ void CvConnectionService::HandleLuaCall(const char* functionName, const JsonArra
 		gDLL->ReleaseGameCoreLock();
 	}
 	
+	// Vox Deorum: Record the frame as it stands before we push anything. This state can
+	// already be mid-call — a Lua function reached through an earlier lua_call may be
+	// sitting inside Game.CallExternal, whose wait loop is what drained us — and its
+	// arguments are on this same frame. See ProcessLuaResult's declaration.
+	const int iStackBase = lua_gettop(funcInfo.pLuaState);
+
 	// Push the function from the registry
 	lua_rawgeti(funcInfo.pLuaState, LUA_REGISTRYINDEX, funcInfo.iRegistryRef);
-	
+
 	// Push arguments onto the Lua stack
 	int argCount = 0;
 	for (JsonArray::iterator argIt = args.begin(); argIt != args.end(); ++argIt)
@@ -1170,12 +1344,12 @@ void CvConnectionService::HandleLuaCall(const char* functionName, const JsonArra
 		ConvertJsonToLuaValue(funcInfo.pLuaState, *argIt);
 		argCount++;
 	}
-	
+
 	// Call the function (argCount args, LUA_MULTRET results)
 	int result = lua_pcall(funcInfo.pLuaState, argCount, LUA_MULTRET, 0);
-	
+
 	// Process the result
-	ProcessLuaResult(funcInfo.pLuaState, result, id);
+	ProcessLuaResult(funcInfo.pLuaState, result, id, iStackBase);
 	
 	// Restore game core lock if we had it
 	if (bHadLock)
@@ -1185,29 +1359,37 @@ void CvConnectionService::HandleLuaCall(const char* functionName, const JsonArra
 }
 
 // Process the result of a Lua script execution
-void CvConnectionService::ProcessLuaResult(lua_State* L, int executionResult, const char* id)
+void CvConnectionService::ProcessLuaResult(lua_State* L, int executionResult, const char* id, int iStackBase)
 {
 	// Build the response JSON using the write buffer
 	m_pMainThreadWriteBuffer->clear();
 	(*m_pMainThreadWriteBuffer)["type"] = "lua_response";
 	(*m_pMainThreadWriteBuffer)["id"] = id;
-	
+
 	if (executionResult == 0)
 	{
 		// Script executed successfully
 		(*m_pMainThreadWriteBuffer)["success"] = true;
-		
-		// Get the return value(s) from the stack
-		int numResults = lua_gettop(L);
-		
+
+		// Vox Deorum: Results are what this call left above iStackBase, never the whole
+		// frame. lua_gettop is relative to the innermost C function, so on a state already
+		// suspended inside Game.CallExternal the old whole-frame read counted that call's
+		// own arguments as results, serialized them, and then popped them out from under
+		// it — corrupting the frame it resumes into.
+		int numResults = lua_gettop(L) - iStackBase;
+		if (numResults < 0)
+		{
+			numResults = 0;
+		}
+
 		if (numResults > 0)
 		{
-			// Use the shared conversion function (starting from stack bottom)
-			ConvertLuaValuesInDocument(L, 1, numResults, *m_pMainThreadWriteBuffer, "result");
-			
-			// Pop all return values from the stack
-			lua_pop(L, numResults);
+			// Use the shared conversion function (starting just above the saved base)
+			ConvertLuaValuesInDocument(L, iStackBase + 1, numResults, *m_pMainThreadWriteBuffer, "result");
 		}
+
+		// Restore the frame exactly as we found it, dropping only our own results
+		lua_settop(L, iStackBase);
 
 		std::stringstream logMsg;
 		logMsg << "ProcessLuaResult - Sent success response for id: " << id << ", numResults: " << numResults;
@@ -1223,15 +1405,15 @@ void CvConnectionService::ProcessLuaResult(lua_State* L, int executionResult, co
 
 		(*m_pMainThreadWriteBuffer)["error"]["code"] = "LUA_EXECUTION_ERROR";
 		(*m_pMainThreadWriteBuffer)["error"]["message"] = cleanedError;
-		
-		// Pop the error message from the stack
-		lua_pop(L, 1);
-		
+
 		std::stringstream logMsg;
-		logMsg << "ProcessLuaResult - Sent error response for id: " << id << ", error: " << errorMsg;
+		logMsg << "ProcessLuaResult - Sent error response for id: " << id << ", error: " << cleanedError;
 		Log(LOG_DEBUG, logMsg.str().c_str());
+
+		// Drop the error message, again leaving anything below the base untouched
+		lua_settop(L, iStackBase);
 	}
-	
+
 	// Send the response
 	SendMessage(*m_pMainThreadWriteBuffer);
 
@@ -2682,7 +2864,12 @@ int CvConnectionService::CallExternalFunction(lua_State* L)
 		
 		while (!resultFound && (GetTickCount() - startTime) < maxWaitTime)
 		{
-			ProcessMessages(); // Process any incoming messages
+			// Vox Deorum: Drain reentrantly. A synchronous external call made from a Lua
+			// function that the bridge itself invoked (lua_call -> handler -> CallExternal)
+			// runs inside an active drain, and the ordinary guard would refuse this pump —
+			// leaving the only code path that can route our external_response blocked until
+			// the timeout below fires.
+			DrainIncomingMessages(DRAIN_AWAIT);
 			Sleep(10); // Wait 10ms before checking again
 
 			EnterCriticalSection(&m_csPendingCalls);
