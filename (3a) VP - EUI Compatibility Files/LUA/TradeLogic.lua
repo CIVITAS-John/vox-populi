@@ -986,7 +986,7 @@ function DoUpdateButtons()
 		if (g_pUsTeam:IsAtWar(g_iThemTeam)) then
 			if (g_Deal:GetSurrenderingPlayer() == g_iThem) then
 				local iMaxValue = g_pThem:GetCachedValueOfPeaceWithHuman();
-				local iCurrentValue = g_pThem:GetTotalValueToMe(g_Deal);
+				local iCurrentValue = g_pThem:GetTotalValueToMe(g_Deal, g_bVDHumanToHuman); -- Vox Deorum: value the deal under the same legality the editor admitted its items by.
 				local Valuestr;
 
 				if (iCurrentValue == -999999) then
@@ -1002,7 +1002,7 @@ function DoUpdateButtons()
 				Controls.PeaceMax:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_PEACE_MAX_STR_TT"));
 			else
 				local iMinValue = g_pThem:GetCachedValueOfPeaceWithHuman();
-				local iCurrentValue = g_pThem:GetTotalValueToMe(g_Deal);
+				local iCurrentValue = g_pThem:GetTotalValueToMe(g_Deal, g_bVDHumanToHuman); -- Vox Deorum: value the deal under the same legality the editor admitted its items by.
 				local Valuestr;
 
 				if (iCurrentValue == -999999) then
@@ -1018,7 +1018,7 @@ function DoUpdateButtons()
 				Controls.PeaceMax:SetToolTipString(Locale.ConvertTextKey("TXT_KEY_DIPLO_PEACE_MIN_STR_TT"));
 			end
 		else
-			local iCurrentValue = g_pThem:GetTotalValueToMeNormal(g_Deal);
+			local iCurrentValue = g_pThem:GetTotalValueToMeNormal(g_Deal, g_bVDHumanToHuman); -- Vox Deorum: value the deal under the same legality the editor admitted its items by.
 			local Valuestr;
 			local ValuestrTT;
 
@@ -1084,7 +1084,7 @@ function DoUpdateButtons()
 					Controls.WhatWillMakeThisWorkButton:SetHide(false);
 				end
 			elseif (g_iDiploUIState == DiploUIStateTypes.DIPLO_UI_STATE_TRADE_AI_MAKES_OFFER) then
-				if (g_pThem:GetTotalValueToMeNormal(g_Deal) ~= 0) then
+				if (g_pThem:GetTotalValueToMeNormal(g_Deal, g_bVDHumanToHuman) ~= 0) then
 					Controls.WhatWillMakeThisWorkButton:SetHide(false);
 					Controls.ProposeButton:SetText( Locale.ConvertTextKey( "TXT_KEY_DIPLO_PROPOSE" ));
 				end

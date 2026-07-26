@@ -816,7 +816,7 @@ bool CvDealAI::DoEqualizeDeal(CvDeal* pDeal, PlayerTypes eOtherPlayer, bool& bDe
 }
 
 /// What do we think of a Deal?
-int CvDealAI::GetDealValue(CvDeal* pDeal) const
+int CvDealAI::GetDealValue(CvDeal* pDeal, bool bTreatAsHumanToHuman) const
 {
 	int iDealValue = 0;
 	if (pDeal->GetDuration() == static_cast<uint>(-1))
@@ -846,16 +846,19 @@ int CvDealAI::GetDealValue(CvDeal* pDeal) const
 		// Multiplier is -1 if we're giving something away, 1 if we're receiving something
 		int iValueMultiplier = bFromMe ? -1 : 1;
 
+		// Vox Deorum: bTreatAsHumanToHuman is threaded into the legality re-check (and into the valuation
+		// below) so the agent-mediated trade UI does not re-judge under stock rules the very items its
+		// editor admitted under human-to-human rules -- which collapsed every such deal to "Impossible!".
 		if (bFromMe)
 		{
-			if (!pDeal->IsPossibleToTradeItem(eMyPlayer, eOtherPlayer, it->m_eItemType, it->m_iData1, it->m_iData2, it->m_iData3, it->m_bFlag1, true))
+			if (!pDeal->IsPossibleToTradeItem(eMyPlayer, eOtherPlayer, it->m_eItemType, it->m_iData1, it->m_iData2, it->m_iData3, it->m_bFlag1, true, bTreatAsHumanToHuman))
 			{
 				iItemValue = INT_MAX;
 			}
 		}
 		else
 		{
-			if (!pDeal->IsPossibleToTradeItem(eOtherPlayer, eMyPlayer, it->m_eItemType, it->m_iData1, it->m_iData2, it->m_iData3, it->m_bFlag1, true))
+			if (!pDeal->IsPossibleToTradeItem(eOtherPlayer, eMyPlayer, it->m_eItemType, it->m_iData1, it->m_iData2, it->m_iData3, it->m_bFlag1, true, bTreatAsHumanToHuman))
 			{
 				iItemValue = INT_MAX;
 			}
@@ -863,7 +866,7 @@ int CvDealAI::GetDealValue(CvDeal* pDeal) const
 
 		if (iItemValue != INT_MAX)
 		{
-			iItemValue = GetTradeItemValue(it->m_eItemType, bFromMe, eOtherPlayer, it->m_iData1, it->m_iData2, it->m_iData3, it->m_bFlag1, it->m_iDuration, false, true);
+			iItemValue = GetTradeItemValue(it->m_eItemType, bFromMe, eOtherPlayer, it->m_iData1, it->m_iData2, it->m_iData3, it->m_bFlag1, it->m_iDuration, false, true, bTreatAsHumanToHuman);
 			it->m_iValue = iItemValue;
 		}
 
@@ -900,7 +903,7 @@ int CvDealAI::GetOneGPTValue(bool bPeaceDeal) const
 }
 
 /// What is a particular item worth?
-int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes eOtherPlayer, int iData1, int iData2, int iData3, bool bFlag1, int iDuration, bool bIsAIOffer, bool bEqualize) const
+int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes eOtherPlayer, int iData1, int iData2, int iData3, bool bFlag1, int iDuration, bool bIsAIOffer, bool bEqualize, bool bTreatAsHumanToHuman) const
 {
 	PRECONDITION(eOtherPlayer >= 0);
 	PRECONDITION(eOtherPlayer < MAX_MAJOR_CIVS);
@@ -916,7 +919,7 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 
 	//cache lookup
 	PlayerTypes eMyPlayer = GetPlayer()->GetID();
-	SDealItemValueParams currentCall(eItem, bFromMe, eOtherPlayer, iData1, iData2, iData3, bFlag1, iDuration, bEqualize);
+	SDealItemValueParams currentCall(eItem, bFromMe, eOtherPlayer, iData1, iData2, iData3, bFlag1, iDuration, bEqualize, bTreatAsHumanToHuman);
 	if (m_dealItemValues.find(currentCall) != m_dealItemValues.end())
 		return m_dealItemValues[currentCall];
 
@@ -1032,7 +1035,7 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 		}
 		if (eWinner != NO_PLAYER)
 		{
-			iItemValue = GET_PLAYER(eWinner).GetDealAI()->GetTradeItemValue(eItem, (eWinner == eMyPlayer) == bFromMe, eWinner == eMyPlayer ? eOtherPlayer : eMyPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false);
+			iItemValue = GET_PLAYER(eWinner).GetDealAI()->GetTradeItemValue(eItem, (eWinner == eMyPlayer) == bFromMe, eWinner == eMyPlayer ? eOtherPlayer : eMyPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false, bTreatAsHumanToHuman);
 			// resources which the winner evaluates as non-positive must be impossible to trade, otherwise an unlimited amount of them could be added to the deal
 			if (iItemValue <= 0 && eItem == TRADE_ITEM_RESOURCES)
 			{
@@ -1042,7 +1045,10 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 		// non-peace deals or white peace: the average of the two players' evaluation is taken
 		else
 		{
-			bool bHumanInvolved = GetPlayer()->isHuman(ISHUMAN_AI_DIPLOMACY) || GET_PLAYER(eOtherPlayer).isHuman(ISHUMAN_AI_DIPLOMACY);
+			// Vox Deorum: the override also stands in for human involvement. Without it, a human strategist
+			// driving a pinned AI seat has no CvPreGame-human on either side, so every item that is not
+			// mutually acceptable collapses to INT_MAX and the value bar reads "Impossible!" unconditionally.
+			bool bHumanInvolved = bTreatAsHumanToHuman || GetPlayer()->isHuman(ISHUMAN_AI_DIPLOMACY) || GET_PLAYER(eOtherPlayer).isHuman(ISHUMAN_AI_DIPLOMACY);
 
 			// modify buy and sell price by the players' opinions towards each other
 			int iApproachModifier = GetPlayer()->isHuman(ISHUMAN_AI_DIPLOMACY) ? 100 : GetPlayer()->GetDiplomacyAI()->GetSurfaceApproachDealModifier(eOtherPlayer, bFromMe);
@@ -1065,7 +1071,7 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 			if (bFromMe)
 			{
 				// we are selling
-				iSellPrice = GetTradeItemValue(eItem, bFromMe, eOtherPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false);
+				iSellPrice = GetTradeItemValue(eItem, bFromMe, eOtherPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false, bTreatAsHumanToHuman);
 				if (iSellPrice == INT_MAX)
 				{
 					iItemValue = INT_MAX;
@@ -1075,7 +1081,7 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 					// modify acceptable selling price based on opinion
 					iSellModifier = iApproachModifier;
 					iMinAcceptableSellPrice = iSellPrice * iSellModifier / 100;
-					iBuyPrice = GET_PLAYER(eOtherPlayer).GetDealAI()->GetTradeItemValue(eItem, !bFromMe, eMyPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false);
+					iBuyPrice = GET_PLAYER(eOtherPlayer).GetDealAI()->GetTradeItemValue(eItem, !bFromMe, eMyPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false, bTreatAsHumanToHuman);
 					if (iBuyPrice == INT_MAX)
 					{
 						// The other player doesn't want to buy this item (perceived buy value if human).
@@ -1110,7 +1116,7 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 			else
 			{
 				// we are buying
-				iBuyPrice = GetTradeItemValue(eItem, bFromMe, eOtherPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false);
+				iBuyPrice = GetTradeItemValue(eItem, bFromMe, eOtherPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false, bTreatAsHumanToHuman);
 				if (iBuyPrice == INT_MAX)
 				{
 					iItemValue = INT_MAX;
@@ -1120,7 +1126,7 @@ int CvDealAI::GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes 
 					// modify acceptable buying price based on opinion
 					iBuyModifier = iApproachModifier;
 					iMaxAcceptableBuyPrice = iBuyPrice * iBuyModifier / 100;
-					iSellPrice = GET_PLAYER(eOtherPlayer).GetDealAI()->GetTradeItemValue(eItem, !bFromMe, eMyPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false);
+					iSellPrice = GET_PLAYER(eOtherPlayer).GetDealAI()->GetTradeItemValue(eItem, !bFromMe, eMyPlayer, iData1, iData2, iData3, bFlag1, iDuration, bIsAIOffer, false, bTreatAsHumanToHuman);
 					if (iSellPrice == INT_MAX)
 					{
 						// The other player doesn't want to sell this item (perceived sell value if human). 

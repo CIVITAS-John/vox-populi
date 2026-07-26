@@ -16864,11 +16864,16 @@ int CvLuaPlayer::lIsTradeItemValuedImpossible(lua_State* L)
 	return 1;
 }
 //------------------------------------------------------------------------------
+// Vox Deorum: optional 3rd arg bTreatAsHumanToHuman (default false) mirrors the override on
+// CvDeal::IsPossibleToTradeItem. The agent-mediated trade UI admits items under human-to-human
+// legality, so valuation must be asked the same question or a legal deal reads "Impossible!".
+// Usage: player:GetTotalValueToMeNormal(deal [, bTreatAsHumanToHuman])
 int CvLuaPlayer::lGetTotalValueToMeNormal(lua_State* L)
 {
 	CvPlayerAI* pkThisPlayer = GetInstance(L);
 	CvDeal* pkDeal = CvLuaDeal::GetInstance(L, 2);
-	int iResult = pkThisPlayer->GetDealAI()->GetDealValue(pkDeal);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
+	int iResult = pkThisPlayer->GetDealAI()->GetDealValue(pkDeal, bTreatAsHumanToHuman);
 
 	if (iResult == INT_MAX || iResult == (INT_MAX * -1))
 	{
@@ -16884,12 +16889,15 @@ int CvLuaPlayer::lGetTotalValueToMeNormal(lua_State* L)
 	return 1;
 }
 //------------------------------------------------------------------------------
+// Vox Deorum: optional 3rd arg bTreatAsHumanToHuman (default false), see lGetTotalValueToMeNormal.
+// Usage: player:GetTotalValueToMe(deal [, bTreatAsHumanToHuman])
 int CvLuaPlayer::lGetTotalValueToMe(lua_State* L)
 {
 	CvPlayerAI* pkThisPlayer = GetInstance(L);
 	CvDeal* pkDeal = CvLuaDeal::GetInstance(L, 2);
+	const bool bTreatAsHumanToHuman = luaL_optbool(L, 3, false);
 	int iResult = 0;
-	iResult = pkThisPlayer->GetDealAI()->GetDealValue(pkDeal);
+	iResult = pkThisPlayer->GetDealAI()->GetDealValue(pkDeal, bTreatAsHumanToHuman);
 	if (iResult < 0)
 	{
 		iResult *= -1;

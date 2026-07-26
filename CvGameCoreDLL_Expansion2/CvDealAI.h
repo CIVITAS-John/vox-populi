@@ -60,8 +60,11 @@ public:
 	bool DoEqualizeDeal(CvDeal* pDeal, PlayerTypes eOtherPlayer, bool& bDealGoodToBeginWith, bool& bCantMatchOffer, bool bHumanRequestedEqualization = false);
 
 	int GetOneGPTValue(bool bPeaceDeal) const;
-	int GetDealValue(CvDeal* pDeal) const;
-	int GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes eOtherPlayer, int iData1, int iData2, int iData3, bool bFlag1, int iDuration, bool bIsAIOffer, bool bEqualize = true) const;
+	// Vox Deorum: bTreatAsHumanToHuman mirrors CvDeal::IsPossibleToTradeItem's override (default false).
+	// Stock callers leave it false and behave exactly as before; only the agent-mediated trade UI passes
+	// true, so the value it displays is judged under the same legality rules the editor admitted items by.
+	int GetDealValue(CvDeal* pDeal, bool bTreatAsHumanToHuman = false) const;
+	int GetTradeItemValue(TradeableItems eItem, bool bFromMe, PlayerTypes eOtherPlayer, int iData1, int iData2, int iData3, bool bFlag1, int iDuration, bool bIsAIOffer, bool bEqualize = true, bool bTreatAsHumanToHuman = false) const;
 
 	int GetGoldForForValueExchange(int iGoldOrValue, bool bNumGoldFromValue) const;
 	int GetGPTForForValueExchange(int iGPTorValue, bool bNumGPTFromValue, int iNumTurns, bool bFromMe, PlayerTypes eOtherPlayer) const;
@@ -194,13 +197,16 @@ protected:
 		bool bFlag1;
 		int iDuration;
 		bool bEqualize;
+		// Vox Deorum: part of the key. The override changes which items are legal, so a human-to-human
+		// valuation must never be served a stock-rules entry cached earlier in the same turn slice.
+		bool bTreatAsHumanToHuman;
 
-		SDealItemValueParams(TradeableItems eItem_, bool bFromMe_, PlayerTypes eOtherPlayer_, int iData1_, int iData2_, int iData3_, bool bFlag1_, int iDuration_, bool bEqualize_) :
-			eItem(eItem_), bFromMe(bFromMe_), eOtherPlayer(eOtherPlayer_), iData1(iData1_), iData2(iData2_), iData3(iData3_), bFlag1(bFlag1_), iDuration(iDuration_), bEqualize(bEqualize_) { }
+		SDealItemValueParams(TradeableItems eItem_, bool bFromMe_, PlayerTypes eOtherPlayer_, int iData1_, int iData2_, int iData3_, bool bFlag1_, int iDuration_, bool bEqualize_, bool bTreatAsHumanToHuman_) :
+			eItem(eItem_), bFromMe(bFromMe_), eOtherPlayer(eOtherPlayer_), iData1(iData1_), iData2(iData2_), iData3(iData3_), bFlag1(bFlag1_), iDuration(iDuration_), bEqualize(bEqualize_), bTreatAsHumanToHuman(bTreatAsHumanToHuman_) { }
 
 		bool operator==(const SDealItemValueParams& rhs) const
 		{
-			return eItem == rhs.eItem && bFromMe == rhs.bFromMe && eOtherPlayer == rhs.eOtherPlayer && iData1 == rhs.iData1 && iData2 == rhs.iData2 && iData3 == rhs.iData3 && bFlag1 == rhs.bFlag1 && iDuration == rhs.iDuration && bEqualize == rhs.bEqualize;
+			return eItem == rhs.eItem && bFromMe == rhs.bFromMe && eOtherPlayer == rhs.eOtherPlayer && iData1 == rhs.iData1 && iData2 == rhs.iData2 && iData3 == rhs.iData3 && bFlag1 == rhs.bFlag1 && iDuration == rhs.iDuration && bEqualize == rhs.bEqualize && bTreatAsHumanToHuman == rhs.bTreatAsHumanToHuman;
 		}
 	};
 
@@ -223,9 +229,10 @@ protected:
 			std::size_t h7 = tr1::hash<bool>()(key.bFlag1);
 			std::size_t h8 = tr1::hash<int>()(key.iDuration);
 			std::size_t h9 = tr1::hash<bool>()(key.bEqualize);
- 
+			std::size_t h10 = tr1::hash<bool>()(key.bTreatAsHumanToHuman);
+
 			//rotate the bits so that XORing isn't quite as likely to collapse
-			return rotl32(h1,1) ^ rotl32(h2,2) ^ rotl32(h3,3) ^ rotl32(h4,4) ^ rotl32(h5,5) ^ rotl32(h6,6) ^ rotl32(h7,7) ^ rotl32(h8,8) ^ rotl32(h9,9);
+			return rotl32(h1,1) ^ rotl32(h2,2) ^ rotl32(h3,3) ^ rotl32(h4,4) ^ rotl32(h5,5) ^ rotl32(h6,6) ^ rotl32(h7,7) ^ rotl32(h8,8) ^ rotl32(h9,9) ^ rotl32(h10,10);
 		}
 	};
 
