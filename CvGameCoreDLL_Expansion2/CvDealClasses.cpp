@@ -414,8 +414,8 @@ bool CvDeal::IsPossibleToTradeItem(PlayerTypes ePlayer, PlayerTypes eToPlayer, T
 	iGoldAvailable -= iCost;
 
 	// AI will refuse to trade temporary items for permanent items.
-	// Vox Deorum: this is an AI-only heuristic, so skip it whenever bHumanToHuman holds — whether
-	// from a real human pair or the agent-mediated override; stock (bHumanToHuman false) is unchanged.
+	// Vox Deorum: AI-only heuristic; deals under human-to-human rules (real pair or the
+	// agent-mediated override, see bHumanToHuman above) are exempt.
 	if (!bHumanToHuman && BlockTemporaryForPermanentTrade(eItem, ePlayer, eToPlayer))
 		return false;
 
@@ -1578,10 +1578,8 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 	bool bSameTeam = eFromTeam == eToTeam;
 	bool bOneSided = this->GetSurrenderingPlayer() != NO_PLAYER;
 
-	// Vox Deorum: skip the human-count early-outs under the agent-mediated override, so an
-	// agent-vs-agent (both-AI) pair falls through and still produces a real reason string below
-	// instead of bailing out early with an empty strError; stock (bTreatAsHumanToHuman false) is
-	// bit-identical to before.
+	// Vox Deorum: the human-count early-outs serve the native UI only; the agent-mediated
+	// override needs reason strings for AI pairs too.
 	if (!bTreatAsHumanToHuman)
 	{
 		// This deal must have only one human player
