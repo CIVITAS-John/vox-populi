@@ -1103,6 +1103,14 @@ function DoUpdateButtons()
 	if (g_bVDHumanToHuman) then
 		Controls.ProposeButton:SetDisabled(true);
 		Controls.CancelButton:SetDisabled(true);
+		-- Vox Deorum: the AI conversation prompts carry no callback in the wrapper editor, so the
+		-- item-count branch above must not leave one of them covering the wrapper status line.
+		Controls.WhatDoYouWantButton:SetHide(true);
+		Controls.WhatWillYouGiveMeButton:SetHide(true);
+		Controls.WhatWillMakeThisWorkButton:SetHide(true);
+		Controls.WhatWillEndThisWarButton:SetHide(true);
+		Controls.WhatConcessionsButton:SetHide(true);
+		Controls.DenounceButton:SetHide(true);
 		LuaEvents.VoxDeorumTradeLogicUpdateButtons();
 	end
 end
