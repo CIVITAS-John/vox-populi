@@ -492,6 +492,39 @@ void SetAllPlotsVisible(TeamTypes eTeam)
 	}
 }
 
+// Vox Deorum: extracted verbatim from setAIAutoPlay's activation path so the same
+// copy can also run when the override is set after autoplay is already going (see
+// setObserverUIOverridePlayer).
+//
+// Make an observer team's map knowledge match another team's exactly, so an observer
+// seat pinned to a civ (see CvGame::getObserverUIOverridePlayer) looks at that civ's
+// fog of war instead of the whole map. Every count and reveal flag is *assigned* the
+// source team's value rather than merged, so this retracts knowledge as well as adds
+// it -- which is what lets it undo an earlier SetAllPlotsVisible.
+//
+// The per-plot observer mirrors at the end of CvPlot::changeVisibilityCount and
+// CvPlot::setRevealed only fire for the override player's team, so writing to the
+// observer team here does not re-enter them.
+void CopyPlotVisibilityToObserverTeam(TeamTypes eObserverTeam, TeamTypes ePlayerTeam)
+{
+	if (eObserverTeam == NO_TEAM || ePlayerTeam == NO_TEAM || eObserverTeam == ePlayerTeam)
+		return;
+
+	const int iNumInvisibleInfos = NUM_INVISIBLE_TYPES;
+	for (int plotID = 0; plotID < GC.getMap().numPlots(); plotID++)
+	{
+		CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(plotID);
+		pLoopPlot->changeVisibilityCount(eObserverTeam, pLoopPlot->getVisibilityCount(ePlayerTeam) - pLoopPlot->getVisibilityCount(eObserverTeam), NO_INVISIBLE, true, false);
+		pLoopPlot->flipVisibility(eObserverTeam);
+		pLoopPlot->changeInvisibleVisibilityCountUnit(eObserverTeam, pLoopPlot->getInvisibleVisibilityCountUnit(ePlayerTeam) - pLoopPlot->getInvisibleVisibilityCountUnit(eObserverTeam));
+		for (int iJ = 0; iJ < iNumInvisibleInfos; iJ++)
+		{
+			pLoopPlot->changeInvisibleVisibilityCount(eObserverTeam, ((InvisibleTypes)iJ), pLoopPlot->getInvisibleVisibilityCount(ePlayerTeam, ((InvisibleTypes)iJ)) - pLoopPlot->getInvisibleVisibilityCount(eObserverTeam, ((InvisibleTypes)iJ)));
+		}
+		pLoopPlot->setRevealed(eObserverTeam, pLoopPlot->isRevealed(ePlayerTeam));
+	}
+}
+
 //------------------------------------------------------------------------------
 bool CvGame::InitMap(CvGameInitialItemsOverrides& kGameInitialItemsOverrides)
 {
@@ -5463,21 +5496,8 @@ void CvGame::setAIAutoPlay(int iNewValue, PlayerTypes eReturnAsPlayer)
 			else
 			{
 				// for all plots we have to copy visibility/revealed status from the team of eTurnActivePlayer to the team of getActivePlayer
-				TeamTypes eObserverTeam = GET_PLAYER((PlayerTypes)iObserver).getTeam();
-				TeamTypes ePlayerTeam = GET_PLAYER(getObserverUIOverridePlayer()).getTeam();
-				const int iNumInvisibleInfos = NUM_INVISIBLE_TYPES;
-				for (int plotID = 0; plotID < GC.getMap().numPlots(); plotID++)
-				{
-					CvPlot* pLoopPlot = GC.getMap().plotByIndexUnchecked(plotID);
-					pLoopPlot->changeVisibilityCount(eObserverTeam, pLoopPlot->getVisibilityCount(ePlayerTeam) - pLoopPlot->getVisibilityCount(eObserverTeam), NO_INVISIBLE, true, false);
-					pLoopPlot->flipVisibility(eObserverTeam);
-					pLoopPlot->changeInvisibleVisibilityCountUnit(eObserverTeam, pLoopPlot->getInvisibleVisibilityCountUnit(ePlayerTeam) - pLoopPlot->getInvisibleVisibilityCountUnit(eObserverTeam));
-					for (int iJ = 0; iJ < iNumInvisibleInfos; iJ++)
-					{
-						pLoopPlot->changeInvisibleVisibilityCount(eObserverTeam, ((InvisibleTypes)iJ), pLoopPlot->getInvisibleVisibilityCount(ePlayerTeam, ((InvisibleTypes)iJ)) - pLoopPlot->getInvisibleVisibilityCount(eObserverTeam, ((InvisibleTypes)iJ)));
-					}
-					pLoopPlot->setRevealed(eObserverTeam, pLoopPlot->isRevealed(ePlayerTeam));
-				}
+				// Vox Deorum: this loop lifted into CopyPlotVisibilityToObserverTeam, shared with setObserverUIOverridePlayer
+				CopyPlotVisibilityToObserverTeam(GET_PLAYER((PlayerTypes)iObserver).getTeam(), GET_PLAYER(getObserverUIOverridePlayer()).getTeam());
 			}
 
 			CvPreGame::setSlotClaim((PlayerTypes)iObserver, SLOTCLAIM_ASSIGNED);
@@ -6309,7 +6329,43 @@ PlayerTypes CvGame::getObserverUIOverridePlayer() const
 
 void CvGame::setObserverUIOverridePlayer(PlayerTypes ePlayer)
 {
+	PlayerTypes eOldPlayer = m_eObserverUIOverridePlayer;
 	m_eObserverUIOverridePlayer = ePlayer;
+
+	// Vox Deorum: the usual ordering is override-then-autoplay, and setAIAutoPlay's
+	// activation hands the observer team the override player's map knowledge as it
+	// seats it. When the override is instead set with autoplay *already* running --
+	// pinning the observer seat to a civ mid-game, or adopting a save written by a
+	// run that had no override -- that activation is long past and cannot be
+	// replayed (setAIAutoPlay bails once the active player is already an observer).
+	// The observer team is then left with whatever it had, which after
+	// SetAllPlotsVisible is the entire map. Redo the copy here so the seat always
+	// looks at the override player's fog of war.
+	if (ePlayer == NO_PLAYER || ePlayer == eOldPlayer)
+		return;
+
+	PlayerTypes eActivePlayer = getActivePlayer();
+	if (getAIAutoPlay() <= 0 || eActivePlayer == NO_PLAYER || !GET_PLAYER(eActivePlayer).isObserver())
+		return;
+
+	CopyPlotVisibilityToObserverTeam(GET_PLAYER(eActivePlayer).getTeam(), GET_PLAYER(ePlayer).getTeam());
+
+	// Vox Deorum: the observer team is the active team here, so setRevealed already
+	// refreshed every plot it actually changed. Rebuild the aggregate views once,
+	// mirroring what setActivePlayer does after an autoplay seat switch.
+	if (GC.IsGraphicsInitialized())
+	{
+		CvMap& theMap = GC.getMap();
+		theMap.updateFog();
+		theMap.updateVisibility();
+
+		ICvUserInterface2* theUI = GC.GetEngineUserInterface();
+		theUI->setDirty(GameData_DIRTY_BIT, true);
+		theUI->setDirty(MinimapSection_DIRTY_BIT, true);
+		theUI->setDirty(CityInfo_DIRTY_BIT, true);
+		theUI->setDirty(UnitInfo_DIRTY_BIT, true);
+		theUI->setDirty(BlockadedPlots_DIRTY_BIT, true);
+	}
 }
 
 //	--------------------------------------------------------------------------------
