@@ -1618,7 +1618,9 @@ CvString CvDeal::GetReasonsItemUntradeable(PlayerTypes ePlayer, PlayerTypes eToP
 	bool bIsThirdPartyDeal = eItem == TRADE_ITEM_THIRD_PARTY_PEACE || eItem == TRADE_ITEM_THIRD_PARTY_WAR;
 
 	// AI will refuse to trade temporary items for permanent items.
-	if (BlockTemporaryForPermanentTrade(eItem, ePlayer, eToPlayer))
+	// Vox Deorum: mirrors the legality gate in IsPossibleToTradeItem — deals under
+	// human-to-human rules are exempt from this rule, so its reason must not fire either.
+	if (!(bTreatAsHumanToHuman || (bFromHuman && bToHuman)) && BlockTemporaryForPermanentTrade(eItem, ePlayer, eToPlayer))
 	{
 		if (bIsGold || bIsThirdPartyDeal)
 		{
