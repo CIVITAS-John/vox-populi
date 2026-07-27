@@ -6333,22 +6333,27 @@ void CvGame::setObserverUIOverridePlayer(PlayerTypes ePlayer)
 	m_eObserverUIOverridePlayer = ePlayer;
 
 	// Vox Deorum: the usual ordering is override-then-autoplay, and setAIAutoPlay's
-	// activation hands the observer team the override player's map knowledge as it
-	// seats it. When the override is instead set with autoplay *already* running --
-	// pinning the observer seat to a civ mid-game, or adopting a save written by a
-	// run that had no override -- that activation is long past and cannot be
-	// replayed (setAIAutoPlay bails once the active player is already an observer).
-	// The observer team is then left with whatever it had, which after
-	// SetAllPlotsVisible is the entire map. Redo the copy here so the seat always
-	// looks at the override player's fog of war.
-	if (ePlayer == NO_PLAYER || ePlayer == eOldPlayer)
+	// activation hands the observer team its map knowledge as it seats it: the
+	// override player's fog of war when an override is pinned, every plot when not
+	// (CvGame.cpp:5492-5501). When the override instead *changes* with autoplay
+	// already running -- pinning the observer seat to a civ mid-game, or clearing a
+	// stale override carried by an adopted save -- that activation is long past and
+	// cannot be replayed (setAIAutoPlay bails once the active player is already an
+	// observer), so the observer team would be left with whatever visibility it had.
+	// Redo the activation's visibility step here for the new override state, in
+	// both directions: copy the pinned civ's fog of war, or reveal all plots on a
+	// clear.
+	if (ePlayer == eOldPlayer)
 		return;
 
 	PlayerTypes eActivePlayer = getActivePlayer();
 	if (getAIAutoPlay() <= 0 || eActivePlayer == NO_PLAYER || !GET_PLAYER(eActivePlayer).isObserver())
 		return;
 
-	CopyPlotVisibilityToObserverTeam(GET_PLAYER(eActivePlayer).getTeam(), GET_PLAYER(ePlayer).getTeam());
+	if (ePlayer == NO_PLAYER)
+		SetAllPlotsVisible(GET_PLAYER(eActivePlayer).getTeam());
+	else
+		CopyPlotVisibilityToObserverTeam(GET_PLAYER(eActivePlayer).getTeam(), GET_PLAYER(ePlayer).getTeam());
 
 	// Vox Deorum: the observer team is the active team here, so setRevealed already
 	// refreshed every plot it actually changed. Rebuild the aggregate views once,
