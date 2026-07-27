@@ -9,10 +9,33 @@ local g_ChatInstances = {};
 local g_iChatTeam   = -1;
 local g_iChatPlayer = -1;
 
+-- Vox Deorum: resolve the civilization seat this UI represents. An observer pinned to a civ by
+-- Game.SetObserverUIOverridePlayer (human-strategist mode) renders as that civ; a normal human
+-- game and a pure observer (override -1) return Game.GetActivePlayer() unchanged. Defensive:
+-- the binding and IsObserver may be absent on an older DLL.
+local function GetUIActivePlayerID()
+	local playerID = Game.GetActivePlayer();
+	local player = Players[ playerID ];
+	if player and player.IsObserver and player:IsObserver() and Game.GetObserverUIOverridePlayer then
+		local overrideID = Game.GetObserverUIOverridePlayer();
+		if overrideID and overrideID >= 0 and Players[ overrideID ] then
+			return overrideID;
+		end
+	end
+	return playerID;
+end
+
+-- Vox Deorum: the player object for the seat above, for call sites that only want the object.
+local function GetUIActivePlayer()
+	return Players[ GetUIActivePlayerID() ];
+end
+
+-- Vox Deorum: NOT seat-swapped. These four feed OnChat, PopulateChatPull and SendChat only --
+-- network identity, which stays on the real slot this machine occupies.
 local g_iLocalPlayer = Game.GetActivePlayer();
 local g_pLocalPlayer = Players[ g_iLocalPlayer ];
 local g_iLocalTeam = g_pLocalPlayer:GetTeam();
-local g_pLocalTeam = Teams[ g_iLocalTeam ];      
+local g_pLocalTeam = Teams[ g_iLocalTeam ];
 
 local m_bChatOpen = not Controls.ChatPanel:IsHidden();
 
@@ -425,7 +448,7 @@ DoUpdateLeagueCountdown();
 -------------------------------------------------------------------------------
 -------------------------------------------------------------------------------
 function DoUpdateEspionageButton()
-	local iLocalPlayer = Game.GetActivePlayer();
+	local iLocalPlayer = GetUIActivePlayerID(); -- Vox Deorum: the pinned seat's spies, not the observer's
 	local pLocalPlayer = Players[iLocalPlayer];
 	local iNumUnassignedSpies = pLocalPlayer:GetNumUnassignedSpies();
 	
@@ -450,7 +473,7 @@ Events.SerialEventEspionageScreenDirty.Add(DoUpdateEspionageButton);
 -------------------------------------------------------------------------------
 -------------------------------------------------------------------------------
 function DoUpdateVassalButton()
-	local iLocalPlayer = Game.GetActivePlayer();
+	local iLocalPlayer = GetUIActivePlayerID(); -- Vox Deorum: the pinned seat's vassals, not the observer's
 	local pLocalPlayer = Players[iLocalPlayer];
 	local pLocalTeam = Teams[pLocalPlayer:GetTeam()];
 	local iNumVassalTaxesAvailable = 0;
@@ -573,7 +596,9 @@ Events.GameplaySetActivePlayer.Add(OnDiploCornerActivePlayerChanged);
 
 function CheckEspionageStarted()
 	function TestEspionageStarted()
-		local player = Players[Game.GetActivePlayer()];
+		-- Vox Deorum: drives the corner art swap (CornerAnchor <-> CornerAnchor_Espionage), which
+		-- is a sibling of the hidden DiploCornerStack and so IS visible in strategist mode.
+		local player = GetUIActivePlayer();
 		return player:GetNumSpies() > 0;
 	end
 
@@ -588,7 +613,9 @@ end
 
 function CheckVassalageStarted()
 	function TestVassalageStarted()
-		local player = Players[Game.GetActivePlayer()];
+		-- Vox Deorum: seat-swapped for consistency; note the caller below hardcodes false, so this
+		-- result is currently unused (upstream dead code, left as-is).
+		local player = GetUIActivePlayer();
 		local team = Teams[player:GetTeam()];
 		return (team:GetCurrentEra() >= Game.GetVassalageEnabledEra()) or team:IsVassalOfSomeone();
 	end

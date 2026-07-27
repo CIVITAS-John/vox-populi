@@ -4363,10 +4363,28 @@ end
 ----------------------------------------------------------------
 -- Diplomacy overview / player icon tooltip
 ----------------------------------------------------------------
+-- Vox Deorum: resolve the civilization seat this UI represents. An observer pinned to a civ by
+-- Game.SetObserverUIOverridePlayer (human-strategist mode) renders as that civ; a normal human
+-- game and a pure observer (override -1) return Game.GetActivePlayer() unchanged. Defensive:
+-- the binding and IsObserver may be absent on an older DLL.
+local function GetUIActivePlayerID()
+	local playerID = Game.GetActivePlayer();
+	local player = Players[ playerID ];
+	if player and player.IsObserver and player:IsObserver() and Game.GetObserverUIOverridePlayer then
+		local overrideID = Game.GetObserverUIOverridePlayer();
+		if overrideID and overrideID >= 0 and Players[ overrideID ] then
+			return overrideID;
+		end
+	end
+	return playerID;
+end
+
 function GetMoodInfo(eOtherPlayer)
-	local eActivePlayer = Game.GetActivePlayer();
+	-- Vox Deorum: the pinned seat, so DiploList and DiscussionDialog read a real mood instead of
+	-- the observer's empty relationship. eActiveTeam derives from it rather than Game.GetActiveTeam().
+	local eActivePlayer = GetUIActivePlayerID();
 	local pActivePlayer = Players[eActivePlayer];
-	local eActiveTeam = Game.GetActiveTeam();
+	local eActiveTeam = pActivePlayer:GetTeam();
 	local pActiveTeam = Teams[eActiveTeam];
 	local pOtherPlayer = Players[eOtherPlayer];
 	local eOtherTeam = pOtherPlayer:GetTeam();

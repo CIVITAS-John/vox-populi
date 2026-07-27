@@ -360,9 +360,25 @@ local function inParentheses( duration )
 	end
 end
 
+-- Vox Deorum: resolve the civilization seat this UI represents. An observer pinned to a civ by
+-- Game.SetObserverUIOverridePlayer (human-strategist mode) renders as that civ; a normal human
+-- game and a pure observer (override -1) return Game.GetActivePlayer() unchanged. Defensive:
+-- the binding and IsObserver may be absent on an older DLL.
+local function GetUIActivePlayerID()
+	local playerID = Game.GetActivePlayer()
+	local player = Players[ playerID ]
+	if player and player.IsObserver and player:IsObserver() and Game.GetObserverUIOverridePlayer then
+		local overrideID = Game.GetObserverUIOverridePlayer()
+		if overrideID and overrideID >= 0 and Players[ overrideID ] then
+			return overrideID
+		end
+	end
+	return playerID
+end
+
 local function GetMoodInfo( playerID )
 
-	local activePlayerID = Game.GetActivePlayer()
+	local activePlayerID = GetUIActivePlayerID() -- Vox Deorum: the pinned seat, not the observer
 	local activePlayer = Players[activePlayerID]
 	local activeTeamID = activePlayer:GetTeam()
 	local activeTeam = Teams[activeTeamID]

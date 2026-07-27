@@ -93,10 +93,32 @@ TTManager:GetTypeControlTable( "EUI_CivilizationTooltip", g_tipControls )
 local g_minorControlTable = {}
 local g_majorControlTable = {}
 
-local g_activePlayerID = Game.GetActivePlayer()
+-- Vox Deorum: resolve the civilization seat this UI represents. An observer pinned to a civ by
+-- Game.SetObserverUIOverridePlayer (human-strategist mode) renders as that civ; a normal human
+-- game and a pure observer (override -1) return Game.GetActivePlayer() unchanged. Defensive:
+-- the binding and IsObserver may be absent on an older DLL.
+local function GetUIActivePlayerID()
+	local playerID = Game.GetActivePlayer()
+	local player = Players[ playerID ]
+	if player and player.IsObserver and player:IsObserver() and Game.GetObserverUIOverridePlayer then
+		local overrideID = Game.GetObserverUIOverridePlayer()
+		if overrideID and overrideID >= 0 and Players[ overrideID ] then
+			return overrideID
+		end
+	end
+	return playerID
+end
+
+local g_activePlayerID = GetUIActivePlayerID()
 local g_activePlayer = Players[ g_activePlayerID ]
 local g_activeTeamID = g_activePlayer:GetTeam()
 local g_activeTeam = Teams[ g_activeTeamID ]
+-- Vox Deorum: notifications are a different axis from civ identity. The DLL adds observer-mode
+-- notifications to the ACTIVE player's list (CvPlayer.cpp, goody-hut routing) and the engine only
+-- surfaces that list, so a notice filed against the pinned civ would never be read. Everything
+-- that posts or targets a notification uses this; everything that renders diplomacy uses the four
+-- globals above.
+local g_notificationPlayer = Players[ Game.GetActivePlayer() ]
 
 --local g_isOptionAlwaysWar = Game.IsOption( GameOptionTypes.GAMEOPTION_ALWAYS_WAR )
 --local g_isOptionAlwaysPeace = Game.IsOption( GameOptionTypes.GAMEOPTION_ALWAYS_PEACE )
@@ -749,7 +771,9 @@ function( x, y, oldPopulation, newPopulation )
 		and not city:IsResistance()		-- who cares ? nothing to be done
 		and Game.GetGameTurn() > city:GetGameTurnAcquired() -- inhibit upon city creation & capture
 	then
-		g_activePlayer:AddNotification(NotificationTypes.NOTIFICATION_CITY_GROWTH,
+		-- Vox Deorum: the test above is civ identity (the pinned seat owns the city), the receiver
+		-- is notification identity (the observer's list is the one the engine surfaces).
+		g_notificationPlayer:AddNotification(NotificationTypes.NOTIFICATION_CITY_GROWTH,
 			L("TXT_KEY_NOTIFICATION_CITY_GROWTH", city:GetName(), newPopulation ),
 			L("TXT_KEY_NOTIFICATION_SUMMARY_CITY_GROWTH", city:GetName() ),
 			x, y, plot:GetPlotIndex() )	--iGameDataIndex, int iExtraGameData
@@ -769,7 +793,8 @@ function( playerID, cityID, x, y, isWithGold, isWithFaithOrCulture )
 		if plot and city and ( ( plot:GetWorkingCity() and not city:IsPuppet() ) or (plot:GetResourceType( g_activeTeamID ) ~= -1 and Game.GetResourceUsageType( plot:GetResourceType( g_activeTeamID ) ) > 0 ))
 		-- valid plot, either worked by city which is not a puppet, or has some kind of resource we can use
 		then
-			g_activePlayer:AddNotification( NotificationTypes.NOTIFICATION_CITY_TILE,
+			-- Vox Deorum: see the city-growth notification above -- receiver is the observer.
+			g_notificationPlayer:AddNotification( NotificationTypes.NOTIFICATION_CITY_TILE,
 				L( "TXT_KEY_NOTIFICATION_CITY_CULTURE_ACQUIRED_NEW_PLOT", city:GetName() ),
 				L( "TXT_KEY_NOTIFICATION_SUMMARY_CITY_CULTURE_ACQUIRED_NEW_PLOT", city:GetName() ),
 				x, y, plot:GetPlotIndex() )	--iGameDataIndex, int iExtraGameData
@@ -1146,7 +1171,9 @@ local g_civListInstanceToolTips = { -- the tooltip function names need to match 
 			end
 
 			local iOurWarWeariness = g_activePlayer:GetWarWearinessPercent(playerID);
-			local iWarDuration = g_activePlayer:GetWarDuration(g_iAIPlayer);
+			-- Vox Deorum: was g_iAIPlayer, which is undefined in this file (pasted from
+			-- LeaderHeadRoot) and silently resolved to player 0.
+			local iWarDuration = g_activePlayer:GetWarDuration(playerID);
 			strWarInfo = strWarInfo .. '[NEWLINE]' .. Locale.ConvertTextKey("TXT_KEY_WAR_WEARINESS_US_PERCENT", iOurWarWeariness, iWarDuration);
 
 			tips:insert(strWarInfo);
@@ -1238,7 +1265,8 @@ local g_civListInstanceToolTips = { -- the tooltip function names need to match 
 		end
 		local playerInfo
 		local ping = ""
-		if playerID == g_activePlayerID then
+		-- Vox Deorum: network identity, not civ identity -- "local" means this machine's slot.
+		if playerID == Game.GetActivePlayer() then
 			playerInfo = Network.GetLocalTurnSliceInfo()
 		else
 			playerInfo = Network.GetPlayerTurnSliceInfo( playerID )
@@ -1287,7 +1315,11 @@ local g_civListInstanceCallBacks = {-- the callback function table names need to
 						Events.SerialEventGameMessagePopup{ Type = ButtonPopupTypes.BUTTONPOPUP_ADVISOR_COUNSEL, Data1 = 1 }
 					end
 				-- war declaration
-				elseif bnw_mode and UI.CtrlKeyDown() and g_activeTeam:CanChangeWarPeace( teamID ) then
+				-- Vox Deorum: these enact for Game.GetActivePlayer(); with the seat swapped to a
+				-- pinned civ they would act for the wrong player, so offer them only when the seat
+				-- IS the true active player.
+				elseif bnw_mode and g_activePlayerID == Game.GetActivePlayer()
+					and UI.CtrlKeyDown() and g_activeTeam:CanChangeWarPeace( teamID ) then
 					if g_activeTeam:IsAtWar( teamID ) then
 					-- Asking for Peace (currently at war) - bring up the trade screen
 						Game.DoFromUIDiploEvent( FromUIDiploEventTypes.FROM_UI_DIPLO_EVENT_HUMAN_NEGOTIATE_PEACE, playerID, 0, 0 )
@@ -1391,8 +1423,10 @@ local g_civListInstanceCallBacks = {-- the callback function table names need to
 	Connection = {
 		[Mouse.eLClick] = function( playerID )
 			local player = Players[playerID]
+			-- Vox Deorum: network identity -- a swapped seat would let the host kick their own civ
+			-- rather than the observer slot, wrong on both sides.
 			if Matchmaking.IsHost()
-				and playerID ~= g_activePlayerID
+				and playerID ~= Game.GetActivePlayer()
 				and (Network.IsPlayerConnected(playerID) or (player:IsHuman() and not player:IsObserver()))
 			then
 				UIManager:PushModal( Controls.ConfirmKick, true )
@@ -1675,15 +1709,23 @@ local function UpdateCivList()
 	end
 end
 ----------------------------------------------------------------
+-- Vox Deorum: split out of OnSetActivePlayer so the strategist override can be picked up
+-- without the notification churn that handler also performs.
+----------------------------------------------------------------
+local function ResolveActiveSeat()
+	g_activePlayerID = GetUIActivePlayerID()
+	g_activePlayer = Players[ g_activePlayerID ]
+	g_activeTeamID = g_activePlayer:GetTeam()
+	g_activeTeam = Teams[ g_activeTeamID ]
+	g_notificationPlayer = Players[ Game.GetActivePlayer() ]
+end
+----------------------------------------------------------------
 -- 'Active' (local human) player has changed
 ----------------------------------------------------------------
 local function OnSetActivePlayer()	--activePlayerID, prevActivePlayerID )
 	-- update globals
 
-	g_activePlayerID = Game.GetActivePlayer()
-	g_activePlayer = Players[ g_activePlayerID ]
-	g_activeTeamID = g_activePlayer:GetTeam()
-	g_activeTeam = Teams[ g_activeTeamID ]
+	ResolveActiveSeat()
 
 	-- Remove all the UI notifications. The new player will rebroadcast any persistent ones from their last turn
 	for Id in pairs( g_ActiveNotifications ) do
@@ -1860,6 +1902,10 @@ OnOptionsChanged()
 OnSetActivePlayer()
 Events.GameOptionsChanged.Add( OnOptionsChanged )
 Events.GameplaySetActivePlayer.Add( OnSetActivePlayer )
+-- Vox Deorum: a resumed strategist save re-issues SetObserverUIOverridePlayer after the load
+-- screen closes, with no following GameplaySetActivePlayer, so the seat captured at context load
+-- would still be the observer. Re-resolve here, without OnSetActivePlayer's notification churn.
+Events.LoadScreenClose.Add( function() ResolveActiveSeat() UpdateCivList() end )
 LuaEvents.ChatShow.Add( OnChatToggle )
 Events.SerialEventGameDataDirty.Add( UpdateCivList )
 Events.SerialEventScoreDirty.Add( UpdateCivList )

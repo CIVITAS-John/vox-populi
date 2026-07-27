@@ -17,7 +17,23 @@ end
 local g_LeaderButtonIM = InstanceManager:new( "LeaderButtonInstance", "LeaderButton", Controls.MajorStack );
 local g_MinorCivButtonIM = InstanceManager:new( "CityStateInstance", "MinorButton", Controls.MinorStack );
 
-local g_iPlayer = Game.GetActivePlayer();
+-- Vox Deorum: resolve the civilization seat this UI represents. An observer pinned to a civ by
+-- Game.SetObserverUIOverridePlayer (human-strategist mode) renders as that civ; a normal human
+-- game and a pure observer (override -1) return Game.GetActivePlayer() unchanged. Defensive:
+-- the binding and IsObserver may be absent on an older DLL.
+local function GetUIActivePlayerID()
+	local playerID = Game.GetActivePlayer();
+	local player = Players[ playerID ];
+	if player and player.IsObserver and player:IsObserver() and Game.GetObserverUIOverridePlayer then
+		local overrideID = Game.GetObserverUIOverridePlayer();
+		if overrideID and overrideID >= 0 and Players[ overrideID ] then
+			return overrideID;
+		end
+	end
+	return playerID;
+end
+
+local g_iPlayer = GetUIActivePlayerID();
 local g_pPlayer = Players[ g_iPlayer ];
 local g_iTeam = g_pPlayer:GetTeam();
 local g_pTeam = Teams[ g_iTeam ];
@@ -187,6 +203,9 @@ Events.OpenPlayerDealScreenEvent.Add( OnOpenPlayerDealScreen );
 -- On War Button Clicked
 -------------------------------------------------
 function OnWarButton( ePlayer )
+	-- Vox Deorum: this arms Network.SendChangeWar, which enacts for the real active player. Never
+	-- let a pinned observer seat declare a war it does not own.
+	if (g_iPlayer ~= Game.GetActivePlayer()) then return; end
 	if (g_pTeam:CanDeclareWar(Players[ ePlayer ]:GetTeam())) then
 		g_WarTarget = Players[ ePlayer ]:GetTeam();
 		Controls.WarConfirm:SetHide( false );
@@ -198,11 +217,15 @@ end
 -- Update the list of other civs
 -------------------------------------------------
 function UpdateDisplay()
-	
+
 	if (ContextPtr:IsHidden()) then
 		return;
 	end
-	
+
+	-- Vox Deorum: this context has no load-time seat derive, and the strategist override can
+	-- arrive after it loaded, so re-resolve the seat on every refresh.
+	OnDiploListActivePlayerChanged();
+
 	local bScenario = PreGame.GetLoadWBScenario();
 
 	-- Clear buttons
@@ -395,7 +418,7 @@ function UpdateDisplay()
 				end
 				
 				-- Update diplomatic request button.
-				local localPlayer = Game.GetActivePlayer();
+				local localPlayer = g_iPlayer; -- Vox Deorum: display only, so follow the pinned seat
 				if(UI.ProposedDealExists(localPlayer, iPlayerLoop)) then
 					-- We proposed something to them.
 					controlTable.DiploWaiting:SetHide(false);
@@ -770,7 +793,7 @@ Controls.MinorButton:RegisterCallback( Mouse.eLClick, OnMinorsButton );
 -- 'Active' (local human) player has changed
 ----------------------------------------------------------------
 function OnDiploListActivePlayerChanged( iActivePlayer, iPrevActivePlayer )
-	g_iPlayer = Game.GetActivePlayer();
+	g_iPlayer = GetUIActivePlayerID();
 	g_pPlayer = Players[ g_iPlayer ];
 	g_iTeam = g_pPlayer:GetTeam();
 	g_pTeam = Teams[ g_iTeam ];
