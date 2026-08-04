@@ -383,9 +383,12 @@ void CvConnectionService::Log(LogLevel level, const char* message)
 			break;
 		}
 		
-		// Add the actual message with truncation at 4096 bytes
+		// Add the actual message with truncation. FILogFile::Msg is implemented in the
+		// engine and formats into an internal buffer of unknown size; keep the WHOLE
+		// formatted line (timestamp/turn/level prefix + message + truncation suffix,
+		// together up to ~128 bytes on top of the message) under 4096 to stay clear of it.
 		std::string msgStr(message);
-		const size_t maxBytes = 4096;
+		const size_t maxBytes = 3968;
 		if (msgStr.length() > maxBytes) {
 			size_t truncatedLen = msgStr.length() - maxBytes;
 			msgStr = msgStr.substr(0, maxBytes);
@@ -413,7 +416,12 @@ void CvConnectionService::SafeLogMessage(FILogFile* pLog, const char* message)
 
 	__try
 	{
-		pLog->Msg(message);
+		// Vox Deorum: Msg is printf-style and previously received the message AS the
+		// format string — proven by the pipe log, where the "!@#$%^!" delimiter came
+		// out as "!@#$^!" (the '%' consumed as a conversion intro). Any "%s" appearing
+		// in forwarded JSON or LLM-generated text would make the engine read a garbage
+		// varargs pointer. Pass a fixed format so content is never interpreted.
+		pLog->Msg("%s", message);
 	}
 	__except(EXCEPTION_EXECUTE_HANDLER)
 	{
