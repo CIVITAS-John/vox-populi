@@ -6,9 +6,9 @@ permissions:
 
 on:
   push:
-    branches: [ vox-deorum ]
+    branches: [ 'vox-deorum-5.*' ]
   pull_request:
-    branches: [ vox-deorum ]
+    branches: [ 'vox-deorum-5.*' ]
   workflow_dispatch:
 
 concurrency:
@@ -81,6 +81,7 @@ jobs:
       build-scripts: ${{ steps.filter.outputs.build-scripts }}
       workflow: ${{ steps.filter.outputs.workflow }}
       dependencies: ${{ steps.filter.outputs.dependencies }}
+      installer-content: ${{ steps.filter.outputs.installer-content }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -109,6 +110,12 @@ jobs:
             dependencies:
               - '*.sln'
               - '*.vcxproj'
+            installer-content:
+              - '(1) Community Patch/**'
+              - '(2) Vox Populi/**'
+              - '(3a) VP - EUI Compatibility Files/**'
+              - 'VPUI/**'
+              - 'UI_bc1/**'
 
       - name: Changes Summary
         run: |
@@ -117,6 +124,7 @@ jobs:
           echo "- Build Scripts: ${{ steps.filter.outputs.build-scripts == 'true' && '✅' || '❌' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Workflow: ${{ steps.filter.outputs.workflow == 'true' && '✅' || '❌' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Dependencies: ${{ steps.filter.outputs.dependencies == 'true' && '✅' || '❌' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Installer Content: ${{ steps.filter.outputs.installer-content == 'true' && '✅' || '❌' }}" >> $GITHUB_STEP_SUMMARY
 
   setup:
     needs: [get-version, detect-changes]
@@ -125,10 +133,11 @@ jobs:
       (startsWith(github.ref, 'refs/tags/Release-') ||
        github.event_name == 'workflow_dispatch' ||
        (needs.detect-changes.result == 'success' && 
-        (needs.detect-changes.outputs.dll-source == 'true' || 
-         needs.detect-changes.outputs.build-scripts == 'true' || 
-         needs.detect-changes.outputs.workflow == 'true' || 
-         needs.detect-changes.outputs.dependencies == 'true')))
+         (needs.detect-changes.outputs.dll-source == 'true' || 
+          needs.detect-changes.outputs.build-scripts == 'true' || 
+          needs.detect-changes.outputs.workflow == 'true' || 
+          needs.detect-changes.outputs.dependencies == 'true' || 
+          needs.detect-changes.outputs.installer-content == 'true')))
     runs-on: windows-2022
     steps:
 
@@ -170,10 +179,11 @@ jobs:
       (startsWith(github.ref, 'refs/tags/Release-') ||
        github.event_name == 'workflow_dispatch' ||
        (needs.detect-changes.result == 'success' && 
-        (needs.detect-changes.outputs.dll-source == 'true' || 
-         needs.detect-changes.outputs.build-scripts == 'true' || 
-         needs.detect-changes.outputs.workflow == 'true' || 
-         needs.detect-changes.outputs.dependencies == 'true')))
+         (needs.detect-changes.outputs.dll-source == 'true' || 
+          needs.detect-changes.outputs.build-scripts == 'true' || 
+          needs.detect-changes.outputs.workflow == 'true' || 
+          needs.detect-changes.outputs.dependencies == 'true' || 
+          needs.detect-changes.outputs.installer-content == 'true')))
     runs-on: windows-2022
     steps:
       - name: Checkout code
@@ -404,10 +414,11 @@ jobs:
       (startsWith(github.ref, 'refs/tags/Release-') ||
        github.event_name == 'workflow_dispatch' ||
        (needs.detect-changes.result == 'success' && 
-        (needs.detect-changes.outputs.dll-source == 'true' || 
-         needs.detect-changes.outputs.build-scripts == 'true' || 
-         needs.detect-changes.outputs.workflow == 'true' || 
-         needs.detect-changes.outputs.dependencies == 'true')))
+         (needs.detect-changes.outputs.dll-source == 'true' || 
+          needs.detect-changes.outputs.build-scripts == 'true' || 
+          needs.detect-changes.outputs.workflow == 'true' || 
+          needs.detect-changes.outputs.dependencies == 'true' || 
+          needs.detect-changes.outputs.installer-content == 'true')))
     runs-on: windows-2022
     steps:
       - name: Checkout code
@@ -756,8 +767,8 @@ jobs:
       - name: Generate release tag
         id: release_tag
         run: |
-          # Generate tag: YYYYMMDD-HHMMSS-SHORT_SHA
-          TAG="build-$(date +'%Y%m%d-%H%M%S')-$(echo ${{ github.sha }} | cut -c1-7)"
+          # Generate tag: build-<vp_version>-YYYYMMDD-HHMMSS-SHORT_SHA
+          TAG="build-${{ needs.get-version.outputs.vp_version }}-$(date +'%Y%m%d-%H%M%S')-$(echo ${{ github.sha }} | cut -c1-7)"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Generated tag: $TAG"
 
