@@ -137,6 +137,9 @@ CPP = [
     'CvGameCoreDLL_Expansion2\\CvContractClasses.cpp',
     'CvGameCoreDLL_Expansion2\\CvConnectionService.cpp',
     'CvGameCoreDLL_Expansion2\\CvConnectionSchema.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockStorage.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockView.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockWriter.cpp',
     'CvGameCoreDLL_Expansion2\\CvCorporationClasses.cpp',
     'CvGameCoreDLL_Expansion2\\CvCultureClasses.cpp',
     'CvGameCoreDLL_Expansion2\\CvDangerPlots.cpp',
@@ -270,6 +273,12 @@ CPP = [
     'CvGameCoreDLL_Expansion2\\CvWonderProductionAI.cpp',
     'CvGameCoreDLL_Expansion2\\CvWorldBuilderMapLoader.cpp',
 ]
+
+PCHLESS_CPP = {
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockStorage.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockView.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockWriter.cpp',
+}
 
 class TaskResult:
     commands: typing.Union[str, list[str]]
@@ -416,7 +425,8 @@ def build_cpps(cl: str, cl_args: str, pch_path: Path, build_dir: Path, log: typi
             cpp_log = tempfile.TemporaryFile()
             logs[cpp_src] = cpp_log
             out = build_dir.joinpath(cpp).with_suffix('.obj')
-            command = f'{cl} "{cpp_src}" /Fo"{out}" /Yu"{PCH_H}" /Fp"{pch_path}" {cl_args}'
+            pch_args = '' if cpp in PCHLESS_CPP else f'/Yu"{PCH_H}" /Fp"{pch_path}"'
+            command = f'{cl} "{cpp_src}" /Fo"{out}" {pch_args} {cl_args}'
             build_tasks.spawn(command, log=cpp_log)
         build_results = build_tasks.wait()
         for cpp_src, cpp_log in logs.items():
