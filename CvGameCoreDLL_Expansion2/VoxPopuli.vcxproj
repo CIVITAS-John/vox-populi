@@ -869,6 +869,7 @@
     <ClInclude Include="CvFractal.h" />
     <ClInclude Include="CvConnectionService.h" />
     <ClInclude Include="CvConnectionSchema.h" />
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockMetadata.h" />
     <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockStorage.h" />
     <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockView.h" />
     <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockWriter.h" />
