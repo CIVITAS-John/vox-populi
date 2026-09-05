@@ -42,6 +42,9 @@ public:
     // Clears the owned bytes.
     void Clear();
 
+    // Exchanges owned bytes with another storage instance without copying either allocation.
+    void Swap(VoxRlOwnedBlockStorage* other);
+
     // Returns writable owned bytes, or zero for an empty allocation.
     u8* MutableBytes();
 
@@ -60,6 +63,11 @@ private:
 
     std::vector<u8> bytes_;
 };
+
+#ifdef VOX_RL_TESTING
+// Configures a finite number of owned-storage allocation failures for harness coverage.
+void VoxRlFailOwnedStorageAllocationsForTesting(u32 count);
+#endif
 
 // Owns a read-only Windows fixture-file mapping for the lifetime of a block view.
 class VoxRlFixtureFileMapping {
