@@ -1,6 +1,18 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <ClCompile Include="VoxDeorumRL\schema\VoxRlBlockStorage.cpp">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClCompile>
+    <ClCompile Include="VoxDeorumRL\schema\VoxRlBlockView.cpp">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClCompile>
+    <ClCompile Include="VoxDeorumRL\schema\VoxRlBlockWriter.cpp">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClCompile>
+    <ClCompile Include="VoxDeorumRL\schema\VoxRlCollectors.generated.cpp">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClCompile>
     <ClCompile Include="CustomMods.cpp" />
     <ClCompile Include="CvAchievementInfo.cpp" />
     <ClCompile Include="CvAchievementUnlocker.cpp" />
@@ -311,6 +323,30 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlTypes.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlFrame.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockMetadata.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockStorage.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockView.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlBlockWriter.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlCollectors.generated.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxDeorumRL\schema\VoxRlSchema.generated.h">
+      <Filter>VoxDeorumRL\schema</Filter>
+    </ClInclude>
     <ClInclude Include="..\CvGameCoreDLLUtil\include\CvEnums.h" />
     <ClInclude Include="CustomMods.h" />
     <ClInclude Include="CvAchievementInfo.h" />
@@ -658,6 +694,12 @@
   <ItemGroup>
     <Filter Include="interface">
       <UniqueIdentifier>{09218e5e-5258-4d86-9df3-0a1916f36324}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="VoxDeorumRL">
+      <UniqueIdentifier>{7d4b2c19-23d5-4e0a-9e64-1f9c50a92b31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="VoxDeorumRL\schema">
+      <UniqueIdentifier>{7d4b2c19-23d5-4e0a-9e64-1f9c50a92b33}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

@@ -46,8 +46,7 @@ bool VoxRlBlockWriter::Begin(
     u16 blockKind,
     u16 sectionCount,
     u32 decisionId,
-    u32 sessionLow,
-    u32 sessionHigh,
+    const VoxRlGameUuid& session,
     i32 turn,
     i32 player,
     u32 generation,
@@ -106,8 +105,7 @@ bool VoxRlBlockWriter::Begin(
     image->blockKind = blockKind;
     image->sectionCount = sectionCount;
     image->imageSize = 0;
-    image->sessionLow = sessionLow;
-    image->sessionHigh = sessionHigh;
+    image->session = session;
     image->turn = turn;
     image->player = player;
     image->generation = generation;

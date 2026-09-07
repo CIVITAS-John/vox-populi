@@ -60,8 +60,7 @@ struct VoxRlBlockValidationOptions {
     bool checkDecisionId;
     bool checkPlotCount;
     bool checkAliveTeamCount;
-    u32 sessionLow;
-    u32 sessionHigh;
+    VoxRlGameUuid session;
     i32 turn;
     i32 player;
     u32 generation;

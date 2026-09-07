@@ -130,6 +130,7 @@ CPP = [
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockStorage.cpp',
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockView.cpp',
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockWriter.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlCollectors.generated.cpp',
     'CvGameCoreDLL_Expansion2\\CvCorporationClasses.cpp',
     'CvGameCoreDLL_Expansion2\\CvCultureClasses.cpp',
     'CvGameCoreDLL_Expansion2\\CvDangerPlots.cpp',

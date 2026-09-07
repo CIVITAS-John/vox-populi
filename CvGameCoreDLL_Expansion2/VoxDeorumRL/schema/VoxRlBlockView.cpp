@@ -468,6 +468,31 @@ bool VoxRlBlockView::OpenInternal(
     {
         return Fail(VOX_RL_BLOCK_BAD_STABLE_ID);
     }
+    // The owning block kind fixes the identity shape: a shared STATIC carries the canonical
+    // absent player and turn because it serves every player and turn, while WORLD and
+    // CAMPAIGN must establish a real player and turn.
+    if (imageHeader->blockKind == VOX_RL_BLOCK_STATIC)
+    {
+        if (imageHeader->turn != kVoxRlAbsentTurn)
+        {
+            return Fail(VOX_RL_BLOCK_BAD_TURN);
+        }
+        if (imageHeader->player != kVoxRlAbsentPlayer)
+        {
+            return Fail(VOX_RL_BLOCK_BAD_PLAYER);
+        }
+    }
+    else if (imageHeader->blockKind == VOX_RL_BLOCK_WORLD || imageHeader->blockKind == VOX_RL_BLOCK_CAMPAIGN)
+    {
+        if (imageHeader->turn == kVoxRlAbsentTurn)
+        {
+            return Fail(VOX_RL_BLOCK_BAD_TURN);
+        }
+        if (imageHeader->player == kVoxRlAbsentPlayer)
+        {
+            return Fail(VOX_RL_BLOCK_BAD_PLAYER);
+        }
+    }
     if (options != 0)
     {
         if (options->checkDecisionId && frame->decisionId != options->decisionId)
@@ -475,7 +500,8 @@ bool VoxRlBlockView::OpenInternal(
             return Fail(VOX_RL_BLOCK_EXPECTED_DECISION_ID_MISMATCH);
         }
         if (options->checkSession &&
-            (imageHeader->sessionLow != options->sessionLow || imageHeader->sessionHigh != options->sessionHigh))
+            (imageHeader->session.words[0] != options->session.words[0] || imageHeader->session.words[1] != options->session.words[1] ||
+             imageHeader->session.words[2] != options->session.words[2] || imageHeader->session.words[3] != options->session.words[3]))
         {
             return Fail(VOX_RL_BLOCK_BAD_SESSION);
         }

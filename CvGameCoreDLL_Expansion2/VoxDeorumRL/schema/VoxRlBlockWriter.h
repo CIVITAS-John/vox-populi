@@ -11,13 +11,14 @@ public:
     // Wraps bounded caller-provided storage without taking ownership of it.
     VoxRlBlockWriter(void* bytes, u32 capacity);
 
-    // Starts a block with a fixed directory size and its complete identity metadata.
+    // Starts a block with a fixed directory size and its complete identity metadata. The
+    // session carries the full 128-bit game UUID; STATIC callers pass the canonical absent
+    // player and turn values because a shared STATIC serves every player and turn.
     bool Begin(
         u16 blockKind,
         u16 sectionCount,
         u32 decisionId,
-        u32 sessionLow,
-        u32 sessionHigh,
+        const VoxRlGameUuid& session,
         i32 turn,
         i32 player,
         u32 generation,
