@@ -892,7 +892,9 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		CampaignEnemyRecord row;
 		ZeroRecord(row);
 		row.player = static_cast<i8>(player);
-		row.warState = static_cast<i8>(capturing.GetDiplomacyAI()->GetWarState(static_cast<PlayerTypes>(player)));
+		// Barbarians have no entry in the diplomacy AI's civilization war-state array.
+		row.warState = static_cast<i8>(player < MAX_CIV_PLAYERS
+			? capturing.GetDiplomacyAI()->GetWarState(static_cast<PlayerTypes>(player)) : NO_WAR_STATE_TYPE);
 		row.warScore = static_cast<i8>(capturing.GetDiplomacyAI()->GetWarScore(static_cast<PlayerTypes>(player)));
 		data.campaignEnemies.push_back(row);
 	}
