@@ -203,15 +203,21 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 	std::vector<UnitModifierRecord>& rows)
 {
 	if (pUnit == NULL) return true;
+	// Every family indexes a fixed-capacity record array on the reader side,
+	// so a live table larger than its capacity fails the build instead of
+	// emitting rows the loader would reject.
 	if (GC.getNumTerrainInfos() > VoxRlTerrainCapacity ||
-		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
+		GC.getNumFeatureInfos() > VoxRlFeatureCapacity ||
+		GC.getNumUnitClassInfos() > VoxRlUnitclassCapacity ||
+		GC.getNumUnitCombatClassInfos() > VoxRlUnitcombatCapacity ||
+		NUM_DOMAIN_TYPES > VoxRlDomainCapacity) return false;
 	UnitModifierRecord row;
 	ZeroRecord(row);
 	row.owner = static_cast<i8>(eOwner);
 	row.unitId = static_cast<i32>(iUnitId);
 
-	// Family order matches the manifest: terrain attack and defense, the VP
-	// terrain attack and defense, feature attack and defense.
+	// Rows follow the manifest family order: terrain attack and defense,
+	// the VP terrain attack and defense, feature attack and defense.
 	const int terrainCount = GC.getNumTerrainInfos();
 	for (int index = 0; index < terrainCount; ++index)
 	{
@@ -246,8 +252,7 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		if (attack != 0) { row.family = 7; row.index = index; row.value = attack; rows.push_back(row); }
 		if (defense != 0) { row.family = 8; row.index = index; row.value = defense; rows.push_back(row); }
 	}
-	// Unit combat, unit combat attack and defense, then the three
-	// per-adjacent-combat-class families.
+	// Unit combat, unit combat attack and defense.
 	const int combatCount = GC.getNumUnitCombatClassInfos();
 	for (int index = 0; index < combatCount; ++index)
 	{
@@ -255,15 +260,9 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const int generic = pUnit->getExtraUnitCombatModifier(combat);
 		const int attack = pUnit->getExtraUnitCombatModifierAttack(combat);
 		const int defense = pUnit->getExtraUnitCombatModifierDefense(combat);
-		const int adjacent = pUnit->getCombatModPerAdjacentUnitCombatModifier(combat);
-		const int adjacentAttack = pUnit->getCombatModPerAdjacentUnitCombatAttackMod(combat);
-		const int adjacentDefense = pUnit->getCombatModPerAdjacentUnitCombatDefenseMod(combat);
 		if (generic != 0) { row.family = 9; row.index = index; row.value = generic; rows.push_back(row); }
 		if (attack != 0) { row.family = 10; row.index = index; row.value = attack; rows.push_back(row); }
 		if (defense != 0) { row.family = 11; row.index = index; row.value = defense; rows.push_back(row); }
-		if (adjacent != 0) { row.family = 15; row.index = index; row.value = adjacent; rows.push_back(row); }
-		if (adjacentAttack != 0) { row.family = 16; row.index = index; row.value = adjacentAttack; rows.push_back(row); }
-		if (adjacentDefense != 0) { row.family = 17; row.index = index; row.value = adjacentDefense; rows.push_back(row); }
 	}
 	// Domain, domain attack and defense.
 	const int domainCount = NUM_DOMAIN_TYPES;
@@ -276,6 +275,17 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		if (generic != 0) { row.family = 12; row.index = index; row.value = generic; rows.push_back(row); }
 		if (attack != 0) { row.family = 13; row.index = index; row.value = attack; rows.push_back(row); }
 		if (defense != 0) { row.family = 14; row.index = index; row.value = defense; rows.push_back(row); }
+	}
+	// The three per-adjacent-combat-class families close the manifest order.
+	for (int index = 0; index < combatCount; ++index)
+	{
+		const UnitCombatTypes combat = static_cast<UnitCombatTypes>(index);
+		const int adjacent = pUnit->getCombatModPerAdjacentUnitCombatModifier(combat);
+		const int adjacentAttack = pUnit->getCombatModPerAdjacentUnitCombatAttackMod(combat);
+		const int adjacentDefense = pUnit->getCombatModPerAdjacentUnitCombatDefenseMod(combat);
+		if (adjacent != 0) { row.family = 15; row.index = index; row.value = adjacent; rows.push_back(row); }
+		if (adjacentAttack != 0) { row.family = 16; row.index = index; row.value = adjacentAttack; rows.push_back(row); }
+		if (adjacentDefense != 0) { row.family = 17; row.index = index; row.value = adjacentDefense; rows.push_back(row); }
 	}
 	return true;
 }
@@ -376,6 +386,11 @@ bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecor
 bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row)
 {
 	if (!CollectUnitRecord(unit, capturingTeam, row)) return false;
+	// The passability arrays are builder-owned fixed-capacity fields, so the
+	// builder guards the live table sizes itself instead of relying on the
+	// generated collector's guards for other unit fields.
+	if (GC.getNumTerrainInfos() > VoxRlTerrainCapacity ||
+		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
 	row.yieldFromKills = static_cast<i32>(MaxYieldFromKills(unit, false));
 	row.yieldFromBarbarianKills = static_cast<i32>(MaxYieldFromKills(unit, true));
 	row.hasAllowTerrainPassable = unit.GetPromotions().HasAllowTerrainPassable() ? 1 : 0;
@@ -490,39 +505,47 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
 	ZeroRecord(data.staticHandicapLimits);
 	if (!CollectStaticHandicapLimitsRecord(data.staticHandicapLimits)) return false;
+	// A mod can delete info-table rows, so the accessors return NULL for
+	// those indexes. The vectors stay index-aligned with the native tables:
+	// a missing row becomes a zeroed placeholder instead of a skip.
 	for (int index = 0; index < GC.getNumTerrainInfos(); ++index)
 	{
 		TerrainInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectTerrainInfoRecord(*GC.getTerrainInfo(static_cast<TerrainTypes>(index)), row)) return false;
+		CvTerrainInfo* info = GC.getTerrainInfo(static_cast<TerrainTypes>(index));
+		if (info != NULL && !CollectTerrainInfoRecord(*info, row)) return false;
 		data.staticTerrainInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumFeatureInfos(); ++index)
 	{
 		FeatureInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectFeatureInfoRecord(*GC.getFeatureInfo(static_cast<FeatureTypes>(index)), row)) return false;
+		CvFeatureInfo* info = GC.getFeatureInfo(static_cast<FeatureTypes>(index));
+		if (info != NULL && !CollectFeatureInfoRecord(*info, row)) return false;
 		data.staticFeatureInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumRouteInfos(); ++index)
 	{
 		RouteInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectRouteInfoRecord(*GC.getRouteInfo(static_cast<RouteTypes>(index)), row)) return false;
+		CvRouteInfo* info = GC.getRouteInfo(static_cast<RouteTypes>(index));
+		if (info != NULL && !CollectRouteInfoRecord(*info, row)) return false;
 		data.staticRouteInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumImprovementInfos(); ++index)
 	{
 		ImprovementInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectImprovementInfoRecord(*GC.getImprovementInfo(static_cast<ImprovementTypes>(index)), row)) return false;
+		CvImprovementEntry* info = GC.getImprovementInfo(static_cast<ImprovementTypes>(index));
+		if (info != NULL && !CollectImprovementInfoRecord(*info, row)) return false;
 		data.staticImprovementInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumResourceInfos(); ++index)
 	{
 		ResourceInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectResourceInfoRecord(*GC.getResourceInfo(static_cast<ResourceTypes>(index)), row)) return false;
+		CvResourceInfo* info = GC.getResourceInfo(static_cast<ResourceTypes>(index));
+		if (info != NULL && !CollectResourceInfoRecord(*info, row)) return false;
 		data.staticResourceInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumUnitInfos(); ++index)
@@ -530,9 +553,12 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		UnitEntryInfoRecord row;
 		ZeroRecord(row);
 		CvUnitEntry* entry = GC.getUnitInfo(static_cast<UnitTypes>(index));
-		if (!CollectUnitEntryInfoRecord(*entry, row)) return false;
-		row.yieldFromKills = static_cast<i32>(MaxYieldFromKills(*entry, false));
-		row.yieldFromBarbarianKills = static_cast<i32>(MaxYieldFromKills(*entry, true));
+		if (entry != NULL)
+		{
+			if (!CollectUnitEntryInfoRecord(*entry, row)) return false;
+			row.yieldFromKills = static_cast<i32>(MaxYieldFromKills(*entry, false));
+			row.yieldFromBarbarianKills = static_cast<i32>(MaxYieldFromKills(*entry, true));
+		}
 		data.staticUnitEntryInfos.push_back(row);
 	}
 	ZeroRecord(data.staticBuildIds);
@@ -552,21 +578,24 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	{
 		PromotionInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectPromotionInfoRecord(*GC.getPromotionInfo(static_cast<PromotionTypes>(index)), row)) return false;
+		CvPromotionEntry* info = GC.getPromotionInfo(static_cast<PromotionTypes>(index));
+		if (info != NULL && !CollectPromotionInfoRecord(*info, row)) return false;
 		data.staticPromotionInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumProcessInfos(); ++index)
 	{
 		ProcessInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectProcessInfoRecord(*GC.getProcessInfo(static_cast<ProcessTypes>(index)), row)) return false;
+		CvProcessInfo* info = GC.getProcessInfo(static_cast<ProcessTypes>(index));
+		if (info != NULL && !CollectProcessInfoRecord(*info, row)) return false;
 		data.staticProcessInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumCityEventChoiceInfos(); ++index)
 	{
 		CityEventChoiceInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectCityEventChoiceInfoRecord(*GC.getCityEventChoiceInfo(static_cast<CityEventChoiceTypes>(index)), row)) return false;
+		CvModEventCityChoiceInfo* info = GC.getCityEventChoiceInfo(static_cast<CityEventChoiceTypes>(index));
+		if (info != NULL && !CollectCityEventChoiceInfoRecord(*info, row)) return false;
 		data.staticCityEventChoiceInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumUnitClassInfos(); ++index)
@@ -682,7 +711,10 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	}
 
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
-	const int zoneCount = zoneMap != NULL ? zoneMap->GetNumZones() : 0;
+	// Zones are the checkpoint table. The no-refresh accessors never trigger
+	// the native rebuild, so capture cannot fire the tactical-time zone
+	// recompute ahead of its normal schedule.
+	const int zoneCount = zoneMap != NULL ? zoneMap->GetNumZonesWithoutRefresh() : 0;
 	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 	{
 		CvPlot* plot = map.plotByIndex(plotIndex);
@@ -788,7 +820,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		}
 	for (int zoneIndex = 0; zoneIndex < zoneCount; ++zoneIndex)
 	{
-		CvTacticalDominanceZone* zone = zoneMap->GetZoneByIndex(zoneIndex);
+		const CvTacticalDominanceZone* zone = zoneMap->GetZoneByIndexWithoutRefresh(zoneIndex);
 		if (zone == NULL) return false;
 		ZoneRecord row;
 		ZeroRecord(row);
@@ -1040,11 +1072,7 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 		if (!AppendRequestInterceptorReplacementRecordEntryRange(&replacement, &output, entries)) return false;
 	}
 	if (entryCursor != data.requestInterceptorEntries.size()) return false;
-	if ((header.sparseCombatReplacementMask & (1u << 0)) == 0 && !output.requestUnitModifiers.empty()) return false;
-	if ((header.sparseCombatReplacementMask & (1u << 1)) == 0 && !output.requestUnitPlagues.empty()) return false;
-	if ((header.sparseCombatReplacementMask & (1u << 2)) == 0 && !output.requestUnitBlockedPromotions.empty()) return false;
-	if ((header.sparseCombatReplacementMask & (1u << 3)) == 0 && !output.requestUnitAttackCounts.empty()) return false;
-	if ((header.sparseCombatReplacementMask & (1u << 4)) == 0 && !output.requestPlayerResistances.empty()) return false;
-	if ((header.sparseCombatReplacementMask & (1u << 5)) == 0 && !output.requestCityAttackCounts.empty()) return false;
+	// The sparse replacement mask consistency is enforced by the generated
+	// request validator, which runs inside Write.
 	return output.Write(identity, storage, length);
 }

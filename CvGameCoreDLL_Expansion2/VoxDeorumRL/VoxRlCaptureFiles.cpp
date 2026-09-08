@@ -1,3 +1,5 @@
+// Installed from simulator/capture/VoxRlCaptureFiles.cpp. Edit that source, then reinstall.
+
 // Vox Deorum: recording capture file utilities. See VoxRlCaptureFiles.h.
 #include "CvGameCoreDLLPCH.h"
 #include "VoxDeorumRL/VoxRlCaptureFiles.h"

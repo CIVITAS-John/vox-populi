@@ -4,11 +4,13 @@
 // generated collectors and hand-written loops, then write complete framed
 // blocks through the shared writer in canonical section order. They perform
 // no file I/O and never mutate game state except through documented lazy
-// native caches (zone and citadel preparation).
+// native caches (citadel preparation). Zone tables are always read without
+// triggering a refresh.
 #ifndef VOX_RL_CAPTURE_BUILDERS_H
 #define VOX_RL_CAPTURE_BUILDERS_H
 
 #include "VoxDeorumRL/schema/VoxRlBuilders.generated.h"
+#include <cstring>
 #include <vector>
 
 // Reserves storage and builds one complete STATIC block from the global
@@ -70,8 +72,13 @@ void VoxRlCollectAllPlayerResistanceRows(std::vector<PlayerResistanceRecord>& ro
 
 struct STacticalAssignment;
 
-// Copies collected WORLD-shaped sparse rows into their mirrored request
-// record shapes. The pairs are layout-identical by schema construction.
+// Copies collected WORLD-shaped rows into their mirrored request record
+// shapes. Only the six sparse replacement families (unit modifiers, plagues,
+// blocked promotions, unit attack counts, player resistances, city attack
+// counts) mirror their WORLD counterparts field for field; keyed delta
+// mirrors such as the plot delta are not layout-identical and must not use
+// this helper. The built-in size check rejects any other pairing at compile
+// time.
 template <typename To, typename From>
 void VoxRlMirrorSparseRows(const std::vector<From>& from, std::vector<To>& to)
 {

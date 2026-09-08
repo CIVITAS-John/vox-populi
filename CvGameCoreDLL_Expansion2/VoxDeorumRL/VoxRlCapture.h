@@ -1,3 +1,5 @@
+// Installed from simulator/capture/VoxRlCapture.h. Edit that source, then reinstall.
+
 // Vox Deorum: recording capture manager. Owns capture lifecycle, segment
 // state, dirty sets, and publication for the recording tree described in
 // plans/stage-1/8-capture.md. Every entry point is called only after the

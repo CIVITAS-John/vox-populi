@@ -1,3 +1,5 @@
+// Installed from simulator/capture/VoxRlCapture.cpp. Edit that source, then reinstall.
+
 // Vox Deorum: recording capture manager. See VoxRlCapture.h.
 #include "CvGameCoreDLLPCH.h"
 #include "VoxDeorumRL/VoxRlCapture.h"

@@ -1,3 +1,5 @@
+// Installed from simulator/capture/VoxRlCaptureFiles.h. Edit that source, then reinstall.
+
 // Vox Deorum: recording capture file utilities. Win32-backed output files and
 // path helpers for the recording tree described in plans/stage-1/8-capture.md.
 #ifndef VOX_RL_CAPTURE_FILES_H
