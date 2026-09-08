@@ -1375,7 +1375,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_MODIFIERS])
 	{
 		std::vector<UnitModifierRecord> rows;
-		VoxRlCollectAllUnitModifierRows(rows);
+		if (!VoxRlCollectAllUnitModifierRows(rows)) return false;
 		VoxRlMirrorSparseRows(rows, data.requestUnitModifiers);
 	}
 	if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_PLAGUES] || segment.sparseDirty[VOX_RL_SPARSE_UNIT_BLOCKED_PROMOTIONS])

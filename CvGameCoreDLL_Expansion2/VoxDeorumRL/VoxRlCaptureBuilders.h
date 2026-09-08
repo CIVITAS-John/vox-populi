@@ -32,7 +32,7 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 
 // Collects one unit's sparse indexed combat modifiers into the family
 // records. Shared by the WORLD builder and sparse replacement flushes.
-void VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, class CvUnit* pUnit,
+bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, class CvUnit* pUnit,
 	std::vector<UnitModifierRecord>& rows);
 
 // Collects one unit's plagues and blocked promotions into the sparse family
@@ -61,7 +61,7 @@ bool VoxRlCollectPlotDynamicRecord(class CvPlot& plot, class CvTacticalAnalysisM
 
 // Collects a complete sparse family across all live units or cities, used by
 // WORLD builds and complete-family replacement requests.
-void VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows);
+bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows);
 void VoxRlCollectAllUnitPlagueRows(std::vector<UnitPlagueRecord>& plagues,
 	std::vector<UnitBlockedPromotionRecord>& blockedPromotions);
 void VoxRlCollectAllUnitAttackCountRows(std::vector<UnitAttackCountRecord>& rows);

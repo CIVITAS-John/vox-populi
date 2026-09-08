@@ -198,10 +198,13 @@ bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 	return true;
 }
 
-void VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
+// Collects one unit's modifiers and rejects schema capacities that cannot fit.
+bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 	std::vector<UnitModifierRecord>& rows)
 {
-	if (pUnit == NULL) return;
+	if (pUnit == NULL) return true;
+	if (GC.getNumTerrainInfos() > VoxRlTerrainCapacity ||
+		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
 	UnitModifierRecord row;
 	ZeroRecord(row);
 	row.owner = static_cast<i8>(eOwner);
@@ -210,7 +213,6 @@ void VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 	// Family order matches the manifest: terrain attack and defense, the VP
 	// terrain attack and defense, feature attack and defense.
 	const int terrainCount = GC.getNumTerrainInfos();
-	if (terrainCount > VoxRlTerrainCapacity) return;
 	for (int index = 0; index < terrainCount; ++index)
 	{
 		const TerrainTypes terrain = static_cast<TerrainTypes>(index);
@@ -224,7 +226,6 @@ void VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		if (vpDefense != 0) { row.family = 3; row.index = index; row.value = vpDefense; rows.push_back(row); }
 	}
 	const int featureCount = GC.getNumFeatureInfos();
-	if (featureCount > VoxRlFeatureCapacity) return;
 	for (int index = 0; index < featureCount; ++index)
 	{
 		const FeatureTypes feature = static_cast<FeatureTypes>(index);
@@ -276,6 +277,7 @@ void VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		if (attack != 0) { row.family = 13; row.index = index; row.value = attack; rows.push_back(row); }
 		if (defense != 0) { row.family = 14; row.index = index; row.value = defense; rows.push_back(row); }
 	}
+	return true;
 }
 
 // Collects a unit's plague and blocked-promotion rows for sparse capture.
@@ -404,7 +406,8 @@ bool VoxRlCollectPlotDynamicRecord(CvPlot& plot, CvTacticalAnalysisMap* zoneMap,
 	return true;
 }
 
-void VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows)
+// Collects every live unit's modifiers for a complete sparse replacement.
+bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows)
 {
 	int loop = 0;
 	for (int player = 0; player < MAX_PLAYERS; ++player)
@@ -414,9 +417,10 @@ void VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows)
 		for (CvUnit* pUnit = owner.firstUnit(&loop); pUnit != NULL; pUnit = owner.nextUnit(&loop))
 		{
 			if (pUnit->isDelayedDeath()) continue;
-			VoxRlCollectUnitModifierRows(owner.GetID(), pUnit->GetID(), pUnit, rows);
+			if (!VoxRlCollectUnitModifierRows(owner.GetID(), pUnit->GetID(), pUnit, rows)) return false;
 		}
 	}
+	return true;
 }
 
 // Collects all live units' plague and blocked-promotion rows for sparse capture.
@@ -577,250 +581,256 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 
 // Collects native WORLD state in stable owner and plot order for the generated writer.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
-    VoxRlOwnedBlockStorage& storage, unsigned int& length)
+	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
-    CvMap& map = GC.getMap();
-    const int plotCount = map.numPlots();
-    if (plotCount <= 0) return false;
-    CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
-    const TeamTypes capturingTeam = capturing.getTeam();
-    VoxRlWorldData data;
-    std::vector<TeamTypes> aliveTeams;
-    CollectAliveTeams(aliveTeams);
-    std::vector<PlayerTypes> alivePlayers;
-    CollectAlivePlayers(alivePlayers);
+	CvMap& map = GC.getMap();
+	const int plotCount = map.numPlots();
+	if (plotCount <= 0) return false;
+	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
+	const TeamTypes capturingTeam = capturing.getTeam();
+	VoxRlWorldData data;
+	std::vector<TeamTypes> aliveTeams;
+	CollectAliveTeams(aliveTeams);
+	std::vector<PlayerTypes> alivePlayers;
+	CollectAlivePlayers(alivePlayers);
 
-    // Unit rows follow plot stacks, while these indices preserve owner iteration order.
-    std::map<VoxRlEntityKey, unsigned int> iterationByUnit;
-    for (int player = 0; player < MAX_PLAYERS; ++player)
-    {
-        CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
-        unsigned int iteration = 0;
-        int loop = 0;
-        for (CvUnit* unit = owner.firstUnit(&loop); unit != NULL; unit = owner.nextUnit(&loop))
-        {
-            if (unit->isDelayedDeath() || unit->plot() == NULL) continue;
-            iterationByUnit[VoxRlEntityKey(player, unit->GetID())] = iteration++;
-        }
-    }
+	// Unit rows follow plot stacks, while these indices preserve owner iteration order.
+	std::map<VoxRlEntityKey, unsigned int> iterationByUnit;
+	for (int player = 0; player < MAX_PLAYERS; ++player)
+	{
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
+		unsigned int iteration = 0;
+		int loop = 0;
+		for (CvUnit* unit = owner.firstUnit(&loop); unit != NULL; unit = owner.nextUnit(&loop))
+		{
+			if (unit->isDelayedDeath() || unit->plot() == NULL) continue;
+			iterationByUnit[VoxRlEntityKey(player, unit->GetID())] = iteration++;
+		}
+	}
 
-    // Prepare the native citadel cache before zone preparation, as at the capture checkpoint.
-    for (int player = 0; player < MAX_PLAYERS; ++player)
-    {
-        CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
-        PlayerRecord row;
-        ZeroRecord(row);
-        std::vector<CitadelPlotRecord> citadels;
-        if (owner.isAlive())
-        {
-            const PlotIndexContainer& plots = owner.GetPlots();
-            for (size_t index = 0; index < plots.size(); ++index)
-            {
-                CvPlot* plot = map.plotByIndex(plots[index]);
-                if (plot == NULL || !owner.IsNicePlotForCitadel(plot)) continue;
-                CitadelPlotRecord entry;
-                ZeroRecord(entry);
-                entry.plotIndex = static_cast<i32>(plots[index]);
-                citadels.push_back(entry);
-            }
-        }
-        if (!AppendPlayerRecordCitadelPlotRange(&row, &data, citadels)) return false;
-        data.worldPlayers.push_back(row);
-    }
+	// Prepare the native citadel cache before zone preparation, as at the capture checkpoint.
+	for (int player = 0; player < MAX_PLAYERS; ++player)
+	{
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
+		PlayerRecord row;
+		ZeroRecord(row);
+		std::vector<CitadelPlotRecord> citadels;
+		if (owner.isAlive())
+		{
+			const PlotIndexContainer& plots = owner.GetPlots();
+			for (size_t index = 0; index < plots.size(); ++index)
+			{
+				CvPlot* plot = map.plotByIndex(plots[index]);
+				if (plot == NULL || !owner.IsNicePlotForCitadel(plot)) continue;
+				CitadelPlotRecord entry;
+				ZeroRecord(entry);
+				entry.plotIndex = static_cast<i32>(plots[index]);
+				citadels.push_back(entry);
+			}
+		}
+		if (!AppendPlayerRecordCitadelPlotRange(&row, &data, citadels)) return false;
+		data.worldPlayers.push_back(row);
+	}
 
-    const CvDangerPlots* danger = capturing.GetDangerPlots();
-    if (danger == NULL) return false;
-    DangerPlayerRecord dangerRow;
-    ZeroRecord(dangerRow);
-    if (!CollectDangerPlayerRecord(capturingPlayer, dangerRow)) return false;
-    dangerRow.turnBuilt = static_cast<i32>(danger->GetTurnBuilt());
-    dangerRow.dirty = danger->IsDirty() ? 1 : 0;
-    std::vector<KnownAttackerRecord> known;
-    for (UnitSet::const_iterator entry = danger->GetKnownUnits().begin(); entry != danger->GetKnownUnits().end(); ++entry)
-    {
-        KnownAttackerRecord row;
-        ZeroRecord(row);
-        row.owner = static_cast<i8>(entry->first);
-        row.unitId = static_cast<i32>(entry->second);
-        known.push_back(row);
-    }
-    std::vector<VanishedAttackerRecord> vanished;
-    for (UnitSet::const_iterator entry = danger->GetVanishedUnits().begin(); entry != danger->GetVanishedUnits().end(); ++entry)
-    {
-        VanishedAttackerRecord row;
-        ZeroRecord(row);
-        row.owner = static_cast<i8>(entry->first);
-        row.unitId = static_cast<i32>(entry->second);
-        vanished.push_back(row);
-    }
-    if (!AppendDangerPlayerRecordKnownUnitRange(&dangerRow, &data, known) ||
-        !AppendDangerPlayerRecordVanishedUnitRange(&dangerRow, &data, vanished)) return false;
-    data.worldDangerPlayers.push_back(dangerRow);
+	const CvDangerPlots* danger = capturing.GetDangerPlots();
+	if (danger == NULL) return false;
+	DangerPlayerRecord dangerRow;
+	ZeroRecord(dangerRow);
+	if (!CollectDangerPlayerRecord(capturingPlayer, dangerRow)) return false;
+	dangerRow.turnBuilt = static_cast<i32>(danger->GetTurnBuilt());
+	dangerRow.dirty = danger->IsDirty() ? 1 : 0;
+	std::vector<KnownAttackerRecord> known;
+	for (UnitSet::const_iterator entry = danger->GetKnownUnits().begin(); entry != danger->GetKnownUnits().end(); ++entry)
+	{
+		KnownAttackerRecord row;
+		ZeroRecord(row);
+		row.owner = static_cast<i8>(entry->first);
+		row.unitId = static_cast<i32>(entry->second);
+		known.push_back(row);
+	}
+	std::vector<VanishedAttackerRecord> vanished;
+	for (UnitSet::const_iterator entry = danger->GetVanishedUnits().begin(); entry != danger->GetVanishedUnits().end(); ++entry)
+	{
+		VanishedAttackerRecord row;
+		ZeroRecord(row);
+		row.owner = static_cast<i8>(entry->first);
+		row.unitId = static_cast<i32>(entry->second);
+		vanished.push_back(row);
+	}
+	if (!AppendDangerPlayerRecordKnownUnitRange(&dangerRow, &data, known) ||
+		!AppendDangerPlayerRecordVanishedUnitRange(&dangerRow, &data, vanished)) return false;
+	data.worldDangerPlayers.push_back(dangerRow);
 
-    VoxRlCollectAllUnitModifierRows(data.worldUnitModifiers);
-    VoxRlCollectAllUnitPlagueRows(data.worldUnitPlagues, data.worldUnitBlockedPromotions);
-    VoxRlCollectAllUnitAttackCountRows(data.worldUnitAttackCounts);
-    VoxRlCollectAllCityAttackCountRows(data.worldCityAttackCounts);
-    VoxRlCollectAllPlayerResistanceRows(data.worldPlayerResistances);
-    for (size_t minorIndex = 0; minorIndex < alivePlayers.size(); ++minorIndex)
-    {
-        CvPlayerAI& minor = GET_PLAYER(alivePlayers[minorIndex]);
-        if (!minor.isMinorCiv() || minor.isBarbarian()) continue;
-        for (size_t majorIndex = 0; majorIndex < alivePlayers.size(); ++majorIndex)
-        {
-            CvPlayerAI& major = GET_PLAYER(alivePlayers[majorIndex]);
-            if (major.isMinorCiv() || major.isBarbarian()) continue;
-            MinorRelationRecord row;
-            ZeroRecord(row);
-            if (!CollectMinorRelationRecord(minor, *minor.GetMinorCivAI(), minor.GetID(), major.GetID(), row)) return false;
-            data.worldMinorRelations.push_back(row);
-        }
-    }
+	if (!VoxRlCollectAllUnitModifierRows(data.worldUnitModifiers)) return false;
+	VoxRlCollectAllUnitPlagueRows(data.worldUnitPlagues, data.worldUnitBlockedPromotions);
+	VoxRlCollectAllUnitAttackCountRows(data.worldUnitAttackCounts);
+	VoxRlCollectAllCityAttackCountRows(data.worldCityAttackCounts);
+	VoxRlCollectAllPlayerResistanceRows(data.worldPlayerResistances);
+	for (size_t minorIndex = 0; minorIndex < alivePlayers.size(); ++minorIndex)
+	{
+		CvPlayerAI& minor = GET_PLAYER(alivePlayers[minorIndex]);
+		if (!minor.isMinorCiv() || minor.isBarbarian()) continue;
+		for (size_t majorIndex = 0; majorIndex < alivePlayers.size(); ++majorIndex)
+		{
+			CvPlayerAI& major = GET_PLAYER(alivePlayers[majorIndex]);
+			if (major.isMinorCiv() || major.isBarbarian()) continue;
+			MinorRelationRecord row;
+			ZeroRecord(row);
+			if (!CollectMinorRelationRecord(minor, *minor.GetMinorCivAI(), minor.GetID(), major.GetID(), row)) return false;
+			data.worldMinorRelations.push_back(row);
+		}
+	}
 
-    CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
-    const int zoneCount = zoneMap != NULL ? zoneMap->GetNumZones() : 0;
-    for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
-    {
-        CvPlot* plot = map.plotByIndex(plotIndex);
-        if (plot == NULL) return false;
-        PlotDynamicRecord row;
-        ZeroRecord(row);
-        if (!VoxRlCollectPlotDynamicRecord(*plot, zoneMap, row)) return false;
-        std::vector<UnitRecord> units;
-        for (IDInfo* node = plot->headUnitNode(); node != NULL; node = plot->nextUnitNode(node))
-        {
-            CvUnit* unit = GET_PLAYER(node->eOwner).getUnit(node->iID);
-            if (unit == NULL || unit->isDelayedDeath()) continue;
-            UnitRecord unitRow;
-            ZeroRecord(unitRow);
-            if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow)) return false;
-            std::map<VoxRlEntityKey, unsigned int>::const_iterator iteration =
-                iterationByUnit.find(VoxRlEntityKey(static_cast<int>(node->eOwner), node->iID));
-            if (iteration == iterationByUnit.end()) return false;
-            unitRow.iterationIndex = iteration->second;
-            units.push_back(unitRow);
-        }
-        if (!AppendPlotDynamicRecordUnitRange(&row, &data, units)) return false;
-        data.worldPlots.push_back(row);
-        PlotPassabilityRecord passability;
-        ZeroRecord(passability);
-        if (!CollectPlotPassabilityRecord(*plot, passability)) return false;
-        data.worldPlotPassability.push_back(passability);
-    }
-    if (data.worldUnits.size() != iterationByUnit.size()) return false;
+	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
+	const int zoneCount = zoneMap != NULL ? zoneMap->GetNumZones() : 0;
+	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
+	{
+		CvPlot* plot = map.plotByIndex(plotIndex);
+		if (plot == NULL) return false;
+		PlotDynamicRecord row;
+		ZeroRecord(row);
+		if (!VoxRlCollectPlotDynamicRecord(*plot, zoneMap, row)) return false;
+		std::vector<UnitRecord> units;
+		for (IDInfo* node = plot->headUnitNode(); node != NULL; node = plot->nextUnitNode(node))
+		{
+			CvUnit* unit = GET_PLAYER(node->eOwner).getUnit(node->iID);
+			if (unit == NULL || unit->isDelayedDeath()) continue;
+			UnitRecord unitRow;
+			ZeroRecord(unitRow);
+			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow)) return false;
+			std::map<VoxRlEntityKey, unsigned int>::const_iterator iteration =
+				iterationByUnit.find(VoxRlEntityKey(static_cast<int>(node->eOwner), node->iID));
+			if (iteration == iterationByUnit.end()) return false;
+			unitRow.iterationIndex = iteration->second;
+			units.push_back(unitRow);
+		}
+		if (!AppendPlotDynamicRecordUnitRange(&row, &data, units)) return false;
+		data.worldPlots.push_back(row);
+		PlotPassabilityRecord passability;
+		ZeroRecord(passability);
+		if (!CollectPlotPassabilityRecord(*plot, passability)) return false;
+		data.worldPlotPassability.push_back(passability);
+	}
+	if (data.worldUnits.size() != iterationByUnit.size()) return false;
 
-    // Each alive team contributes one plot bitset; all-zero optional detection is omitted.
-    const size_t bitBytes = (static_cast<size_t>(plotCount) + 7U) / 8U;
-    std::vector<u8>* bitsets[] = { &data.worldRevealedBits, &data.worldVisibleBits,
-        &data.worldKnownVisibleBits, &data.worldInvisibleVisibleBits };
-    for (int kind = 0; kind < 4; ++kind) bitsets[kind]->resize(bitBytes * aliveTeams.size(), 0);
-    bool hasInvisibleVisibility = false;
-    for (size_t teamIndex = 0; teamIndex < aliveTeams.size(); ++teamIndex)
-    {
-        const TeamTypes team = aliveTeams[teamIndex];
-        PlotTeamRecord row;
-        ZeroRecord(row);
-        row.team = static_cast<i8>(team);
-        std::vector<RevealedOverrideRecord> overrides;
-        for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
-        {
-            CvPlot* plot = map.plotByIndex(plotIndex);
-            if (HasRevealedOverride(*plot, team))
-            {
-                RevealedOverrideRecord entry;
-                ZeroRecord(entry);
-                if (!CollectRevealedOverrideRecord(*plot, team, entry)) return false;
-                overrides.push_back(entry);
-            }
-            const bool bits[] = { plot->isRevealed(team), plot->isVisible(team),
-                plot->GetKnownVisibilityCount(team) > 0, plot->isInvisibleVisibleUnit(team) };
-            hasInvisibleVisibility = hasInvisibleVisibility || bits[3];
-            for (int kind = 0; kind < 4; ++kind)
-                if (bits[kind]) (*bitsets[kind])[teamIndex * bitBytes + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));
-        }
-        if (!AppendPlotTeamRecordRevealedOverrideRange(&row, &data, overrides)) return false;
-        data.worldPlotTeams.push_back(row);
-    }
-    if (!hasInvisibleVisibility) data.worldInvisibleVisibleBits.clear();
+	// Each alive team contributes one plot bitset; all-zero optional detection is omitted.
+	const size_t bitBytes = (static_cast<size_t>(plotCount) + 7U) / 8U;
+	std::vector<u8>* bitsets[] = { &data.worldRevealedBits, &data.worldVisibleBits,
+		&data.worldKnownVisibleBits, &data.worldInvisibleVisibleBits };
+	for (int kind = 0; kind < 4; ++kind) bitsets[kind]->resize(bitBytes * aliveTeams.size(), 0);
+	bool hasInvisibleVisibility = false;
+	for (size_t teamIndex = 0; teamIndex < aliveTeams.size(); ++teamIndex)
+	{
+		const TeamTypes team = aliveTeams[teamIndex];
+		PlotTeamRecord row;
+		ZeroRecord(row);
+		row.team = static_cast<i8>(team);
+		std::vector<RevealedOverrideRecord> overrides;
+		for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
+		{
+			CvPlot* plot = map.plotByIndex(plotIndex);
+			if (HasRevealedOverride(*plot, team))
+			{
+				RevealedOverrideRecord entry;
+				ZeroRecord(entry);
+				if (!CollectRevealedOverrideRecord(*plot, team, entry)) return false;
+				overrides.push_back(entry);
+			}
+			const bool bits[] = { plot->isRevealed(team), plot->isVisible(team),
+				plot->GetKnownVisibilityCount(team) > 0, plot->isInvisibleVisibleUnit(team) };
+			hasInvisibleVisibility = hasInvisibleVisibility || bits[3];
+			for (int kind = 0; kind < 4; ++kind)
+				if (bits[kind]) (*bitsets[kind])[teamIndex * bitBytes + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));
+		}
+		if (!AppendPlotTeamRecordRevealedOverrideRange(&row, &data, overrides)) return false;
+		data.worldPlotTeams.push_back(row);
+	}
+	if (!hasInvisibleVisibility) data.worldInvisibleVisibleBits.clear();
 
-    for (int player = 0; player < MAX_PLAYERS; ++player)
-    {
-        CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
-        unsigned int iteration = 0;
-        int loop = 0;
-        for (CvCity* city = owner.firstCity(&loop); city != NULL; city = owner.nextCity(&loop))
-        {
-            CityRecord row;
-            ZeroRecord(row);
-            if (!VoxRlCollectCityRecord(*city, capturingPlayer, row)) return false;
-            row.iterationIndex = iteration++;
-            data.worldCities.push_back(row);
-        }
-        // The generated collector leaves the already-appended citadel range intact.
-        if (!CollectPlayerRecord(owner, capturingPlayer, data.worldPlayers[player])) return false;
-        data.worldPlayers[player].id = static_cast<i8>(player);
-    }
-    for (int team = 0; team < MAX_TEAMS; ++team)
-    {
-        TeamRecord row;
-        ZeroRecord(row);
-        if (!CollectTeamRecord(GET_TEAM(static_cast<TeamTypes>(team)), row)) return false;
-        data.worldTeams.push_back(row);
-    }
-    for (size_t team = 0; team < aliveTeams.size(); ++team)
-        for (size_t other = 0; other < aliveTeams.size(); ++other)
-        {
-            if (team == other) continue;
-            TeamRelationRecord row;
-            ZeroRecord(row);
-            if (!CollectTeamRelationRecord(GET_TEAM(aliveTeams[team]), aliveTeams[other], capturingPlayer, row)) return false;
-            data.worldTeamRelations.push_back(row);
-        }
-    for (int zoneIndex = 0; zoneIndex < zoneCount; ++zoneIndex)
-    {
-        CvTacticalDominanceZone* zone = zoneMap->GetZoneByIndex(zoneIndex);
-        if (zone == NULL) return false;
-        ZoneRecord row;
-        ZeroRecord(row);
-        if (!CollectZoneRecord(*zone, row)) return false;
-        row.avgX = static_cast<i32>(zone->GetAverageX());
-        row.avgY = static_cast<i32>(zone->GetAverageY());
-        CvCity* city = zone->GetZoneCity();
-        row.cityOwner = city != NULL ? static_cast<i8>(city->getOwner()) : static_cast<i8>(-1);
-        row.cityId = city != NULL ? static_cast<i32>(city->GetID()) : -1;
-        const std::vector<int>& nativeNeighbors = zone->GetNeighboringZones();
-        std::vector<ZoneNeighborRecord> neighbors;
-        for (size_t index = 0; index < nativeNeighbors.size(); ++index)
-        {
-            ZoneNeighborRecord entry;
-            ZeroRecord(entry);
-            entry.zoneId = static_cast<i32>(nativeNeighbors[index]);
-            neighbors.push_back(entry);
-        }
-        if (!AppendZoneRecordNeighborRange(&row, &data, neighbors)) return false;
-        data.worldZones.push_back(row);
-    }
-    for (size_t player = 0; player < alivePlayers.size(); ++player)
-    {
-        CvPlayerAI& owner = GET_PLAYER(alivePlayers[player]);
-        InterceptorCacheRecord row;
-        ZeroRecord(row);
-        row.player = static_cast<i8>(owner.GetID());
-        const std::vector<std::pair<int, int> >& nativeEntries = owner.GetPossibleInterceptors();
-        std::vector<InterceptorCacheEntryRecord> entries;
-        for (size_t index = 0; index < nativeEntries.size(); ++index)
-        {
-            InterceptorCacheEntryRecord entry;
-            ZeroRecord(entry);
-            entry.owner = static_cast<i8>(owner.GetID());
-            entry.unitId = static_cast<i32>(nativeEntries[index].first);
-            entry.plotIndex = static_cast<i32>(nativeEntries[index].second);
-            entries.push_back(entry);
-        }
-        if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) return false;
-        data.worldInterceptorCaches.push_back(row);
-    }
-    return data.Write(identity, storage, length);
+	for (int player = 0; player < MAX_PLAYERS; ++player)
+	{
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
+		unsigned int iteration = 0;
+		int loop = 0;
+		for (CvCity* city = owner.firstCity(&loop); city != NULL; city = owner.nextCity(&loop))
+		{
+			CityRecord row;
+			ZeroRecord(row);
+			if (!VoxRlCollectCityRecord(*city, capturingPlayer, row)) return false;
+			row.iterationIndex = iteration++;
+			data.worldCities.push_back(row);
+		}
+		const u32 citadelRangeFirst = data.worldPlayers[player].citadelPlotRangeFirst;
+		const u32 citadelRangeCount = data.worldPlayers[player].citadelPlotRangeCount;
+		PlayerRecord row;
+		ZeroRecord(row);
+		if (!CollectPlayerRecord(owner, capturingPlayer, row)) return false;
+		row.id = static_cast<i8>(player);
+		row.citadelPlotRangeFirst = citadelRangeFirst;
+		row.citadelPlotRangeCount = citadelRangeCount;
+		data.worldPlayers[player] = row;
+	}
+	for (int team = 0; team < MAX_TEAMS; ++team)
+	{
+		TeamRecord row;
+		ZeroRecord(row);
+		if (!CollectTeamRecord(GET_TEAM(static_cast<TeamTypes>(team)), row)) return false;
+		data.worldTeams.push_back(row);
+	}
+	for (size_t team = 0; team < aliveTeams.size(); ++team)
+		for (size_t other = 0; other < aliveTeams.size(); ++other)
+		{
+			if (team == other) continue;
+			TeamRelationRecord row;
+			ZeroRecord(row);
+			if (!CollectTeamRelationRecord(GET_TEAM(aliveTeams[team]), aliveTeams[other], capturingPlayer, row)) return false;
+			data.worldTeamRelations.push_back(row);
+		}
+	for (int zoneIndex = 0; zoneIndex < zoneCount; ++zoneIndex)
+	{
+		CvTacticalDominanceZone* zone = zoneMap->GetZoneByIndex(zoneIndex);
+		if (zone == NULL) return false;
+		ZoneRecord row;
+		ZeroRecord(row);
+		if (!CollectZoneRecord(*zone, row)) return false;
+		row.avgX = static_cast<i32>(zone->GetAverageX());
+		row.avgY = static_cast<i32>(zone->GetAverageY());
+		CvCity* city = zone->GetZoneCity();
+		row.cityOwner = city != NULL ? static_cast<i8>(city->getOwner()) : static_cast<i8>(-1);
+		row.cityId = city != NULL ? static_cast<i32>(city->GetID()) : -1;
+		const std::vector<int>& nativeNeighbors = zone->GetNeighboringZones();
+		std::vector<ZoneNeighborRecord> neighbors;
+		for (size_t index = 0; index < nativeNeighbors.size(); ++index)
+		{
+			ZoneNeighborRecord entry;
+			ZeroRecord(entry);
+			entry.zoneId = static_cast<i32>(nativeNeighbors[index]);
+			neighbors.push_back(entry);
+		}
+		if (!AppendZoneRecordNeighborRange(&row, &data, neighbors)) return false;
+		data.worldZones.push_back(row);
+	}
+	for (size_t player = 0; player < alivePlayers.size(); ++player)
+	{
+		CvPlayerAI& owner = GET_PLAYER(alivePlayers[player]);
+		InterceptorCacheRecord row;
+		ZeroRecord(row);
+		row.player = static_cast<i8>(owner.GetID());
+		const std::vector<std::pair<int, int> >& nativeEntries = owner.GetPossibleInterceptors();
+		std::vector<InterceptorCacheEntryRecord> entries;
+		for (size_t index = 0; index < nativeEntries.size(); ++index)
+		{
+			InterceptorCacheEntryRecord entry;
+			ZeroRecord(entry);
+			entry.owner = static_cast<i8>(owner.GetID());
+			entry.unitId = static_cast<i32>(nativeEntries[index].first);
+			entry.plotIndex = static_cast<i32>(nativeEntries[index].second);
+			entries.push_back(entry);
+		}
+		if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) return false;
+		data.worldInterceptorCaches.push_back(row);
+	}
+	return data.Write(identity, storage, length);
 }
 
 // Collects the operational entry snapshot without refreshing native zones.
@@ -966,7 +976,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		if (zone == NULL) return false;
 		CampaignZoneRecord row;
 		ZeroRecord(row);
-		CollectCampaignZoneRecord(*const_cast<CvTacticalDominanceZone*>(zone), row);
+		CollectCampaignZoneRecord(*zone, row);
 		row.avgX = static_cast<i32>(zone->GetAverageX());
 		row.avgY = static_cast<i32>(zone->GetAverageY());
 		CvCity* city = zone->GetZoneCity();
