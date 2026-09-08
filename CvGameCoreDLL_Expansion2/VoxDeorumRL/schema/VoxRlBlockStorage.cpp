@@ -1,8 +1,8 @@
 // Installed from simulator/schema/shared/VoxRlBlockStorage.cpp. Edit that source, then reinstall.
 
-#include <windows.h>
-
 #include "VoxRlBlockStorage.h"
+
+#include <windows.h>
 
 #ifdef VOX_RL_TESTING
 namespace {

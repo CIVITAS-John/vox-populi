@@ -4,6 +4,8 @@
 #ifndef VOX_RL_BUILDERS_GENERATED_H
 #define VOX_RL_BUILDERS_GENERATED_H
 
+#include "VoxRlTypes.h"
+
 #include <cstring>
 #include <vector>
 

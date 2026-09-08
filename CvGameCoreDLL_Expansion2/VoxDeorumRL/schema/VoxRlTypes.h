@@ -3,6 +3,16 @@
 #ifndef VOX_RL_TYPES_H
 #define VOX_RL_TYPES_H
 
+// Vox Deorum: PCH-less DLL sources must match the game's unchecked STL ABI.
+#if defined(CVGAMECOREDLL_EXPORTS)
+#if !defined(_SECURE_SCL)
+#define _SECURE_SCL 0
+#endif
+#if !defined(_HAS_ITERATOR_DEBUGGING)
+#define _HAS_ITERATOR_DEBUGGING 0
+#endif
+#endif
+
 #include <stddef.h>
 
 typedef signed char i8;

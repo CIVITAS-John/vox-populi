@@ -3,9 +3,9 @@
 #ifndef VOX_RL_BLOCK_STORAGE_H
 #define VOX_RL_BLOCK_STORAGE_H
 
-#include <vector>
-
 #include "VoxRlTypes.h"
+
+#include <vector>
 
 // Keeps borrowed read-only bytes alive only while an external owner remains valid.
 class VoxRlBorrowedBlockStorage {

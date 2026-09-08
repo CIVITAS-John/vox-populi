@@ -1,10 +1,11 @@
 // Installed from simulator/schema/shared/VoxRlBlockView.cpp. Edit that source, then reinstall.
 
-#include <algorithm>
-#include <vector>
-
+#include "VoxRlTypes.h"
 #include "VoxRlBlockView.h"
 #include "VoxRlBlockMetadata.h"
+
+#include <algorithm>
+#include <vector>
 
 // Checks the generated section count rule and any caller-provided live dimension counts.
 static bool VoxRlHasValidSectionCount(
