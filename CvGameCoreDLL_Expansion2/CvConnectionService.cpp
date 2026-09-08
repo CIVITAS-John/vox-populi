@@ -2608,6 +2608,65 @@ void CvConnectionService::SerializeEventSequence()
 	}
 }
 
+// Read the persisted game UUID from the Deorum save-data table for
+// recording capture identity. Follows the same lock ordering as the event
+// sequence helpers: the game core lock is released around Lua execution.
+bool CvConnectionService::TryReadGameUuid(std::string& uuidText)
+{
+	uuidText.clear();
+	if (m_pLuaState == NULL)
+	{
+		return false;
+	}
+	const char* script =
+		"local saveDB = Modding.OpenSaveData();\n"
+		"local gameId = nil;\n"
+		"for row in saveDB.Query(\"SELECT Value FROM Deorum WHERE Key == 'GameID'\") do\n"
+		"  gameId = row.Value;\n"
+		"  break;\n"
+		"end\n"
+		"return gameId;\n";
+
+	// Vox Deorum: Must release game core lock before Lua execution to prevent
+	// ABBA deadlock with the UI thread (which holds LuaLock and may need GameCoreLock)
+	bool bHadLock = gDLL->HasGameCoreLock();
+	if (bHadLock)
+	{
+		gDLL->ReleaseGameCoreLock();
+	}
+
+	int result = luaL_dostring(m_pLuaState, script);
+	bool found = false;
+	if (result != 0)
+	{
+		const char* errorMsg = lua_tostring(m_pLuaState, -1);
+		std::string cleanedError = CleanLuaErrorMessage(errorMsg);
+		std::stringstream ss;
+		ss << "TryReadGameUuid - Failed to load: " << cleanedError;
+		Log(LOG_ERROR, ss.str().c_str());
+		lua_pop(m_pLuaState, 1);
+	}
+	else
+	{
+		if (lua_isstring(m_pLuaState, -1))
+		{
+			const char* valueStr = lua_tostring(m_pLuaState, -1);
+			if (valueStr != NULL && valueStr[0] != '\0')
+			{
+				uuidText = valueStr;
+				found = true;
+			}
+		}
+		lua_pop(m_pLuaState, 1);
+	}
+
+	if (bHadLock)
+	{
+		gDLL->GetGameCoreLock();
+	}
+	return found;
+}
+
 // Deserialize m_uiEventSequence from database
 void CvConnectionService::DeserializeEventSequence()
 {

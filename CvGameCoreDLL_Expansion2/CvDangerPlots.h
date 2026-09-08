@@ -100,6 +100,12 @@ public:
 	void SetDirty();
 	bool IsDirty() const { return m_bDirty; }
 
+	// Vox Deorum: narrow capture reads of stored danger state. They never
+	// trigger a refresh and never mutate the cache.
+	PlayerTypes GetObserver() const { return m_ePlayer; }
+	int GetTurnBuilt() const { return m_iTurnBuilt; }
+	const UnitSet& GetKnownUnits() const { return m_knownUnits; }
+
 	template<typename DangerPlots, typename Visitor>
 	static void Serialize(DangerPlots& dangerPlots, Visitor& visitor);
 	void Read(FDataStream& kStream);

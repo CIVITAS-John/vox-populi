@@ -44,6 +44,7 @@
 #include "CvBarbarians.h"
 
 #include "CvDllNetMessageExt.h"
+#include "VoxDeorumRL/VoxRlCapture.h"
 // include after all other headers
 #include "LintFree.h"
 
@@ -1105,6 +1106,12 @@ void CvCity::init(int iID, PlayerTypes eOwner, int iX, int iY, bool bBumpUnits, 
 	if (!kOwner.isHuman(ISHUMAN_AI_CITY_PRODUCTION))
 	{
 		AI_chooseProduction(false, false);
+	}
+
+	// Vox Deorum: capture marks the new city after initialization completes.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteCityCreated(getOwner(), GetID());
 	}
 }
 
@@ -16419,6 +16426,9 @@ void CvCity::SetGarrison(CvUnit* pUnit)
 
 	// Update City Strength
 	updateStrengthValue();
+	// Vox Deorum: a replacement garrison changes capture identity even at equal strength.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
 
 	GET_PLAYER(getOwner()).CalculateNetHappiness();
 	updateNetHappiness();
@@ -27344,6 +27354,9 @@ void CvCity::updateStrengthValue()
 		// set new strength values
 		m_iStrengthValueRanged = iStrengthValueRanged;
 		m_iStrengthValue = iStrengthValue;
+		// Vox Deorum: publish cached strength changes caused by garrison and board updates.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
 		bool bHasCityYieldsPerCityStrength = false;
 		for (int iI = 0; iI < NUM_YIELD_TYPES; iI++)
 		{
@@ -27370,6 +27383,7 @@ void CvCity::updateStrengthValue()
 }
 
 //	--------------------------------------------------------------------------------
+
 int CvCity::getStrengthValue(bool bForRangeStrike, bool bIgnoreBuildings, const CvUnit* pDefender, bool bOverrideGarrison, const CvUnit* pGarrisonOverride) const //result is times 100
 {
 	VALIDATE_OBJECT();
@@ -27462,41 +27476,7 @@ int CvCity::getStrengthValue(bool bForRangeStrike, bool bIgnoreBuildings, const 
 			iModifier += GET_PLAYER(getOwner()).GetBarbarianCombatBonus(false);
 		}
 
-		// Religion city strike mod
-		ReligionTypes eMajority = GetCityReligions()->GetReligiousMajority();
-		BeliefTypes eSecondaryPantheon = NO_BELIEF;
-		if (eMajority != NO_RELIGION)
-		{
-			const CvReligion* pReligion = GetCityReligions()->GetMajorityReligion();
-			if (pReligion)
-			{
-				iModifier += pReligion->m_Beliefs.GetCityRangeStrikeModifier(getOwner(), GET_PLAYER(getOwner()).getCity(GetID()));
-				eSecondaryPantheon = GetCityReligions()->GetSecondaryReligionPantheonBelief();
-				if (eSecondaryPantheon != NO_BELIEF)
-				{
-					iModifier += GC.GetGameBeliefs()->GetEntry(eSecondaryPantheon)->GetCityRangeStrikeModifier();
-				}
-			}
-		}
-
-		// Mod for civs keeping their pantheon belief forever
-		if (MOD_BALANCE_PERMANENT_PANTHEONS)
-		{
-			if (GC.getGame().GetGameReligions()->HasCreatedPantheon(getOwner()))
-			{
-				const CvReligion* pPantheon = GC.getGame().GetGameReligions()->GetReligion(RELIGION_PANTHEON, getOwner());
-				BeliefTypes ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(getOwner());
-				if (pPantheon != NULL && ePantheonBelief != NO_BELIEF && ePantheonBelief != eSecondaryPantheon)
-				{
-					// Check that the our religion does not have our belief, to prevent double counting
-					const CvReligion* pReligion = GetCityReligions()->GetMajorityReligion();
-					if (pReligion == NULL || !pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eMajority, getOwner()))
-					{
-						iModifier += GC.GetGameBeliefs()->GetEntry(ePantheonBelief)->GetCityRangeStrikeModifier();
-					}
-				}
-			}
-		}
+		iModifier += GetCityBeliefRangeStrikeModifier();
 
 		iValue *= (100 + iModifier);
 		iValue /= 100;
@@ -27538,6 +27518,45 @@ int CvCity::getStrengthValue(bool bForRangeStrike, bool bIgnoreBuildings, const 
 }
 
 //	--------------------------------------------------------------------------------
+// Vox Deorum: calculates the effective religion modifier used by city range strikes.
+int CvCity::GetCityBeliefRangeStrikeModifier() const
+{
+	int iModifier = 0;
+	ReligionTypes eMajority = GetCityReligions()->GetReligiousMajority();
+	BeliefTypes eSecondaryPantheon = NO_BELIEF;
+	if (eMajority != NO_RELIGION)
+	{
+		const CvReligion* pReligion = GetCityReligions()->GetMajorityReligion();
+		if (pReligion)
+		{
+			iModifier += pReligion->m_Beliefs.GetCityRangeStrikeModifier(getOwner(), GET_PLAYER(getOwner()).getCity(GetID()));
+			eSecondaryPantheon = GetCityReligions()->GetSecondaryReligionPantheonBelief();
+			if (eSecondaryPantheon != NO_BELIEF)
+				iModifier += GC.GetGameBeliefs()->GetEntry(eSecondaryPantheon)->GetCityRangeStrikeModifier();
+		}
+	}
+	if (MOD_BALANCE_PERMANENT_PANTHEONS && GC.getGame().GetGameReligions()->HasCreatedPantheon(getOwner()))
+	{
+		const CvReligion* pPantheon = GC.getGame().GetGameReligions()->GetReligion(RELIGION_PANTHEON, getOwner());
+		BeliefTypes ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(getOwner());
+		if (pPantheon != NULL && ePantheonBelief != NO_BELIEF && ePantheonBelief != eSecondaryPantheon)
+		{
+			const CvReligion* pReligion = GetCityReligions()->GetMajorityReligion();
+			if (pReligion == NULL || !pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eMajority, getOwner()))
+				iModifier += GC.GetGameBeliefs()->GetEntry(ePantheonBelief)->GetCityRangeStrikeModifier();
+		}
+	}
+	return iModifier;
+}
+
+//	--------------------------------------------------------------------------------
+// Vox Deorum: exposes the cached ranged strength for capture without recomputing combat rules.
+int CvCity::getStrengthValueRanged() const
+{
+	return m_iStrengthValueRanged;
+}
+
+//	--------------------------------------------------------------------------------
 int CvCity::GetPower() const
 {
 	VALIDATE_OBJECT();
@@ -27561,6 +27580,10 @@ void CvCity::setDamage(int iValue, bool noMessage)
 		iValue = 0;
 	else if (iValue > GetMaxHitPoints())
 		iValue = GetMaxHitPoints();
+
+	// Vox Deorum: capture city damage change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && iValue != m_iDamage)
+		VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
 
 	if (iValue != getDamage())
 	{
@@ -32390,6 +32413,11 @@ void CvCity::ChangeNumTimesAttackedThisTurn(PlayerTypes ePlayer, int iValue)
 	VALIDATE_OBJECT();
 	PRECONDITION(ePlayer >= 0, "ePlayer expected to be >= 0");
 	PRECONDITION(ePlayer < REALLY_MAX_PLAYERS, "ePlayer expected to be < NUM_DOMAIN_TYPES");
+
+	// Vox Deorum: capture city attack count change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteCityAttackCountChanged(getOwner(), GetID());
+
 	m_aiNumTimesAttackedThisTurn[ePlayer] = m_aiNumTimesAttackedThisTurn[ePlayer] + iValue;
 }
 int CvCity::GetNumTimesAttackedThisTurn(PlayerTypes ePlayer) const
@@ -32805,6 +32833,7 @@ int CvCity::rangeCombatDamage(const CvUnit* pDefender, bool bIncludeRand, const 
 }
 
 //	--------------------------------------------------------------------------------
+
 int CvCity::GetAirStrikeDefenseDamage(const CvUnit* pAttacker, bool bIncludeRand) const
 {
 	if (pAttacker && pAttacker->getForcedDamageValue() != 0)

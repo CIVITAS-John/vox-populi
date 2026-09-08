@@ -980,6 +980,7 @@ public:
 	bool ignoreTerrainCost() const;
 	int getIgnoreTerrainCostCount() const;
 	void changeIgnoreTerrainCostCount(int iValue);
+	const CvUnitPromotions& GetPromotions() const;
 
 	bool ignoreTerrainDamage() const;
 	int getIgnoreTerrainDamageCount() const;

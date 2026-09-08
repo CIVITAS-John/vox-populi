@@ -54,6 +54,8 @@
 #define LOG_UNIT_MOVES_MESSAGE_OSTR(x)	((void)0)
 #endif
 
+#include "VoxDeorumRL/VoxRlCapture.h"
+
 // Come back to this
 #include "LintFree.h"
 
@@ -1252,6 +1254,18 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 
 	if (MOD_EVENTS_UNIT_CREATED)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_UnitCreated, getOwner(), GetID(), getUnitType(), getX(), getY());
+
+	// Vox Deorum: capture marks the new unit after initialization completes;
+	// the creation may have consumed the plot, so the plot is marked too.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteUnitCreated(getOwner(), GetID());
+		CvPlot* pStartPlot = plot();
+		if (pStartPlot != NULL)
+		{
+			VoxRlCapture::GetInstance().NotePlotChanged(pStartPlot->GetPlotIndex());
+		}
+	}
 }
 
 
@@ -2531,6 +2545,13 @@ void CvUnit::kill(bool bDelay, PlayerTypes ePlayer /*= NO_PLAYER*/)
 	{
 		startDelayedDeath();
 		return;
+	}
+
+	// Vox Deorum: capture marks the actual unit deletion; delayed deaths
+	// mark here only when the deletion finally runs.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteUnitRemoved(getOwner(), GetID());
 	}
 
 	///////////////////////////////////////////////////////////////////////////////////////////////
@@ -16083,6 +16104,9 @@ int CvUnit::GetCombatModifierFromCapitalDistance(const CvPlot* pBattlePlot) cons
 
 //	--------------------------------------------------------------------------------
 /// What are the generic strength modifiers for this Unit?
+
+
+
 int CvUnit::GetGenericMeleeStrengthModifier(const CvUnit* pOtherUnit, const CvPlot* pBattlePlot, bool bAttacking,
 				bool bIgnoreUnitAdjacencyBoni, const CvPlot* pFromPlot, bool bQuickAndDirty) const
 {
@@ -16405,7 +16429,10 @@ int CvUnit::GetGenericMeleeStrengthModifier(const CvUnit* pOtherUnit, const CvPl
 
 //	--------------------------------------------------------------------------------
 /// What is the max strength of this Unit when attacking?
-int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender, 
+
+
+
+int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender,
 								bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
 {
 	VALIDATE_OBJECT();
@@ -16615,6 +16642,9 @@ int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot,
 
 //	--------------------------------------------------------------------------------
 /// What is the max strength of this Unit when defending?
+
+
+
 int CvUnit::GetMaxDefenseStrength(const CvPlot* pInPlot, const CvUnit* pAttacker, const CvPlot* pFromPlot,
 								bool bFromRangedAttack, bool bQuickAndDirty, int iAssumeExtraDamage) const
 {
@@ -16846,6 +16876,9 @@ void CvUnit::SetBaseRangedCombatStrength(int iStrength)
 
 
 //	--------------------------------------------------------------------------------
+
+
+
 int CvUnit::GetMaxRangedCombatStrength(const CvUnit* pOtherUnit, const CvCity* pCity, bool bAttacking,
 	const CvPlot* pMyPlot, const CvPlot* pOtherPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
 {
@@ -17459,6 +17492,9 @@ bool CvUnit::canAirDefend(const CvPlot* pPlot) const
 
 
 //	--------------------------------------------------------------------------------
+
+
+
 int CvUnit::GetAirCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand, int iAssumeExtraSelfDamage, int iAssumeExtraDefenderDamage,
 						const CvPlot* pTargetPlot, const CvPlot* pFromPlot, bool bQuickAndDirty) const
 {
@@ -17467,6 +17503,9 @@ int CvUnit::GetAirCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int
 
 
 //	--------------------------------------------------------------------------------
+
+
+
 int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand, int iAssumeExtraSelfDamage, int iAssumeExtraDefenderDamage,
 	const CvPlot* pTargetPlot, const CvPlot* pFromPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty) const
 {
@@ -17598,6 +17637,9 @@ int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, i
 	return iDamage;
 }
 
+
+
+
 int CvUnit::GetRangeCombatSplashDamage(const CvPlot* pTargetPlot) const
 {
 	int iTotal = 0;
@@ -17624,6 +17666,9 @@ int CvUnit::GetRangeCombatSplashDamage(const CvPlot* pTargetPlot) const
 
 	return iTotal;
 }
+
+
+
 
 int CvUnit::EstimatePlagueDamage(const CvUnit* pEnemy) const
 {
@@ -17658,6 +17703,9 @@ int CvUnit::EstimatePlagueDamage(const CvUnit* pEnemy) const
 
 
 //	--------------------------------------------------------------------------------
+
+
+
 int CvUnit::GetAirStrikeDefenseDamage(const CvUnit* pAttacker, bool bIncludeRand, const CvPlot* /*pTargetPlot*/) const
 {
 	//base value
@@ -17712,6 +17760,9 @@ int CvUnit::GetAirStrikeDefenseDamage(const CvUnit* pAttacker, bool bIncludeRand
 
 //	--------------------------------------------------------------------------------
 /// Amount of damage done by this unit when intercepting pAttacker
+
+
+
 int CvUnit::GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncludeRand, const CvPlot* pTargetPlot) const
 {
 	if (pTargetPlot == NULL)
@@ -17914,6 +17965,12 @@ void CvUnit::changeIgnoreTerrainCostCount(int iValue)
 	{
 		m_iIgnoreTerrainCostCount += iValue;
 	}
+}
+
+// Returns the unit's promotion state for callers that need native promotion rules.
+const CvUnitPromotions& CvUnit::GetPromotions() const
+{
+	return m_Promotions;
 }
 
 //	--------------------------------------------------------------------------------
@@ -20064,6 +20121,23 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 	if (at(iX, iY))
 		return;
 
+	// Vox Deorum: capture marks the moving unit and its old and new plot
+	// membership after the same-position guard.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+		CvPlot* pOldPlot = plot();
+		if (pOldPlot != NULL)
+		{
+			VoxRlCapture::GetInstance().NotePlotChanged(pOldPlot->GetPlotIndex());
+		}
+		CvPlot* pNewPlot = (iX == INVALID_PLOT_COORD || iY == INVALID_PLOT_COORD) ? NULL : GC.getMap().plot(iX, iY);
+		if (pNewPlot != NULL)
+		{
+			VoxRlCapture::GetInstance().NotePlotChanged(pNewPlot->GetPlotIndex());
+		}
+	}
+
 	ASSERT(!isFighting());
 	ASSERT((iX == INVALID_PLOT_COORD) || (GC.getMap().plot(iX, iY)->getX() == iX));
 	ASSERT((iY == INVALID_PLOT_COORD) || (GC.getMap().plot(iX, iY)->getY() == iY));
@@ -21311,6 +21385,10 @@ int CvUnit::setDamage(int iNewValue, PlayerTypes ePlayer, float fAdditionalTextD
 
 	if(iOldValue != getDamage())
 	{
+		// Vox Deorum: synchronize damage changes before the next captured search.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+
 		if(IsGarrisoned())
 		{
 			CvCity* pCity = GetGarrisonedCity();
@@ -21460,6 +21538,10 @@ int CvUnit::getMoves() const
 //	--------------------------------------------------------------------------------
 void CvUnit::setMoves(int iNewValue)
 {
+	// Vox Deorum: capture unit change marking for moves.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_iMoves != iNewValue)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+
 	if(m_iMoves != iNewValue)
 	{
 		m_iMoves = max(0,iNewValue);
@@ -25221,6 +25303,11 @@ bool CvUnit::isOutOfAttacks(bool bIgnoreMoves) const
 void CvUnit::setMadeAttack(bool bNewValue)
 {
 	VALIDATE_OBJECT();
+
+	// Vox Deorum: capture unit change marking for the attack flag.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && (bNewValue || m_iAttacksMade > 0))
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+
 	if(bNewValue)
 	{
 		m_iAttacksMade++;
@@ -26549,6 +26636,11 @@ void CvUnit::ChangeNumTimesAttackedThisTurn(PlayerTypes ePlayer, int iValue)
 	VALIDATE_OBJECT();
 	PRECONDITION(ePlayer >= 0, "ePlayer expected to be >= 0");
 	PRECONDITION(ePlayer < REALLY_MAX_PLAYERS, "ePlayer expected to be < NUM_DOMAIN_TYPES");
+
+	// Vox Deorum: capture unit attack count change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitAttackCountChanged(getOwner(), GetID());
+
 	m_aiNumTimesAttackedThisTurn[ePlayer] =  m_aiNumTimesAttackedThisTurn[ePlayer] + iValue;
 }
 int CvUnit::GetNumTimesAttackedThisTurn(PlayerTypes ePlayer) const
@@ -27718,6 +27810,9 @@ void CvUnit::setHasPromotion(PromotionTypes eIndex, bool bNewValue)
 			ModifyPlaguesToInflict(sPlaguesToInflict[ui], bNewValue);
 		}
 
+		// Vox Deorum: capture unit promotion change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteUnitPromotionsChanged(getOwner(), GetID());
 		m_Promotions.SetPromotion(eIndex, bNewValue);
 
 		if (thisPromotion.IsConditionalPromotion())

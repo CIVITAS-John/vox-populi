@@ -19,6 +19,7 @@
 #include "CvConnectionService.h"
 
 // must be included after all other headers
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "LintFree.h"
 
 // set this to 1 in debugger if needed
@@ -2405,6 +2406,13 @@ void CvMilitaryAI::UpdateOperations()
 	//only major players set up operations
 	if(!m_pPlayer->isMajorCiv())
 		return;
+
+	// Vox Deorum: recording capture builds CAMPAIGN at this operational
+	// seam, after precomputation and before maintenance and choices.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().OnCampaignSeam(m_pPlayer->GetID());
+	}
 
 	vector<CvCity*> allCities = m_pPlayer->GetThreatenedCities(false);
 	CvCity* pThreatenedCityA = allCities.size()<1 ? NULL : allCities[0];

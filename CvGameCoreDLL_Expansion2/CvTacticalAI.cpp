@@ -24,6 +24,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "LintFree.h"
 
 //for easier debugging
@@ -5824,7 +5825,19 @@ bool TacticalAIHelpers::PerformRangedOpportunityAttack(CvUnit* pUnit, bool bAllo
 		//no loop needed, there is only one unit anyway
 		set<int> dummy;
 		gTargetPlot = pUnit->plot();
-		vector<STacticalAssignment> vAssignments = TacticalAIHelpers::FindBestUnitAssignments(vector<CvUnit*>(1, pUnit), pUnit->plot(), AL_LOW, dummy, false, !bAllowMovement, bSaveMovement);
+		// Vox Deorum: the capture adapter runs the same single-unit search
+		// with its exact caller flags and movement restrictions.
+		vector<STacticalAssignment> vAssignments;
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_OPPORTUNITY,
+				pUnit->getOwner(), vector<CvUnit*>(1, pUnit), pUnit->plot(), static_cast<int>(AL_LOW),
+				dummy, false, !bAllowMovement, bSaveMovement);
+		}
+		else
+		{
+			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(vector<CvUnit*>(1, pUnit), pUnit->plot(), AL_LOW, dummy, false, !bAllowMovement, bSaveMovement);
+		}
 		if (vAssignments.empty())
 			return false;
 
@@ -12097,11 +12110,29 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 	set<int> unuseableUnits;
 	vector<CvUnit*> currentUnits = vUnits;
 	TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer, pTarget);
+	// Vox Deorum: open the capture engagement scope for this caller; every
+	// retry attempt inside the loop joins the same decision id.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().BeginEngagement(VOX_RL_CALLER_FULL, ePlayer);
+	}
 	do
 	{
 		iCount++;
 
-		vector<STacticalAssignment> vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true);
+		// Vox Deorum: the capture adapter flushes synchronization inputs,
+		// builds the decision request, invokes the same native search once,
+		// and snapshots the result before execution.
+		vector<STacticalAssignment> vAssignments;
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, ePlayer,
+				currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, true, false, 0);
+		}
+		else
+		{
+			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true);
+		}
 		if (vAssignments.empty())
 		{
 			if (unuseableUnits.size()>0 && currentUnits.size()>unuseableUnits.size())
@@ -12119,12 +12150,25 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 				break; //give up
 		}
 		else
+		{
 			//restarts might happen when new enemies become visible
 			bSuccess = TacticalAIHelpers::ExecuteUnitAssignments(vUnits.front()->getOwner(), vAssignments);
+			// Vox Deorum: the execution result feeds the next retry's
+			// outcome metadata.
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			{
+				VoxRlCapture::GetInstance().NoteExecutionResult(bSuccess);
+			}
+		}
 	}
 	while (!bSuccess && iCount < 4);
 
 	gDistanceToTargetPlots.clear();
+	// Vox Deorum: close the capture engagement scope.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().EndEngagement();
+	}
 
 	return bSuccess;
 }
@@ -12978,4 +13022,3 @@ const char* assignmentTypeNames[] =
 	"HEAL",
 	"WAIT"
 };
-

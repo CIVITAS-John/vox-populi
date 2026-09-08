@@ -20,6 +20,7 @@
 #include "CvMilitaryAI.h"
 #include "CvMinorCivAI.h"
 #include "CvNotifications.h"
+#include "VoxDeorumRL/VoxRlCapture.h"
 
 // must be included after all other headers
 #include "LintFree.h"
@@ -5467,6 +5468,10 @@ void CvDiplomacyAI::ChangeOtherPlayerNumMinorsAttacked(PlayerTypes ePlayer, int 
 	if (GET_PLAYER(ePlayer).IsVassalOfSomeone())
 		return;
 
+	// Vox Deorum: capture player resistance change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NotePlayerResistanceChanged(GetID(), ePlayer);
+
 	SetOtherPlayerNumMinorsAttacked(ePlayer, GetOtherPlayerNumMinorsAttacked(ePlayer) + iChange);
 
 	int iWarmongerValueTimes100 = CvDiplomacyAIHelpers::GetWarmongerTriggerPenalty(ePlayer, eAttackedTeam, GetID(), WARMONGER_MINOR_ATTACKED) * 100;
@@ -5554,6 +5559,10 @@ void CvDiplomacyAI::ChangeOtherPlayerNumMajorsAttacked(PlayerTypes ePlayer, int 
 				return;
 		}
 	}
+
+	// Vox Deorum: capture player resistance change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NotePlayerResistanceChanged(GetID(), ePlayer);
 
 	SetOtherPlayerNumMajorsAttacked(ePlayer, GetOtherPlayerNumMajorsAttacked(ePlayer) + iChange);
 
@@ -8082,6 +8091,10 @@ void CvDiplomacyAI::SetNumTimesNuked(PlayerTypes ePlayer, int iValue)
 
 void CvDiplomacyAI::ChangeNumTimesNuked(PlayerTypes ePlayer, int iChange)
 {
+	// Vox Deorum: capture player resistance change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NotePlayerResistanceChanged(GetID(), ePlayer);
+
 	SetNumTimesNuked(ePlayer, GetNumTimesNuked(ePlayer) + iChange);
 
 	// and do diplo...

@@ -15,6 +15,7 @@
 #include "CvMinorCivAI.h"
 
 // must be included after all other headers
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "LintFree.h"
 #ifdef _MSC_VER
 #pragma warning ( disable : 4505 ) // unreferenced local function has been removed.. needed by REMARK below
@@ -135,6 +136,11 @@ void CvDangerPlots::UpdateDanger()
 		}
 	}
 
+	// Vox Deorum: stage inputs once before either native refresh path.
+	#if defined(MOD_IPC_CHANNEL)
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) VoxRlCapture::GetInstance().OnDangerRefreshBegin(*this);
+	#endif
+
 	//two pass danger is dangerous ... it might happen that a covering unit moves away, leaving other exposed
 	if (MOD_COMBATAI_TWO_PASS_DANGER)
 	{
@@ -154,13 +160,20 @@ void CvDangerPlots::UpdateDanger()
 
 		//second pass
 		if (!plotsWithOwnedUnitsLikelyToBeKilled.empty())
+		{
 			UpdateDangerInternal(plotsWithOwnedUnitsLikelyToBeKilled, false, true); //turn change already processed
+		}
 	}
 	else
 	{
 		PlotIndexContainer dummy;
 		UpdateDangerInternal(dummy, bTurnChange, bWarChange);
 	}
+
+	// Vox Deorum: the complete refresh publishes its staged request.
+	#if defined(MOD_IPC_CHANNEL)
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) VoxRlCapture::GetInstance().OnDangerRefreshComplete(*this);
+	#endif
 }
 
 //fog of war is dangerous, but we don't know whether we will take the damage or not ...
@@ -413,8 +426,17 @@ bool CvDangerPlots::AddKnownAttacker(const CvUnit* pUnit)
 	if (IsKnownAttacker(pUnit))
 		return false;
 
+	// Vox Deorum: capture stages the discovery inputs immediately before
+	// AddKnownAttacker consumes them, and records the incremental
+	// operation in knownAttackerRange after the call.
+	#if defined(MOD_IPC_CHANNEL)
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) VoxRlCapture::GetInstance().OnDangerDiscoveryBegin(*this, pUnit);
+	#endif
 	UpdateDangerSingleUnit(pUnit, false, PlotIndexContainer()); //for simplicity, assume no ZOC by owned units
 	m_knownUnits.insert(std::make_pair(pUnit->getOwner(), pUnit->GetID()));
+	#if defined(MOD_IPC_CHANNEL)
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) VoxRlCapture::GetInstance().OnDangerDiscoveryEnd(*this);
+	#endif
 	return true;
 }
 
@@ -606,6 +628,12 @@ FDataStream& operator<<(FDataStream& stream, const CvDangerPlots& dangerPlots)
 void CvDangerPlots::SetDirty()
 {
 	m_bDirty = true;
+
+	// Vox Deorum: capture records the pending dirty danger event; the next
+	// refresh consumes it.
+	#if defined(MOD_IPC_CHANNEL)
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) VoxRlCapture::GetInstance().NoteDangerDirty(m_ePlayer);
+	#endif
 }
 
 // Get the maximum damage a non-specified unit could receive at this plot in the next turn

@@ -130,6 +130,11 @@ public:
 	void SetOperationID(int iID) { m_iOperationID = iID; }
 	inline int GetOperationID() const { return m_iOperationID; }
 
+	// Vox Deorum: read-only accessors for the stored operational snapshot fields.
+	MultiunitFormationTypes GetFormationType() const { return m_eFormation; }
+	int GetGoalX() const { return m_iGoalX; }
+	int GetGoalY() const { return m_iGoalY; }
+
 	// Formation accessors
 	CvMultiUnitFormationInfo* GetFormation() const;
 	void SetFormation(MultiunitFormationTypes eFormation);

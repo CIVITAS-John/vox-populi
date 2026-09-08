@@ -259,6 +259,10 @@ public:
 	void Extend(CvPlot* pPlot);
 	int GetCenterX() const { return (m_iAvgX+500)/1000; }
 	int GetCenterY() const { return (m_iAvgY+500)/1000; }
+	// Vox Deorum: capture retains the native fixed-point average instead of
+	// the rounded display coordinate returned by GetCenterX and GetCenterY.
+	int GetAverageX() const { return m_iAvgX; }
+	int GetAverageY() const { return m_iAvgY; }
 	int GetNumPlots() const { return m_iPlotCount; }
 	const std::vector<int>& GetNeighboringZones() const { return m_vNeighboringZones; }
 	void AddNeighboringZone(int iZoneID);
@@ -324,6 +328,22 @@ public:
 	bool IsInEnemyDominatedZone(const CvPlot* pPlot);
 	int GetNumZones();
 	int GetMaxZoneRadius() const { return 5; }
+
+	// Vox Deorum: narrow capture reads of the stored zone table without
+	// triggering a refresh. The zone data remains from the last build, which
+	// is exactly the state native holds between invalidation and its next
+	// lazy rebuild.
+	int GetNumZonesWithoutRefresh() const { return static_cast<int>(m_vDominanceZones.size()); }
+	int GetDominanceZoneIDWithoutRefresh(int iPlotIndex) const
+	{
+		if (iPlotIndex < 0 || static_cast<size_t>(iPlotIndex) >= m_vPlotZoneID.size()) return -1;
+		return m_vPlotZoneID[iPlotIndex];
+	}
+	const CvTacticalDominanceZone* GetZoneByIndexWithoutRefresh(int iIndex) const
+	{
+		if (iIndex < 0 || static_cast<size_t>(iIndex) >= m_vDominanceZones.size()) return NULL;
+		return &m_vDominanceZones[iIndex];
+	}
 
 protected:
 	void CreateDominanceZones();

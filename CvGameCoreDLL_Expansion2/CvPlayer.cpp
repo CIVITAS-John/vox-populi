@@ -61,6 +61,7 @@
 #include "CvGoodyHuts.h"
 
 #include "CvDllNetMessageExt.h"
+#include "VoxDeorumRL/VoxRlCapture.h"
 // Include this after all other headers.
 #define LINT_WARNINGS_ONLY
 #include "LintFree.h"
@@ -10272,6 +10273,12 @@ void CvPlayer::doTurnPostDiplomacy()
 		UpdatePlots();
 		UpdateAreaEffectUnits();
 		UpdateAreaEffectPlots();
+		// Vox Deorum: recording capture builds WORLD at this supported
+		// pre-refresh checkpoint, immediately before the danger refresh.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().OnPreDangerCheckpoint(GetID());
+		}
 		UpdateDangerPlots();
 		GetTacticalAI()->GetTacticalAnalysisMap()->Invalidate();
 		UpdateMilitaryStats();
@@ -40784,6 +40791,10 @@ CvCity* CvPlayer::addCity()
 
 void CvPlayer::deleteCity(int iID)
 {
+	// Vox Deorum: capture city removal marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteCityRemoved(GetID(), iID);
+
 	m_cities.Remove(iID);
 	m_iNumUnitsSuppliedCached = -1;
 	m_iNumUnitsSuppliedCachedWarWeariness = -1;
@@ -41177,6 +41188,10 @@ CvUnit* CvPlayer::addUnit()
 
 void CvPlayer::deleteUnit(int iID)
 {
+	// Vox Deorum: capture unit removal marking; the owner is this player.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitRemoved(GetID(), iID);
+
 	if(GC.getGame().isNetworkMultiPlayer())
 	{
 		CvUnit* pUnit = m_units.Get(iID);
@@ -45591,6 +45606,10 @@ void CvPlayer::UpdateAreaEffectUnit(CvUnit* pUnit)
 	if (!pPlot)
 		return;
 
+	// Vox Deorum: capture interceptor cache change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteInterceptorCacheChanged(GetID());
+
 	if (pUnit->IsCombatSupportUnit())
 	{
 		bool bFound = false;
@@ -45668,6 +45687,10 @@ void CvPlayer::UpdateAreaEffectUnit(CvUnit* pUnit)
 
 void CvPlayer::UpdateAreaEffectUnits()
 {
+	// Vox Deorum: capture interceptor cache change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteInterceptorCacheChanged(GetID());
+
 	//great generals/admirals
 	m_unitsAreaEffectPositive.clear();
 	//maori warrior et al

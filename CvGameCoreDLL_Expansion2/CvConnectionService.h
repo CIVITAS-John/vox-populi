@@ -74,6 +74,11 @@ public:
 	
 	// Save state (can be called when game is being saved)
 	void SerializeEventSequence();
+
+	// Vox Deorum: read the persisted game UUID from the Deorum save-data
+	// table for recording capture identity. Returns false when the table or
+	// the ID is absent, which leaves capture unarmed until the next retry.
+	bool TryReadGameUuid(std::string& uuidText);
 	
 	// Broadcast a custom event with JSON payload
 	void BroadcastEvent(const char* eventName, const DynamicJsonDocument& payload);

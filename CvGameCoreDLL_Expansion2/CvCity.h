@@ -1477,6 +1477,10 @@ public:
 
 	void updateStrengthValue();
 	int getStrengthValue(bool bForRangeStrike = false, bool bIgnoreBuildings = false, const CvUnit* pDefender = NULL, bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL) const;
+	// Vox Deorum: exposes the cached ranged strength for capture without recomputing combat rules.
+	int getStrengthValueRanged() const;
+	// Vox Deorum: calculates the effective religion modifier used by city range strikes.
+	int GetCityBeliefRangeStrikeModifier() const;
 	int GetPower() const;
 
 	int getDamage() const;

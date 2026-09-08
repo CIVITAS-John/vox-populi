@@ -169,6 +169,14 @@ public:
 	const char* GetOperationName() const;
 	CvArmyAI* GetArmy(size_t iIndex) const;
 
+	// Vox Deorum: read-only accessors for the stored operational snapshot fields.
+	const std::vector<int>& GetArmyIDs() const { return m_viArmyIDs; }
+	int GetMusterX() const { return m_iMusterX; }
+	int GetMusterY() const { return m_iMusterY; }
+	int GetTargetX() const { return m_iTargetX; }
+	int GetTargetY() const { return m_iTargetY; }
+	int GetDistanceMusterToTarget() const { return m_iDistanceMusterToTarget; }
+
 	bool HasTargetPlot() const { return (m_iTargetX != INVALID_PLOT_COORD && m_iTargetY != INVALID_PLOT_COORD); }
 	bool HasMusterPlot() const { return (m_iMusterX != INVALID_PLOT_COORD && m_iMusterY != INVALID_PLOT_COORD); }
 

@@ -69,6 +69,7 @@
 
 // Public Functions...
 // must be included after all other headers
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "LintFree.h"
 
 int GetNextGlobalID() { return GC.getGame().GetNextGlobalID(); }
@@ -1099,6 +1100,12 @@ void CvGame::DoGameStarted()
 		// Initialize ConnectionService for Bridge communication
 		CvConnectionService::GetInstance().Setup();
 	}
+
+	// Vox Deorum: a game start or load resets recording capture state; the
+	// identity is re-read from the loaded save at the next checkpoint.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) {
+		VoxRlCapture::GetInstance().OnGameStartOrLoad();
+	}
 }
 
 
@@ -1109,6 +1116,11 @@ void CvGame::uninit()
 	if (MOD_IPC_CHANNEL) {
 		// Shutdown ConnectionService for Bridge communication
 		CvConnectionService::GetInstance().Shutdown();
+	}
+
+	// Vox Deorum: close the recording capture segment at teardown.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) {
+		VoxRlCapture::GetInstance().Shutdown();
 	}
 
 	CvGoodyHuts::Uninit();
@@ -6768,6 +6780,11 @@ void CvGame::setWinner(TeamTypes eNewWinner, VictoryTypes eNewVictory)
 					LogGameResult(pkVictoryInfo->GetText(), kWinningTeamLeader.getCivilizationShortDescription());
 					// MODMOD: log Victory as an event.
 					if (MOD_IPC_CHANNEL) {
+						// Vox Deorum: conclude the RL capture before the victory
+						// event reaches the pipeline, so the archive can move
+						// the recording with the file handles released.
+						if (gVoxRlCaptureEnabled)
+							VoxRlCapture::GetInstance().OnGameConcluded();
 						ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
 						if (pkScriptSystem)
 						{

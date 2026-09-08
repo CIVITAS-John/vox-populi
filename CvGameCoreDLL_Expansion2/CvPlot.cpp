@@ -35,6 +35,7 @@
 #include "CvUnitMovement.h"
 #include "CvTargeting.h"
 #include "CvTypes.h"
+#include "VoxDeorumRL/VoxRlCapture.h"
 // Include this after all other headers.
 #include "LintFree.h"
 
@@ -5716,6 +5717,9 @@ void CvPlot::setArea(int iNewValue)
 {
 	if(getArea() != iNewValue)
 	{
+		// Vox Deorum: capture topology invalidation marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteTopologyInvalidated();
 		if(area() != NULL)
 		{
 			processArea(area(), -1);
@@ -5741,6 +5745,9 @@ void CvPlot::setLandmass(int iNewValue)
 {
 	if(m_iLandmass != iNewValue)
 	{
+		// Vox Deorum: capture topology invalidation marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteTopologyInvalidated();
 		// cleanup old one
 		CvLandmass* pLandmass = GC.getMap().getLandmassById(m_iLandmass);
 		if(pLandmass != NULL)
@@ -6275,6 +6282,10 @@ void CvPlot::setNEOfRiver(bool bNewValue, FlowDirectionTypes eRiverDir)
 
 	ASSERT(eRiverDir == FLOWDIRECTION_SOUTHEAST || eRiverDir == FLOWDIRECTION_NORTHWEST || eRiverDir == NO_FLOWDIRECTION, "setting invalid flow direction");
 
+	// Vox Deorum: capture topology invalidation marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteTopologyInvalidated();
+
 	// This adds or removes a river segment
 	if (isNEOfRiver() != bNewValue)
 	{
@@ -6323,6 +6334,10 @@ void CvPlot::setWOfRiver(bool bNewValue, FlowDirectionTypes eRiverDir)
 
 	ASSERT(eRiverDir == FLOWDIRECTION_NORTH || eRiverDir == FLOWDIRECTION_SOUTH || eRiverDir == NO_FLOWDIRECTION, "setting invalid flow direction");
 
+	// Vox Deorum: capture topology invalidation marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteTopologyInvalidated();
+
 	// This adds or removes a river segment
 	if (isWOfRiver() != bNewValue)
 	{
@@ -6370,6 +6385,10 @@ void CvPlot::setNWOfRiver(bool bNewValue, FlowDirectionTypes eRiverDir)
 		return;
 
 	ASSERT(eRiverDir == FLOWDIRECTION_NORTHEAST || eRiverDir == FLOWDIRECTION_SOUTHWEST || eRiverDir == NO_FLOWDIRECTION, "setting invalid flow direction");
+
+	// Vox Deorum: capture topology invalidation marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteTopologyInvalidated();
 
 	// This adds or removes a river segment
 	if (isNWOfRiver() != bNewValue)
@@ -6581,6 +6600,13 @@ void CvPlot::updatePotentialCityWork()
 //	--------------------------------------------------------------------------------
 void CvPlot::setOwner(PlayerTypes eNewValue, int iAcquiringCityID, bool bCheckUnits, bool, bool bFoundingCity)
 {
+	// Vox Deorum: capture plot and passability change marking for ownership.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+		VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
+	}
+
 	CvString strBuffer;
 	int iI = 0;
 	
@@ -7218,6 +7244,13 @@ void CvPlot::setPlotType(PlotTypes eNewValue, bool bRecalculate, bool bRebuildGr
 
 	if(getPlotType() != eNewValue)
 	{
+		// Vox Deorum: capture topology and passability change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NoteTopologyInvalidated();
+			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
+		}
+
 		if((getPlotType() == PLOT_OCEAN) || (eNewValue == PLOT_OCEAN))
 		{
 			erase(bEraseUnitsIfWater);
@@ -7463,6 +7496,13 @@ void CvPlot::setTerrainType(TerrainTypes eNewValue, bool bRecalculate, bool bReb
 
 	if(eOldValue != eNewValue)
 	{
+		// Vox Deorum: capture topology and passability change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NoteTopologyInvalidated();
+			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
+		}
+
 		bUpdateSight = (getTerrainType() != NO_TERRAIN) &&
 		        (eNewValue != NO_TERRAIN) &&
 		        ((GC.getTerrainInfo(getTerrainType())->getSeeFromLevel() != GC.getTerrainInfo(eNewValue)->getSeeFromLevel()) ||
@@ -7559,6 +7599,13 @@ void CvPlot::setFeatureType(FeatureTypes eNewValue)
 
 	if (eOldFeature != eNewValue)
 	{
+		// Vox Deorum: capture plot and passability change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
+		}
+
 		// Force flood plains on river desert if it becomes featureless
 		if (eNewValue == NO_FEATURE && getTerrainType() == TERRAIN_DESERT && isRiver())
 		{
@@ -7775,6 +7822,10 @@ void CvPlot::setResourceType(ResourceTypes eNewValue, int iResourceNum, bool bFo
 	ResourceTypes eOldValue = (ResourceTypes)m_eResourceType;
 	if(eOldValue != eNewValue)
 	{
+		// Vox Deorum: capture plot change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+
 		if (eNewValue != NO_RESOURCE)
 		{
 			CvResourceInfo* pkResourceInfo = GC.getResourceInfo(eNewValue);
@@ -8197,6 +8248,13 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 
 	if (eOldImprovement != eNewValue)
 	{
+		// Vox Deorum: capture plot and passability change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
+		}
+
 		PlayerTypes eOldBuilder = GetPlayerThatBuiltImprovement();
 
 		// If old improvement was a gift, it ignored our tech limits, so be sure to remove resources properly
@@ -9121,6 +9179,10 @@ void CvPlot::SetImprovementPillaged(bool bPillaged, bool bEvents)
 
 	if (bPillaged != bWasPillaged)
 	{
+		// Vox Deorum: capture plot change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+
 		m_bImprovementPillaged = bPillaged;
 
 		calculateAdditionalUnitsFromImprovement();
@@ -9352,6 +9414,10 @@ void CvPlot::setRouteType(RouteTypes eNewValue, PlayerTypes eBuilder)
 
 	if(eOldRoute != eNewValue || IsRoutePillaged())
 	{
+		// Vox Deorum: capture plot change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+
 		// Remove old effects
 		if(eOldRoute != NO_ROUTE && !isCity())
 		{
@@ -9414,6 +9480,10 @@ void CvPlot::SetRoutePillaged(bool bPillaged, bool bEvents)
 {
 	if (m_bRoutePillaged != bPillaged)
 	{
+		// Vox Deorum: capture plot change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+
 		for(int iI = 0; iI < MAX_TEAMS; ++iI)
 		{
 			if ( GET_TEAM((TeamTypes)iI).isObserver() || ((GET_TEAM((TeamTypes)iI).isAlive()) && GC.getGame().getActiveTeam() == (TeamTypes)iI) )
@@ -9984,6 +10054,10 @@ int CvPlot::getReconCount() const
 //	--------------------------------------------------------------------------------
 void CvPlot::changeReconCount(int iChange)
 {
+	// Vox Deorum: capture plot change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+
 	m_iReconCount = (m_iReconCount + iChange);
 	ASSERT(getReconCount() >= 0);
 }
@@ -11531,6 +11605,14 @@ PlotVisibilityChangeResult CvPlot::changeVisibilityCount(TeamTypes eTeam, int iC
 	// Apparently it's legal to decrease sight below zero - so catch that
 	m_aiVisibilityCount[eTeam] = max(0, m_aiVisibilityCount[eTeam] + iChange);
 
+	// Vox Deorum: capture the visible bit flip when the count crosses zero.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		const bool voxVisibleAfter = (m_aiVisibilityCount[eTeam] > 0);
+		if (voxVisibleAfter != bOldVisibility)
+			VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 1, voxVisibleAfter);
+	}
+
 	// Remember the maximum
 	m_aiVisibilityCountThisTurnMax[eTeam] = max(m_aiVisibilityCountThisTurnMax[eTeam], m_aiVisibilityCount[eTeam]);
 
@@ -11764,6 +11846,13 @@ bool CvPlot::setRevealedOwner(TeamTypes eTeam, PlayerTypes eNewValue)
 	PRECONDITION(eTeam >= 0, "eTeam is expected to be non-negative (invalid Index)");
 	PRECONDITION(eTeam < MAX_TEAMS, "eTeam is expected to be within maximum bounds (invalid Index)");
 
+	// Vox Deorum: capture override change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		if (getRevealedOwner(eTeam) != eNewValue)
+			VoxRlCapture::GetInstance().NoteRevealedOverrideChanged(eTeam, GetPlotIndex(), false);
+	}
+
 	if(getRevealedOwner(eTeam, false) != eNewValue)
 	{
 		m_aiRevealedOwner[eTeam] = eNewValue;
@@ -11966,6 +12055,15 @@ void CvPlot::IncreaseKnownVisibilityCount(TeamTypes eTeam, TeamTypes eTeam2)
 {
 	PRECONDITION(eTeam >= 0, "eTeam is expected to be non-negative (invalid Index)");
 	PRECONDITION(eTeam < MAX_TEAMS, "eTeam is expected to be within maximum bounds (invalid Index)");
+
+	// Vox Deorum: capture the known-visible bit flip.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 2, true);
+		if (eTeam2 != NO_TEAM)
+			VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam2, GetPlotIndex(), 2, true);
+	}
+
 	m_aiKnownVisibilityCount[eTeam]++;
 	if (eTeam2 != NO_TEAM)
 		m_aiKnownVisibilityCount[eTeam2]++;
@@ -11973,6 +12071,16 @@ void CvPlot::IncreaseKnownVisibilityCount(TeamTypes eTeam, TeamTypes eTeam2)
 
 void CvPlot::ResetKnownVisibility()
 {
+	// Vox Deorum: capture the reset as known-visible flips for teams whose bit clears.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		for (int voxTeam = 0; voxTeam < MAX_TEAMS; ++voxTeam)
+		{
+			if (GetKnownVisibilityCount(static_cast<TeamTypes>(voxTeam)) > 0)
+				VoxRlCapture::GetInstance().NoteVisibilityChanged(static_cast<TeamTypes>(voxTeam), GetPlotIndex(), 2, false);
+		}
+	}
+
 	for (int iI = 0; iI < MAX_PLAYERS; iI++)
 	{
 		m_aiKnownVisibilityCount[iI] = 0;
@@ -11992,6 +12100,11 @@ void CvPlot::SetTeamImpassable(TeamTypes eTeam, bool bValue)
 {
 	PRECONDITION(eTeam >= 0, "eTeam is expected to be non-negative (invalid Index)");
 	PRECONDITION(eTeam < REALLY_MAX_TEAMS, "eTeam is expected to be within maximum bounds (invalid Index)");
+
+	// Vox Deorum: capture passability change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_abIsImpassable[eTeam] != bValue)
+		VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
+
 	m_abIsImpassable[eTeam] = bValue;
 }
 //	--------------------------------------------------------------------------------
@@ -12010,6 +12123,13 @@ bool CvPlot::setRevealed(TeamTypes eTeam, bool bNewValue, CvUnit* pUnit, bool bT
 
 	bool bVisibilityUpdated = false;
 	bool bRevealed = isRevealed(eTeam) != bNewValue;
+
+	// Vox Deorum: capture the revealed bit flip.
+	if (bRevealed)
+	{
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 0, bNewValue);
+	}
 
 	if (bRevealed)
 	{
@@ -12513,6 +12633,13 @@ bool CvPlot::setRevealedImprovementType(TeamTypes eTeam, ImprovementTypes eNewVa
 	if (eNewValue < NO_IMPROVEMENT) return false;
 	if (eNewValue > NO_IMPROVEMENT && GC.getImprovementInfo(eNewValue) == NULL) return false;
 
+	// Vox Deorum: capture override change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		if (getRevealedImprovementType(eTeam) != eNewValue)
+			VoxRlCapture::GetInstance().NoteRevealedOverrideChanged(eTeam, GetPlotIndex(), false);
+	}
+
 	ImprovementTypes eOldImprovementType = getRevealedImprovementType(eTeam);
 	if(eOldImprovementType != eNewValue)
 	{
@@ -12568,6 +12695,13 @@ bool CvPlot::setRevealedRouteType(TeamTypes eTeam, RouteTypes eNewValue)
 
 	if (eNewValue < NO_ROUTE) return false;
 	if (eNewValue > NO_ROUTE && GC.getRouteInfo(eNewValue) == NULL) return false;
+
+	// Vox Deorum: capture override change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		if (getRevealedRouteType(eTeam) != eNewValue)
+			VoxRlCapture::GetInstance().NoteRevealedOverrideChanged(eTeam, GetPlotIndex(), false);
+	}
 
 	if(getRevealedRouteType(eTeam, false) != eNewValue)
 	{
@@ -13016,6 +13150,11 @@ void CvPlot::changeInvisibleVisibilityCountUnit(TeamTypes eTeam, int iChange)
 		//--------
 
 		bNewInvisibleVisible = isInvisibleVisibleUnit(eTeam);
+
+		// Vox Deorum: capture the invisible-visible bit flip.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && bOldInvisibleVisible != bNewInvisibleVisible)
+			VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 3, bNewInvisibleVisible);
+
 		if (bOldInvisibleVisible != bNewInvisibleVisible)
 		{
 			TeamTypes activeTeam = GC.getGame().getActiveTeam();
@@ -13259,6 +13398,9 @@ bool CvPlot::IsRestoreMoves() const
 void CvPlot::ChangeRestoreMovesCount(int iValue)
 {
 	VALIDATE_OBJECT();
+	// Vox Deorum: capture plot change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
 	m_iRestoreMoves += iValue;
 }
 bool CvPlot::IsFreeMoveAcross() const
@@ -14387,6 +14529,10 @@ char CvPlot::GetContinentType() const
 //	--------------------------------------------------------------------------------
 void CvPlot::SetContinentType(const char cContinent)
 {
+	// Vox Deorum: capture topology invalidation marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteTopologyInvalidated();
+
 	if (MOD_EVENTS_TERRAFORMING)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_TerraformingPlot, TERRAFORMINGEVENT_CONTINENT, m_iX, m_iY, 0, cContinent, m_cContinentType, -1, -1);
 

@@ -35,6 +35,7 @@
 #include "CvDllNetMessageExt.h"
 
 #include "CvDllUnit.h"
+#include "VoxDeorumRL/VoxRlCapture.h"
 
 #include "LintFree.h"
 
@@ -4065,6 +4066,10 @@ void CvTeam::makeHasMet(TeamTypes eIndex, bool bSuppressMessages)
 	if (isHasMet(eIndex) || eIndex==NO_TEAM)
 		return;
 
+	// Vox Deorum: capture team relation change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
+
 	m_abHasMet[eIndex] = true;
 	SetTurnTeamMet(eIndex, GC.getGame().getGameTurn());
 
@@ -4317,6 +4322,10 @@ void CvTeam::setAtWar(TeamTypes eIndex, bool bNewValue, bool bAggressorPacifier)
 	ASSERT(eIndex != GetID() || bNewValue == false, "Team is setting war with itself!");
 	if (eIndex == GetID())
 		return;
+
+	// Vox Deorum: capture war state change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_abAtWar[eIndex] != bNewValue)
+		VoxRlCapture::GetInstance().NoteWarStateChanged(GetID(), eIndex);
 
 	m_abAggressorPacifier[eIndex] = bAggressorPacifier;
 	m_abAtWar[eIndex] = bNewValue;
@@ -4812,6 +4821,10 @@ void CvTeam::SetAllowsOpenBordersToTeam(TeamTypes eIndex, bool bNewValue)
 
 	if (IsAllowsOpenBordersToTeam(eIndex) != bNewValue)
 	{
+		// Vox Deorum: capture team relation change marking.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
+
 		m_abOpenBorders[eIndex] = bNewValue;
 
 		for (int iPlayerLoop = 0; iPlayerLoop < MAX_PLAYERS; iPlayerLoop++)
@@ -4998,6 +5011,11 @@ void CvTeam::setForcePeace(TeamTypes eIndex, bool bNewValue)
 {
 	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
 	PRECONDITION(eIndex < MAX_TEAMS, "eIndex is expected to be within maximum bounds (invalid Index)");
+
+	// Vox Deorum: capture team relation change marking.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_abForcePeace[eIndex] != bNewValue)
+		VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
+
 	m_abForcePeace[eIndex] = bNewValue;
 }
 

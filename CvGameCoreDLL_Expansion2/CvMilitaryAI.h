@@ -211,6 +211,15 @@ public:
 		return m_iRecLandUnits + m_iRecNavalUnits + m_iRecExplorerUnits;
 	};
 
+	// Vox Deorum: read-only accessors for stored military AI state.
+	const std::vector<CvAttackTarget>& GetPotentialAttackTargets() const { return m_potentialAttackTargets; }
+	const std::vector<CvAttackTarget>& GetExposedCities() const { return m_exposedCities; }
+	int GetNumLandUnitsInArmies() const { return m_iNumLandUnitsInArmies; }
+	int GetNumNavalUnitsInArmies() const { return m_iNumNavalUnitsInArmies; }
+	int GetRecommendedLandUnits() const { return m_iRecLandUnits; }
+	int GetRecommendedNavalUnits() const { return m_iRecNavalUnits; }
+	int GetRecommendedExplorerUnits() const { return m_iRecExplorerUnits; }
+
 	int GetPowerOfStrongestBuildableUnit(DomainTypes eDomain);
 	bool HasAirforce() const
 	{
