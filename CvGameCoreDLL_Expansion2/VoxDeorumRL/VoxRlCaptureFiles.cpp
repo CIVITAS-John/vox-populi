@@ -8,6 +8,19 @@
 
 namespace
 {
+	// Creates the directory chain holding one file. Output opens go through
+	// this so directories appear only when a file is about to be written and
+	// a never-publishing capture leaves no empty folders behind.
+	bool CreateDirectoriesForFile(const char* utf8Path)
+	{
+		std::string parent;
+		if (!VoxRlStripLastPathComponent(utf8Path, parent))
+		{
+			// A bare file name has no parent directory to create.
+			return true;
+		}
+		return VoxRlCreateDirectories(parent.c_str());
+	}
 }
 
 bool VoxRlUtf8ToWide(const char* utf8Path, std::wstring& widePath)
@@ -142,6 +155,10 @@ VoxRlOutputFile::~VoxRlOutputFile()
 bool VoxRlOutputFile::OpenNew(const char* utf8Path)
 {
 	Close();
+	if (!CreateDirectoriesForFile(utf8Path))
+	{
+		return false;
+	}
 	std::wstring widePath;
 	if (!VoxRlUtf8ToWide(utf8Path, widePath))
 	{
@@ -161,6 +178,10 @@ bool VoxRlOutputFile::OpenNew(const char* utf8Path)
 bool VoxRlOutputFile::OpenAppend(const char* utf8Path)
 {
 	Close();
+	if (!CreateDirectoriesForFile(utf8Path))
+	{
+		return false;
+	}
 	std::wstring widePath;
 	if (!VoxRlUtf8ToWide(utf8Path, widePath))
 	{

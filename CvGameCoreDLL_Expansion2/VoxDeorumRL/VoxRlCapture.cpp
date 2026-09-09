@@ -73,6 +73,8 @@ struct VoxRlCapture::Segment
 	std::vector<unsigned char> pendingBytes;
 	// The checkpoint WORLD is retained until the campaign seam permits
 	// publication, so unpublished observers leave no WORLD file behind.
+	// Directories follow the same rule: they are created only when a file
+	// is about to be written.
 	std::vector<unsigned char> worldBytes;
 	VoxRlZoneSnapshot zoneSnapshot;
 	unsigned int pendingCount;
@@ -391,11 +393,9 @@ bool VoxRlCapture::ResolveCaptureRoot()
 		m_captureRoot = gameFolder;
 		m_captureRoot += "/VoxDeorumRL";
 	}
-	if (!VoxRlCreateDirectories(m_captureRoot.c_str()))
-	{
-		m_captureRoot.clear();
-		return false;
-	}
+	// The root is only resolved here; the directory chain is created when
+	// the first file is written, so an attachment that never publishes
+	// leaves no folders behind.
 	return true;
 }
 
@@ -567,10 +567,6 @@ bool VoxRlCapture::BuildAndWriteStatic()
 		return false;
 	}
 	const std::string directory = m_gameDirectory + "/baselines/static";
-	if (!VoxRlCreateDirectories(directory.c_str()))
-	{
-		return false;
-	}
 	char fileName[32];
 	sprintf_s(fileName, 32, "static-%u.bin", m_staticGeneration);
 	const std::string path = directory + "/" + fileName;
@@ -592,10 +588,6 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	char folder[64];
 	sprintf_s(folder, 64, "baselines/world/player-%d/turn-%d", static_cast<int>(ePlayer), iTurn);
 	const std::string directory = m_gameDirectory + "/" + folder;
-	if (!VoxRlCreateDirectories(directory.c_str()))
-	{
-		return false;
-	}
 	segment.worldGeneration = ReserveGeneration(directory, "world");
 	if (segment.worldGeneration == 0)
 	{
@@ -652,10 +644,6 @@ bool VoxRlCapture::BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn)
 	char folder[80];
 	sprintf_s(folder, 80, "baselines/campaign/player-%d/turn-%d", static_cast<int>(ePlayer), iTurn);
 	const std::string directory = m_gameDirectory + "/" + folder;
-	if (!VoxRlCreateDirectories(directory.c_str()))
-	{
-		return false;
-	}
 	const unsigned int campaignGeneration = ReserveGeneration(directory, "campaign");
 	if (campaignGeneration == 0)
 	{
@@ -712,11 +700,6 @@ void VoxRlCapture::StartSegment(PlayerTypes ePlayer, int iTurn)
 		static_cast<int>(ePlayer), iTurn, segment.worldGeneration);
 	segment.relativeSegmentDir = folder;
 	const std::string segmentDir = m_gameDirectory + "/" + folder;
-	if (!VoxRlCreateDirectories(segmentDir.c_str()))
-	{
-		FailSegment("captureFailure");
-		return;
-	}
 	segment.streamPath = segmentDir + "/stream.bin";
 	segment.indexPath = segmentDir + "/index.jsonl";
 	segment.staticRelPath = m_staticRelPath;
@@ -791,11 +774,6 @@ void VoxRlCapture::OnPreDangerCheckpoint(PlayerTypes ePlayer)
 		return;
 	}
 	m_gameDirectory = m_captureRoot + "/" + m_gameUuidText;
-	if (!VoxRlCreateDirectories((m_gameDirectory + "/baselines/static").c_str()) ||
-		!VoxRlCreateDirectories((m_gameDirectory + "/segments").c_str()))
-	{
-		return;
-	}
 	// STATIC is reused until a topology invalidation replaces it.
 	if (!m_staticGenerationWritten || m_topologyInvalidated)
 	{
@@ -865,6 +843,8 @@ void VoxRlCapture::PublishPendingFrames()
 		FailSegment("captureFailure");
 		return;
 	}
+	// Opening the stream and index creates the segment directory; until
+	// this point the segment existed only in memory.
 	if (!m_segmentStream.OpenNew(segment.streamPath.c_str()))
 	{
 		FailSegment("captureFailure");

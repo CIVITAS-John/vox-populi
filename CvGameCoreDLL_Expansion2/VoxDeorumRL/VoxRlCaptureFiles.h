@@ -19,26 +19,31 @@ bool VoxRlCreateDirectories(const char* utf8Path);
 // Returns true when a regular file exists at the UTF-8 path.
 bool VoxRlFileExists(const char* utf8Path);
 
-// Removes the final path component of a folder path that ends in a separator
-// or names one. The capture root derives Civ V's per-user game folder this way
-// from the engine-provided cache folder path.
+// Removes the final path component of a path that ends in a separator or
+// names one. The capture root derives Civ V's per-user game folder this way
+// from the engine-provided cache folder path, and file opens derive their
+// parent directory.
 bool VoxRlStripLastPathComponent(const std::string& path, std::string& out);
 
 // Formats the canonical UUID text of a game UUID, matching the recording
 // reader's VoxRrFormatGameUuid exactly: 8-4-4-4-12 lowercase hex digits.
 void VoxRlFormatGameUuidText(const VoxRlGameUuid& game, char out[37]);
 
-// An append-oriented Win32 output file. Writes are unbuffered through the
-// operating system; Flush pushes bytes to disk at publication markers only.
+// An append-oriented Win32 output file. Opens create the missing parent
+// directories, so folders appear only when a file is about to be written.
+// Writes are unbuffered through the operating system; Flush pushes bytes to
+// disk at publication markers only.
 class VoxRlOutputFile
 {
 public:
 	VoxRlOutputFile();
 	~VoxRlOutputFile();
 
-	// Creates or truncates the file and positions at offset zero.
+	// Creates or truncates the file and positions at offset zero. Missing
+	// parent directories are created first.
 	bool OpenNew(const char* utf8Path);
 	// Opens or creates the file for appending and records its current size.
+	// Missing parent directories are created first.
 	bool OpenAppend(const char* utf8Path);
 	// Appends bytes at the current end.
 	bool Write(const void* bytes, unsigned int length);

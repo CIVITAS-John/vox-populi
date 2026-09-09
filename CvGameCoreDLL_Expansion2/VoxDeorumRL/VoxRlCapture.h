@@ -205,8 +205,9 @@ private:
 	std::string m_campaignRelPath;
 	unsigned int m_campaignFramedLength;
 
-	// Open segment streams and index. The stream is created only when the
-	// segment publishes; pending frames wait in bounded memory.
+	// Open segment streams and index. The stream, the index, and the
+	// segment directory itself are created only when the segment publishes;
+	// pending frames wait in bounded memory.
 	VoxRlOutputFile m_segmentStream;
 	VoxRlOutputFile m_segmentIndex;
 	unsigned __int64 m_segmentStreamBytes;
