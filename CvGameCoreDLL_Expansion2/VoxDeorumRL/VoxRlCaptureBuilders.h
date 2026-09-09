@@ -13,6 +13,17 @@
 #include <cstring>
 #include <vector>
 
+// Retains a no-refresh tactical zone table and its per-plot assignments.
+struct VoxRlZoneSnapshot
+{
+	std::vector<ZoneRecord> zones;
+	std::vector<ZoneNeighborRecord> neighbors;
+	std::vector<i32> plotZones;
+};
+
+// Collects current zone records without triggering native map preparation.
+bool VoxRlCollectZones(class CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapshot);
+
 // Reserves storage and builds one complete STATIC block from the global
 // defines, info tables, and map topology.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
@@ -21,7 +32,8 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 // Builds one complete WORLD block at the pre-refresh checkpoint for the
 // capturing player.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
-	VoxRlOwnedBlockStorage& storage, unsigned int& length);
+	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
+	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot);
 
 // Builds one complete CAMPAIGN block at the UpdateOperations entry for the
 // capturing player. Zone data is read without triggering a refresh.
@@ -61,6 +73,10 @@ bool VoxRlCollectUnitRecord(class CvUnit& unit, TeamTypes capturingTeam, UnitRec
 bool VoxRlCollectPlotDynamicRecord(class CvPlot& plot, class CvTacticalAnalysisMap* zoneMap,
 	PlotDynamicRecord& row);
 
+// Collects terrain and feature impassability for every team, including the
+// barbarian team, from the info tables and each team's researched technology.
+bool VoxRlCollectTeamPassabilityRows(std::vector<TeamPassabilityRecord>& rows);
+
 // Collects a complete sparse family across all live units or cities, used by
 // WORLD builds and complete-family replacement requests.
 bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows);
@@ -73,7 +89,7 @@ void VoxRlCollectAllPlayerResistanceRows(std::vector<PlayerResistanceRecord>& ro
 struct STacticalAssignment;
 
 // Copies collected WORLD-shaped rows into their mirrored request record
-// shapes. Only the six sparse replacement families (unit modifiers, plagues,
+// shapes. The zone tables and six sparse replacement families (unit modifiers, plagues,
 // blocked promotions, unit attack counts, player resistances, city attack
 // counts) mirror their WORLD counterparts field for field; keyed delta
 // mirrors such as the plot delta are not layout-identical and must not use

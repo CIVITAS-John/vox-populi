@@ -173,7 +173,6 @@ public:
 	void NoteCityCreated(PlayerTypes eOwner, int iCityId);
 	void NoteCityRemoved(PlayerTypes eOwner, int iCityId);
 	void NotePlotChanged(int iPlotIndex);
-	void NotePlotPassabilityChanged(int iPlotIndex);
 	void NoteVisibilityChanged(TeamTypes eTeam, int iPlotIndex, int iBitsetKind, bool bValue);
 	void NoteRevealedOverrideChanged(TeamTypes eTeam, int iPlotIndex, bool bRemoved);
 	void NoteInterceptorCacheChanged(PlayerTypes ePlayer);
@@ -224,7 +223,11 @@ private:
 	void FailSegment(const char* closureReason);
 	void StartSegment(PlayerTypes ePlayer, int iTurn);
 	bool BuildAndWriteStatic();
-	bool BuildAndWriteWorld(PlayerTypes ePlayer, int iTurn);
+	// Captures the checkpoint WORLD in segment-owned memory so it can be
+	// published only after the compatible CAMPAIGN exists.
+	bool BuildWorldBaseline(PlayerTypes ePlayer, int iTurn);
+	// Writes the checkpoint WORLD retained by BuildWorldBaseline.
+	bool WriteWorldBaseline();
 	bool BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn);
 	void PublishPendingFrames();
 	bool AppendIndexLine(const char* line);

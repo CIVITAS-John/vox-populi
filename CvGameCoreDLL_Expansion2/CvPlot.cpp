@@ -6604,7 +6604,6 @@ void CvPlot::setOwner(PlayerTypes eNewValue, int iAcquiringCityID, bool bCheckUn
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 	{
 		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
-		VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
 	}
 
 	CvString strBuffer;
@@ -7248,7 +7247,6 @@ void CvPlot::setPlotType(PlotTypes eNewValue, bool bRecalculate, bool bRebuildGr
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
 			VoxRlCapture::GetInstance().NoteTopologyInvalidated();
-			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
 		}
 
 		if((getPlotType() == PLOT_OCEAN) || (eNewValue == PLOT_OCEAN))
@@ -7497,11 +7495,10 @@ void CvPlot::setTerrainType(TerrainTypes eNewValue, bool bRecalculate, bool bReb
 	if(eOldValue != eNewValue)
 	{
 		// Vox Deorum: capture topology and passability change marking.
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-		{
-			VoxRlCapture::GetInstance().NoteTopologyInvalidated();
-			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
-		}
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteTopologyInvalidated();
+	}
 
 		bUpdateSight = (getTerrainType() != NO_TERRAIN) &&
 		        (eNewValue != NO_TERRAIN) &&
@@ -7600,11 +7597,10 @@ void CvPlot::setFeatureType(FeatureTypes eNewValue)
 	if (eOldFeature != eNewValue)
 	{
 		// Vox Deorum: capture plot and passability change marking.
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-		{
-			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
-			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
-		}
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+	}
 
 		// Force flood plains on river desert if it becomes featureless
 		if (eNewValue == NO_FEATURE && getTerrainType() == TERRAIN_DESERT && isRiver())
@@ -8249,11 +8245,10 @@ void CvPlot::setImprovementType(ImprovementTypes eNewValue, PlayerTypes eBuilder
 	if (eOldImprovement != eNewValue)
 	{
 		// Vox Deorum: capture plot and passability change marking.
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-		{
-			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
-			VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
-		}
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+	}
 
 		PlayerTypes eOldBuilder = GetPlayerThatBuiltImprovement();
 
@@ -12100,10 +12095,6 @@ void CvPlot::SetTeamImpassable(TeamTypes eTeam, bool bValue)
 {
 	PRECONDITION(eTeam >= 0, "eTeam is expected to be non-negative (invalid Index)");
 	PRECONDITION(eTeam < REALLY_MAX_TEAMS, "eTeam is expected to be within maximum bounds (invalid Index)");
-
-	// Vox Deorum: capture passability change marking.
-	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_abIsImpassable[eTeam] != bValue)
-		VoxRlCapture::GetInstance().NotePlotPassabilityChanged(GetPlotIndex());
 
 	m_abIsImpassable[eTeam] = bValue;
 }

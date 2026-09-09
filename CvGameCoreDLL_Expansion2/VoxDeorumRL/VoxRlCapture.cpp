@@ -14,6 +14,7 @@
 #include "CvConnectionService.h"
 #include "CvDangerPlots.h"
 #include "CvTacticalAI.h"
+#include "CvTacticalAnalysisMap.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +28,14 @@ namespace
 	{
 		const char* enabled = getenv("VOX_RL_CAPTURE");
 		return enabled != NULL && enabled[0] == '1';
+	}
+
+	// Compares zero-initialized portable rows to omit unchanged zone tables.
+	template <typename Record>
+	bool SameRows(const std::vector<Record>& left, const std::vector<Record>& right)
+	{
+		return left.size() == right.size() && (left.empty() ||
+			std::memcmp(&left[0], &right[0], left.size() * sizeof(Record)) == 0);
 	}
 }
 
@@ -62,6 +71,10 @@ struct VoxRlCapture::Segment
 	// publication. Bounded by the pending byte budget.
 	std::vector<VoxRlFrameEntry> frameTable;
 	std::vector<unsigned char> pendingBytes;
+	// The checkpoint WORLD is retained until the campaign seam permits
+	// publication, so unpublished observers leave no WORLD file behind.
+	std::vector<unsigned char> worldBytes;
+	VoxRlZoneSnapshot zoneSnapshot;
 	unsigned int pendingCount;
 	unsigned int committedFrameCount;
 	unsigned int committedDecisionCount;
@@ -92,7 +105,6 @@ struct VoxRlCapture::Segment
 	std::set<VoxRlEntityKey> dirtyCities;
 	std::set<VoxRlEntityKey> removedCities;
 	std::set<int> dirtyPlots;
-	std::set<int> dirtyPassability;
 	std::map<VoxRlVisibilityKey, unsigned char> visibilityFlips;
 	std::map<VoxRlEntityKey, unsigned char> revealedOverrideUpserts;  // team-major key, 1 = present
 	std::set<VoxRlEntityKey> removedRevealedOverrides;                // (team, plot)
@@ -105,6 +117,7 @@ struct VoxRlCapture::Segment
 	// Only entities emitted as deltas in this segment are retained.
 	std::map<VoxRlEntityKey, RequestDeltaPlotRecord> lastPlotRows;
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
+	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 
 	// Iteration index bookkeeping across deltas.
 	std::map<VoxRlEntityKey, unsigned int> unitIteration;
@@ -388,6 +401,13 @@ bool VoxRlCapture::ResolveCaptureRoot()
 
 bool VoxRlCapture::AdmitsPlayer(PlayerTypes ePlayer) const
 {
+	// The barbarian slot can be included in the explicit environment filter,
+	// but it never reaches the campaign seam and therefore cannot publish.
+	if (ePlayer == BARBARIAN_PLAYER) return false;
+	// Campaign capture is driven by CvMilitaryAI::UpdateOperations, which
+	// only runs for major civilizations. Keep minor observers out of the
+	// recording lifecycle while WORLD data still includes their entities.
+	if (!GET_PLAYER(ePlayer).isMajorCiv()) return false;
 	if (!m_config.filterPlayers) return true;
 	return m_config.players.count(static_cast<int>(ePlayer)) != 0;
 }
@@ -495,6 +515,12 @@ void VoxRlCapture::FailSegment(const char* closureReason)
 		return;
 	}
 	m_segment->failed = true;
+	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+	if (log != NULL)
+	{
+		log->Msg("Capture segment failed: stage=%s player=%d turn=%d.\n", closureReason,
+			static_cast<int>(m_segment->player), m_segment->turn);
+	}
 	// Retain the prior committed prefix exactly as it is on disk. No
 	// further index lines are appended after a damaged tail; capture
 	// restarts at a fresh supported checkpoint.
@@ -560,7 +586,7 @@ bool VoxRlCapture::BuildAndWriteStatic()
 	return true;
 }
 
-bool VoxRlCapture::BuildAndWriteWorld(PlayerTypes ePlayer, int iTurn)
+bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 {
 	Segment& segment = *m_segment;
 	char folder[64];
@@ -585,21 +611,38 @@ bool VoxRlCapture::BuildAndWriteWorld(PlayerTypes ePlayer, int iTurn)
 
 	VoxRlOwnedBlockStorage storage;
 	unsigned int length = 0;
-	if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length))
+	std::vector<TeamPassabilityRecord> teamPassability;
+	if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot, teamPassability))
 	{
 		return false;
 	}
+	segment.lastTeamPassabilityRows.clear();
+	for (size_t index = 0; index < teamPassability.size(); ++index)
+		segment.lastTeamPassabilityRows[static_cast<int>(teamPassability[index].team)] = teamPassability[index];
 	char fileName[32];
 	sprintf_s(fileName, 32, "world-%u.bin", segment.worldGeneration);
-	const std::string path = directory + "/" + fileName;
-	VoxRlOutputFile file;
-	if (!file.OpenNew(path.c_str()) || !file.Write(storage.Bytes(), length) || !file.Flush())
+	segment.worldRelPath = folder + std::string("/") + fileName;
+	segment.worldFramedLength = length;
+	const unsigned char* bytes = static_cast<const unsigned char*>(storage.Bytes());
+	segment.worldBytes.assign(bytes, bytes + length);
+	SeedWorldIterationIndices();
+	return true;
+}
+
+bool VoxRlCapture::WriteWorldBaseline()
+{
+	Segment& segment = *m_segment;
+	if (segment.worldBytes.empty() || segment.worldRelPath.empty())
 	{
 		return false;
 	}
-	segment.worldRelPath = folder + std::string("/") + fileName;
-	segment.worldFramedLength = length;
-	SeedWorldIterationIndices();
+	const std::string path = m_gameDirectory + "/" + segment.worldRelPath;
+	VoxRlOutputFile file;
+	if (!file.OpenNew(path.c_str()) || !file.Write(&segment.worldBytes[0], segment.worldFramedLength) || !file.Flush())
+	{
+		return false;
+	}
+	segment.worldBytes.clear();
 	return true;
 }
 
@@ -659,9 +702,9 @@ void VoxRlCapture::StartSegment(PlayerTypes ePlayer, int iTurn)
 	segment.player = ePlayer;
 	segment.turn = iTurn;
 	segment.staticGeneration = m_staticGeneration;
-	if (!BuildAndWriteWorld(ePlayer, iTurn))
+	if (!BuildWorldBaseline(ePlayer, iTurn))
 	{
-		FailSegment("captureFailure");
+		FailSegment("worldBuild");
 		return;
 	}
 	char folder[80];
@@ -805,6 +848,13 @@ void VoxRlCapture::PublishPendingFrames()
 	Segment& segment = *m_segment;
 	if (segment.published || segment.failed)
 	{
+		return;
+	}
+	// The WORLD snapshot was captured at the pre-danger checkpoint. Write it
+	// only now, after the campaign seam makes this segment publishable.
+	if (!WriteWorldBaseline())
+	{
+		FailSegment("worldWrite");
 		return;
 	}
 	// Dependencies must exist before the index publishes them.
@@ -1066,7 +1116,6 @@ void VoxRlCapture::ClearDirtyState()
 	segment.dirtyCities.clear();
 	segment.removedCities.clear();
 	segment.dirtyPlots.clear();
-	segment.dirtyPassability.clear();
 	segment.visibilityFlips.clear();
 	segment.revealedOverrideUpserts.clear();
 	segment.removedRevealedOverrides.clear();
@@ -1150,6 +1199,23 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
+	// Zone preparation can change assignments without any plot setter firing.
+	// Carry the current table and every changed assignment in the same request.
+	VoxRlZoneSnapshot zones;
+	if (!VoxRlCollectZones(zoneMap, zones) || zones.plotZones.size() != segment.zoneSnapshot.plotZones.size())
+		return false;
+	if (!SameRows(zones.zones, segment.zoneSnapshot.zones) ||
+		!SameRows(zones.neighbors, segment.zoneSnapshot.neighbors))
+	{
+		data.requestHeader.hasZoneReplacement = 1;
+		VoxRlMirrorSparseRows(zones.zones, data.requestZoneReplacements);
+		VoxRlMirrorSparseRows(zones.neighbors, data.requestZoneNeighbors);
+	}
+	for (int plot = 0; plot < plotCount; ++plot)
+		if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot]) segment.dirtyPlots.insert(plot);
+	segment.zoneSnapshot.zones.swap(zones.zones);
+	segment.zoneSnapshot.neighbors.swap(zones.neighbors);
+	segment.zoneSnapshot.plotZones.swap(zones.plotZones);
 
 	// Removed units come first so an upsert of the same key is refused.
 	for (std::set<VoxRlEntityKey>::const_iterator key = segment.removedUnits.begin();
@@ -1273,24 +1339,19 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestDeltaCities.push_back(delta);
 	}
 
-	for (std::set<int>::const_iterator plotIndex = segment.dirtyPassability.begin();
-		plotIndex != segment.dirtyPassability.end(); ++plotIndex)
+	std::vector<TeamPassabilityRecord> teamPassability;
+	if (!VoxRlCollectTeamPassabilityRows(teamPassability)) return false;
+	for (size_t index = 0; index < teamPassability.size(); ++index)
 	{
-		if (*plotIndex < 0 || *plotIndex >= plotCount) continue;
-		CvPlot* plot = map.plotByIndex(*plotIndex);
-		if (plot == NULL) continue;
-		PlotPassabilityRecord record;
-		std::memset(&record, 0, sizeof(record));
-		if (!CollectPlotPassabilityRecord(*plot, record))
-		{
-			return false;
-		}
-		RequestPlotPassabilityRecord row;
-		std::memset(&row, 0, sizeof(row));
-		row.plotIndex = static_cast<i32>(*plotIndex);
-		row.baseImpassable = record.baseImpassable;
-		std::memcpy(row.teamImpassable, record.teamImpassable, sizeof(row.teamImpassable));
-		data.requestPlotPassability.push_back(row);
+		const TeamPassabilityRecord& record = teamPassability[index];
+		std::map<int, TeamPassabilityRecord>::const_iterator last =
+			segment.lastTeamPassabilityRows.find(static_cast<int>(record.team));
+		if (last != segment.lastTeamPassabilityRows.end() &&
+			std::memcmp(&last->second, &record, sizeof(record)) == 0) continue;
+		RequestTeamPassabilityRecord row;
+		std::memcpy(&row, &record, sizeof(row));
+		segment.lastTeamPassabilityRows[static_cast<int>(record.team)] = record;
+		data.requestTeamPassability.push_back(row);
 	}
 
 	for (std::map<VoxRlVisibilityKey, unsigned char>::const_iterator flip = segment.visibilityFlips.begin();
@@ -1935,12 +1996,6 @@ void VoxRlCapture::NotePlotChanged(int iPlotIndex)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	m_segment->dirtyPlots.insert(iPlotIndex);
-}
-
-void VoxRlCapture::NotePlotPassabilityChanged(int iPlotIndex)
-{
-	if (m_segment == NULL || m_segment->failed) return;
-	m_segment->dirtyPassability.insert(iPlotIndex);
 }
 
 void VoxRlCapture::NoteVisibilityChanged(TeamTypes eTeam, int iPlotIndex, int iBitsetKind, bool bValue)
