@@ -19,6 +19,51 @@
 
 namespace
 {
+	// Returns one monotonic timestamp for opt-in WORLD phase measurements.
+	unsigned __int64 WorldTimingNanoseconds()
+	{
+		static LONGLONG frequency = 0;
+		if (frequency == 0)
+		{
+			LARGE_INTEGER period;
+			if (!QueryPerformanceFrequency(&period)) return 0;
+			frequency = period.QuadPart;
+		}
+		LARGE_INTEGER now;
+		if (!QueryPerformanceCounter(&now)) return 0;
+		return static_cast<unsigned __int64>(now.QuadPart / frequency) * 1000000000ULL +
+			(static_cast<unsigned __int64>(now.QuadPart % frequency) * 1000000000ULL) /
+			static_cast<unsigned __int64>(frequency);
+	}
+
+	// Adds one WORLD builder phase only when the caller requested timings.
+	class ScopedWorldTiming
+	{
+	public:
+		// Starts a phase only when the caller supplied an accumulator.
+		ScopedWorldTiming(unsigned __int64* total)
+			: m_total(total), m_start(total != NULL ? WorldTimingNanoseconds() : 0)
+		{
+		}
+		// Adds the completed interval to the selected phase.
+		~ScopedWorldTiming()
+		{
+			Stop();
+		}
+		// Completes the phase once and releases its accumulator reference.
+		void Stop()
+		{
+			if (m_total != NULL)
+			{
+				*m_total += WorldTimingNanoseconds() - m_start;
+				m_total = NULL;
+			}
+		}
+	private:
+		unsigned __int64* m_total;
+		unsigned __int64 m_start;
+	};
+
 	// Zero-initializes one packed record so padding bytes and unset fields
 	// serialize deterministically.
 	template <typename Record>
@@ -700,7 +745,7 @@ bool VoxRlCollectZones(CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapsh
 // Collects native WORLD state in stable owner and plot order for the generated writer.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
-	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot)
+	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot, VoxRlWorldBuildTimings* timings)
 {
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
@@ -712,9 +757,16 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	CollectAliveTeams(aliveTeams);
 	std::vector<PlayerTypes> alivePlayers;
 	CollectAlivePlayers(alivePlayers);
+	if (timings != NULL)
+	{
+		timings->plotCount = static_cast<unsigned int>(plotCount);
+		timings->alivePlayerCount = static_cast<unsigned int>(alivePlayers.size());
+		timings->aliveTeamCount = static_cast<unsigned int>(aliveTeams.size());
+	}
 
 	// Unit rows follow plot stacks, while these indices preserve owner iteration order.
 	std::map<VoxRlEntityKey, unsigned int> iterationByUnit;
+	ScopedWorldTiming ownerIterationTiming(timings != NULL ? &timings->ownerIterationNs : NULL);
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
@@ -726,8 +778,10 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			iterationByUnit[VoxRlEntityKey(player, unit->GetID())] = iteration++;
 		}
 	}
+	ownerIterationTiming.Stop();
 
 	// Prepare the native citadel cache before zone preparation, as at the capture checkpoint.
+	ScopedWorldTiming playerCitadelTiming(timings != NULL ? &timings->playerCitadelNs : NULL);
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
@@ -750,7 +804,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		if (!AppendPlayerRecordCitadelPlotRange(&row, &data, citadels)) return false;
 		data.worldPlayers.push_back(row);
 	}
+	playerCitadelTiming.Stop();
 
+	ScopedWorldTiming dangerSparseTiming(timings != NULL ? &timings->dangerSparseRelationsNs : NULL);
 	const CvDangerPlots* danger = capturing.GetDangerPlots();
 	if (danger == NULL) return false;
 	DangerPlayerRecord dangerRow;
@@ -799,7 +855,10 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			data.worldMinorRelations.push_back(row);
 		}
 	}
+	dangerSparseTiming.Stop();
 
+	std::map<int, unsigned int> zoneRowByZoneId;
+	ScopedWorldTiming zoneTiming(timings != NULL ? &timings->zoneNs : NULL);
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	// Zones are the checkpoint table. The no-refresh accessors never trigger
 	// the native rebuild, so capture cannot fire the tactical-time zone
@@ -809,10 +868,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldZoneNeighbors = zones.neighbors;
 	// Each plot's zone membership is encoded as a one-based index into the ordered table.
 	// The 16-bit form covers tables up to 65,535 rows; larger tables take the wide form.
-	std::map<int, unsigned int> zoneRowByZoneId;
 	for (size_t zoneIndex = 0; zoneIndex < zones.zones.size(); ++zoneIndex)
 		zoneRowByZoneId[zones.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
+	zoneTiming.Stop();
 	const bool wideZoneIndices = zones.zones.size() > 65535U;
+	ScopedWorldTiming plotUnitTiming(timings != NULL ? &timings->plotUnitNs : NULL);
 	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 	{
 		CvPlot* plot = map.plotByIndex(plotIndex);
@@ -872,8 +932,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	if (!VoxRlCollectTeamPassabilityRows(data.worldTeamPassability)) return false;
 	teamPassabilitySnapshot = data.worldTeamPassability;
 	if (data.worldUnits.size() != iterationByUnit.size()) return false;
+	if (timings != NULL) timings->unitCount = static_cast<unsigned int>(data.worldUnits.size());
+	plotUnitTiming.Stop();
 
 	// Each alive team contributes one plot bitset; all-zero optional detection is omitted.
+	ScopedWorldTiming visibilityTiming(timings != NULL ? &timings->visibilityNs : NULL);
 	const size_t bitBytes = (static_cast<size_t>(plotCount) + 7U) / 8U;
 	std::vector<u8>* bitsets[] = { &data.worldRevealedBits, &data.worldVisibleBits,
 		&data.worldKnownVisibleBits, &data.worldInvisibleVisibleBits };
@@ -924,7 +987,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	}
 	if (!hasInvisibleVisibility) data.worldInvisibleVisibleBits.clear();
 	if (!hasRevealedNoneOverrides) data.worldRevealedNoneOverrideBits.clear();
+	visibilityTiming.Stop();
 
+	ScopedWorldTiming entityRelationTiming(timings != NULL ? &timings->entityRelationNs : NULL);
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
@@ -984,7 +1049,12 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) return false;
 		data.worldInterceptorCaches.push_back(row);
 	}
-	return data.Write(identity, storage, length);
+	if (timings != NULL) timings->cityCount = static_cast<unsigned int>(data.worldCities.size());
+	entityRelationTiming.Stop();
+	ScopedWorldTiming serializeTiming(timings != NULL ? &timings->serializeNs : NULL);
+	const bool written = data.Write(identity, storage, length);
+	serializeTiming.Stop();
+	return written;
 }
 
 // Collects the operational entry snapshot without refreshing native zones.

@@ -188,17 +188,25 @@ struct VoxRlCapture::Segment
 	struct Timings
 	{
 		unsigned __int64 worldBuildNs;
-		unsigned __int64 campaignBuildNs;
+		VoxRlWorldBuildTimings worldPhases;
+		unsigned __int64 worldWriteFlushNs;
+		unsigned __int64 campaignConstructNs;
+		unsigned __int64 campaignWriteFlushNs;
 		unsigned __int64 deltaCollectNs;
 		unsigned __int64 requestBuildNs;
 		unsigned __int64 resultBuildNs;
+		unsigned __int64 pendingBufferNs;
+		unsigned __int64 pendingPublishWriteNs;
 		unsigned __int64 streamWriteNs;
 		unsigned __int64 commitNs;
-		unsigned __int64 flushNs;
+		unsigned __int64 streamFlushNs;
+		unsigned __int64 indexFlushNs;
 		unsigned __int64 worldBuildBytes;
 		unsigned __int64 campaignBuildBytes;
 		unsigned __int64 requestBytes;
 		unsigned __int64 resultBytes;
+		unsigned __int64 pendingBufferBytes;
+		unsigned __int64 pendingPublishWriteBytes;
 		unsigned __int64 streamWriteBytes;
 		unsigned __int64 indexBytes;
 		unsigned __int64 deltaRows;
@@ -207,10 +215,11 @@ struct VoxRlCapture::Segment
 		unsigned int resultCount;
 		unsigned int commitCount;
 		Timings()
-			: worldBuildNs(0), campaignBuildNs(0), deltaCollectNs(0), requestBuildNs(0), resultBuildNs(0),
-			streamWriteNs(0), commitNs(0), flushNs(0),
+			: worldBuildNs(0), worldWriteFlushNs(0), campaignConstructNs(0), campaignWriteFlushNs(0),
+			deltaCollectNs(0), requestBuildNs(0), resultBuildNs(0), pendingBufferNs(0),
+			pendingPublishWriteNs(0), streamWriteNs(0), commitNs(0), streamFlushNs(0), indexFlushNs(0),
 			worldBuildBytes(0), campaignBuildBytes(0), requestBytes(0), resultBytes(0),
-			streamWriteBytes(0), indexBytes(0), deltaRows(0),
+			pendingBufferBytes(0), pendingPublishWriteBytes(0), streamWriteBytes(0), indexBytes(0), deltaRows(0),
 			deltaCollectCount(0), requestCount(0), resultCount(0), commitCount(0)
 		{
 		}
@@ -348,7 +357,8 @@ VoxRlCapture::VoxRlCapture()
 	m_worldReplacementPending(false),
 	m_decisionIdCounter(0),
 	m_identityPendingLogged(false),
-	m_staticBuildNs(0),
+	m_staticConstructNs(0),
+	m_staticWriteFlushNs(0),
 	m_staticBuildBytes(0),
 	m_zoneSnapshotDirty(false),
 	m_teamPassabilityDirty(false),
@@ -569,7 +579,8 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_worldReplacementPending = false;
 	m_decisionIdCounter = 0;
 	m_identityPendingLogged = false;
-	m_staticBuildNs = 0;
+	m_staticConstructNs = 0;
+	m_staticWriteFlushNs = 0;
 	m_staticBuildBytes = 0;
 	m_zoneSnapshotDirty = false;
 	m_teamPassabilityDirty = false;
@@ -625,7 +636,7 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 		// committed prefix is guaranteed to survive power loss.
 		bool flushed = false;
 		{
-			ScopedTiming timing(m_config.timings, m_segment->timings.flushNs);
+			ScopedTiming timing(m_config.timings, m_segment->timings.streamFlushNs);
 			flushed = m_segmentStream.Flush();
 		}
 		if (!flushed)
@@ -641,7 +652,7 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 		}
 		bool indexFlushed = false;
 		{
-			ScopedTiming timing(m_config.timings, m_segment->timings.flushNs);
+			ScopedTiming timing(m_config.timings, m_segment->timings.indexFlushNs);
 			indexFlushed = m_segmentIndex.Flush();
 		}
 		if (!indexFlushed)
@@ -701,7 +712,7 @@ void VoxRlCapture::AddCoverageOmission(const char* reason)
 	m_segment->coverageLines.push_back(line);
 }
 
-// Writes one segment's accumulated timing summary to VoxRlCapture.log. The
+// Writes one segment's accumulated timing summary to VoxRlCapture.csv. The
 // timings are opt-in, accumulate in memory, and publish only at this segment
 // boundary, so ordinary events never pay a log write.
 void VoxRlCapture::WriteTimingSummary(const char* closureReason)
@@ -711,27 +722,48 @@ void VoxRlCapture::WriteTimingSummary(const char* closureReason)
 		return;
 	}
 	const Segment::Timings& t = m_segment->timings;
-	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.csv", FILogFile::kDontTimeStamp);
 	if (log == NULL)
 	{
-		m_staticBuildNs = 0;
+		m_staticConstructNs = 0;
+		m_staticWriteFlushNs = 0;
 		m_staticBuildBytes = 0;
 		return;
 	}
-	log->Msg("Capture timings: player=%d turn=%d world=%u closure=%s frames=%u commits=%u.\n",
-		static_cast<int>(m_segment->player), m_segment->turn, m_segment->worldGeneration,
-		closureReason != NULL ? closureReason : "unknown",
-		static_cast<unsigned int>(m_segment->frameTable.size()), t.commitCount);
-	log->Msg("Capture timings: builds static=%I64uns bytes=%I64u world=%I64uns bytes=%I64u campaign=%I64uns bytes=%I64u.\n",
-		m_staticBuildNs, m_staticBuildBytes, t.worldBuildNs, t.worldBuildBytes,
-		t.campaignBuildNs, t.campaignBuildBytes);
-	log->Msg("Capture timings: deltas count=%u collect=%I64uns rows=%I64u requests=%u build=%I64uns bytes=%I64u.\n",
-		t.deltaCollectCount, t.deltaCollectNs, t.deltaRows, t.requestCount, t.requestBuildNs, t.requestBytes);
-	log->Msg("Capture timings: results=%u build=%I64uns bytes=%I64u stream writes=%I64uns bytes=%I64u.\n",
-		t.resultCount, t.resultBuildNs, t.resultBytes, t.streamWriteNs, t.streamWriteBytes);
-	log->Msg("Capture timings: commits=%u commit=%I64uns indexBytes=%I64u closureFlush=%I64uns.\n",
-		t.commitCount, t.commitNs, t.indexBytes, t.flushNs);
-	m_staticBuildNs = 0;
+	static bool headerWritten = false;
+	if (!headerWritten)
+	{
+		log->Msg("game_uuid,player,turn,world_generation,closure,failed,published,frames,commits,"
+			"plots,units,cities,alive_players,alive_teams,static_construct_ns,static_write_flush_ns,static_bytes,"
+			"world_construct_ns,world_owner_iteration_ns,world_player_citadel_ns,world_danger_sparse_relations_ns,"
+			"world_zone_ns,world_plot_unit_ns,world_visibility_ns,world_entity_relation_ns,world_serialize_ns,"
+			"world_write_flush_ns,world_bytes,campaign_construct_ns,campaign_write_flush_ns,campaign_bytes,"
+			"delta_collections,delta_collect_ns,delta_rows,requests,request_build_ns,request_bytes,results,"
+			"result_build_ns,result_bytes,pending_buffer_ns,pending_buffer_bytes,pending_publish_write_ns,"
+			"pending_publish_write_bytes,stream_write_ns,stream_write_bytes,commit_ns,index_bytes,"
+			"stream_flush_ns,index_flush_ns\n");
+		headerWritten = true;
+	}
+	log->Msg("%s,%d,%d,%u,%s,%d,%d,%u,%u,%u,%u,%u,%u,%u,"
+		"%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,"
+		"%I64u,%I64u,%I64u,%u,%I64u,%I64u,%u,%I64u,%I64u,%u,%I64u,%I64u,%I64u,%I64u,%I64u,"
+		"%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u\n",
+		m_gameUuidText, static_cast<int>(m_segment->player), m_segment->turn, m_segment->worldGeneration,
+		closureReason != NULL ? closureReason : "unknown", m_segment->failed ? 1 : 0,
+		m_segment->published ? 1 : 0, static_cast<unsigned int>(m_segment->frameTable.size()), t.commitCount,
+		t.worldPhases.plotCount, t.worldPhases.unitCount, t.worldPhases.cityCount,
+		t.worldPhases.alivePlayerCount, t.worldPhases.aliveTeamCount,
+		m_staticConstructNs, m_staticWriteFlushNs, m_staticBuildBytes,
+		t.worldBuildNs, t.worldPhases.ownerIterationNs, t.worldPhases.playerCitadelNs,
+		t.worldPhases.dangerSparseRelationsNs, t.worldPhases.zoneNs, t.worldPhases.plotUnitNs,
+		t.worldPhases.visibilityNs, t.worldPhases.entityRelationNs, t.worldPhases.serializeNs,
+		t.worldWriteFlushNs, t.worldBuildBytes, t.campaignConstructNs, t.campaignWriteFlushNs,
+		t.campaignBuildBytes, t.deltaCollectCount, t.deltaCollectNs, t.deltaRows,
+		t.requestCount, t.requestBuildNs, t.requestBytes, t.resultCount, t.resultBuildNs, t.resultBytes,
+		t.pendingBufferNs, t.pendingBufferBytes, t.pendingPublishWriteNs, t.pendingPublishWriteBytes,
+		t.streamWriteNs, t.streamWriteBytes, t.commitNs, t.indexBytes, t.streamFlushNs, t.indexFlushNs);
+	m_staticConstructNs = 0;
+	m_staticWriteFlushNs = 0;
 	m_staticBuildBytes = 0;
 }
 
@@ -748,11 +780,14 @@ bool VoxRlCapture::BuildAndWriteStatic()
 	unsigned int length = 0;
 	char fileName[32];
 	{
-		ScopedTiming timing(m_config.timings, m_staticBuildNs);
+		ScopedTiming timing(m_config.timings, m_staticConstructNs);
 		if (!VoxRlBuildStaticBlock(identity, storage, length))
 		{
 			return false;
 		}
+	}
+	{
+		ScopedTiming timing(m_config.timings, m_staticWriteFlushNs);
 		const std::string directory = m_gameDirectory + "/baselines/static";
 		sprintf_s(fileName, 32, "static-%u.bin", m_staticGeneration);
 		const std::string path = directory + "/" + fileName;
@@ -794,7 +829,9 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	std::vector<TeamPassabilityRecord> teamPassability;
 	{
 		ScopedTiming timing(m_config.timings, m_segment->timings.worldBuildNs);
-		if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot, teamPassability))
+		VoxRlWorldBuildTimings* phases = m_config.timings ? &segment.timings.worldPhases : NULL;
+		if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot,
+			teamPassability, phases))
 		{
 			return false;
 		}
@@ -830,7 +867,13 @@ bool VoxRlCapture::WriteWorldBaseline()
 	}
 	const std::string path = m_gameDirectory + "/" + segment.worldRelPath;
 	VoxRlOutputFile file;
-	if (!file.OpenNew(path.c_str()) || !file.Write(segment.worldStorage.Bytes(), segment.worldFramedLength) || !file.Flush())
+	bool written = false;
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.worldWriteFlushNs);
+		written = file.OpenNew(path.c_str()) &&
+			file.Write(segment.worldStorage.Bytes(), segment.worldFramedLength) && file.Flush();
+	}
+	if (!written)
 	{
 		return false;
 	}
@@ -861,11 +904,14 @@ bool VoxRlCapture::BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn)
 	unsigned int length = 0;
 	char fileName[36];
 	{
-		ScopedTiming timing(m_config.timings, segment.timings.campaignBuildNs);
+		ScopedTiming timing(m_config.timings, segment.timings.campaignConstructNs);
 		if (!VoxRlBuildCampaignBlock(identity, ePlayer, storage, length))
 		{
 			return false;
 		}
+	}
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.campaignWriteFlushNs);
 		sprintf_s(fileName, 36, "campaign-%u.bin", campaignGeneration);
 		const std::string path = directory + "/" + fileName;
 		VoxRlOutputFile file;
@@ -1112,14 +1158,20 @@ void VoxRlCapture::PublishPendingFrames()
 	segment.published = true;
 	// Move the pending frames into the stream, then publish them as the
 	// first batch together with the segment record's dependencies.
-	if (!m_segmentStream.Write(
-		segment.pendingBytes.empty() ? NULL : &segment.pendingBytes[0],
-		static_cast<unsigned int>(segment.pendingBytes.size())))
+	const unsigned int pendingBytes = static_cast<unsigned int>(segment.pendingBytes.size());
+	bool pendingWritten = false;
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.pendingPublishWriteNs);
+		pendingWritten = m_segmentStream.Write(
+			segment.pendingBytes.empty() ? NULL : &segment.pendingBytes[0], pendingBytes);
+	}
+	if (!pendingWritten)
 	{
 		FailSegment("captureFailure");
 		return;
 	}
-	m_segmentStreamBytes = segment.pendingBytes.size();
+	if (m_config.timings) segment.timings.pendingPublishWriteBytes += pendingBytes;
+	m_segmentStreamBytes = pendingBytes;
 	segment.pendingBytes.clear();
 	segment.pendingCount = 0;
 	CommitBatch(false, NULL);
@@ -1304,10 +1356,10 @@ bool VoxRlCapture::EnqueueFrame(const void* bytes, unsigned int length, int bloc
 	entry.attemptIndex = attemptIndex;
 	const unsigned char* cursor = static_cast<const unsigned char*>(bytes);
 	{
-		ScopedTiming timing(m_config.timings, segment.timings.streamWriteNs);
+		ScopedTiming timing(m_config.timings, segment.timings.pendingBufferNs);
 		segment.pendingBytes.insert(segment.pendingBytes.end(), cursor, cursor + length);
 	}
-	if (m_config.timings) segment.timings.streamWriteBytes += length;
+	if (m_config.timings) segment.timings.pendingBufferBytes += length;
 	segment.pendingCount += 1;
 	segment.frameTable.push_back(entry);
 	return true;

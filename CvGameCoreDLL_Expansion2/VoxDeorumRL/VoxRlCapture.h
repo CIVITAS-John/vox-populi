@@ -232,7 +232,7 @@ private:
 	void PublishPendingFrames();
 	bool AppendIndexLine(const char* line);
 	void AddCoverageOmission(const char* reason);
-	// Writes one segment's accumulated timing summary to VoxRlCapture.log when
+	// Writes one segment's accumulated timing summary to VoxRlCapture.csv when
 	// the opt-in timing configuration is active.
 	void WriteTimingSummary(const char* closureReason);
 	// Publishes every frame appended since the previous commit as one
@@ -292,7 +292,8 @@ private:
 	bool m_identityPendingLogged;
 	// Pending STATIC construction time and bytes accrued since the previous
 	// timing summary; folded into the next segment summary.
-	unsigned __int64 m_staticBuildNs;
+	unsigned __int64 m_staticConstructNs;
+	unsigned __int64 m_staticWriteFlushNs;
 	unsigned __int64 m_staticBuildBytes;
 	// True when the native tactical zone table was rebuilt since the last
 	// accepted snapshot; collection compares and re-accepts when set.

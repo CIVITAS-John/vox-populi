@@ -21,6 +21,32 @@ struct VoxRlZoneSnapshot
 	std::vector<i32> plotZones;
 };
 
+// Optional WORLD construction timings and row volumes. A null pointer at the
+// builder boundary skips every clock read and counter update.
+struct VoxRlWorldBuildTimings
+{
+	unsigned __int64 ownerIterationNs;
+	unsigned __int64 playerCitadelNs;
+	unsigned __int64 dangerSparseRelationsNs;
+	unsigned __int64 zoneNs;
+	unsigned __int64 plotUnitNs;
+	unsigned __int64 visibilityNs;
+	unsigned __int64 entityRelationNs;
+	unsigned __int64 serializeNs;
+	unsigned int plotCount;
+	unsigned int unitCount;
+	unsigned int cityCount;
+	unsigned int alivePlayerCount;
+	unsigned int aliveTeamCount;
+	// Initializes every optional phase and volume to zero.
+	VoxRlWorldBuildTimings()
+		: ownerIterationNs(0), playerCitadelNs(0), dangerSparseRelationsNs(0), zoneNs(0),
+		plotUnitNs(0), visibilityNs(0), entityRelationNs(0), serializeNs(0),
+		plotCount(0), unitCount(0), cityCount(0), alivePlayerCount(0), aliveTeamCount(0)
+	{
+	}
+};
+
 // Collects current zone records without triggering native map preparation.
 bool VoxRlCollectZones(class CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapshot);
 
@@ -33,7 +59,8 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 // capturing player.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
-	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot);
+	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
+	VoxRlWorldBuildTimings* timings = NULL);
 
 // Builds one complete CAMPAIGN block at the UpdateOperations entry for the
 // capturing player. Zone data is read without triggering a refresh.
