@@ -51,15 +51,6 @@ namespace
 		}
 	}
 
-	// True when the team's revealed values differ from the actual ones on
-	// this plot, which is the revealed-override membership rule.
-	bool HasRevealedOverride(const CvPlot& plot, TeamTypes team)
-	{
-		return plot.getRevealedImprovementType(team) != plot.getImprovementType() ||
-			plot.getRevealedOwner(team) != plot.getOwner() ||
-			plot.getRevealedRouteType(team) != plot.getRouteType();
-	}
-
 	// Returns the largest value in a unit's yield-indexed kill bonus array,
 	// matching the reduced representation consumed by the replay facade.
 	int MaxYieldFromKills(const CvUnitEntry& source, bool barbarian)
@@ -832,7 +823,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	std::vector<u8>* bitsets[] = { &data.worldRevealedBits, &data.worldVisibleBits,
 		&data.worldKnownVisibleBits, &data.worldInvisibleVisibleBits };
 	for (int kind = 0; kind < 4; ++kind) bitsets[kind]->resize(bitBytes * aliveTeams.size(), 0);
+	data.worldRevealedNoneOverrideBits.assign(bitBytes * aliveTeams.size(), 0);
 	bool hasInvisibleVisibility = false;
+	bool hasRevealedNoneOverrides = false;
 	for (size_t teamIndex = 0; teamIndex < aliveTeams.size(); ++teamIndex)
 	{
 		const TeamTypes team = aliveTeams[teamIndex];
@@ -843,12 +836,27 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 		{
 			CvPlot* plot = map.plotByIndex(plotIndex);
-			if (HasRevealedOverride(*plot, team))
+			const ImprovementTypes revealedImprovement = plot->getRevealedImprovementType(team);
+			const RouteTypes revealedRoute = plot->getRevealedRouteType(team);
+			const PlayerTypes revealedOwner = plot->getRevealedOwner(team);
+			if (revealedImprovement != plot->getImprovementType() || revealedOwner != plot->getOwner() || revealedRoute != plot->getRouteType())
 			{
-				RevealedOverrideRecord entry;
-				ZeroRecord(entry);
-				if (!CollectRevealedOverrideRecord(*plot, team, entry)) return false;
-				overrides.push_back(entry);
+				if (revealedImprovement == NO_IMPROVEMENT && revealedRoute == NO_ROUTE && revealedOwner == NO_PLAYER)
+				{
+					data.worldRevealedNoneOverrideBits[teamIndex * bitBytes + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));
+					hasRevealedNoneOverrides = true;
+				}
+				else
+				{
+					RevealedOverrideRecord entry;
+					ZeroRecord(entry);
+					entry.team = static_cast<i8>(team);
+					entry.plotIndex = plotIndex;
+					entry.revealedImprovementType = revealedImprovement;
+					entry.revealedRouteType = static_cast<i8>(revealedRoute);
+					entry.revealedOwner = revealedOwner;
+					overrides.push_back(entry);
+				}
 			}
 			const bool bits[] = { plot->isRevealed(team), plot->isVisible(team),
 				plot->GetKnownVisibilityCount(team) > 0, plot->isInvisibleVisibleUnit(team) };
@@ -860,6 +868,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		data.worldPlotTeams.push_back(row);
 	}
 	if (!hasInvisibleVisibility) data.worldInvisibleVisibleBits.clear();
+	if (!hasRevealedNoneOverrides) data.worldRevealedNoneOverrideBits.clear();
 
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
