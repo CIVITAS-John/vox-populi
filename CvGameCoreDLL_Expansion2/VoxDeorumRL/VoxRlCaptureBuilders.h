@@ -64,14 +64,12 @@ void VoxRlCollectPlayerResistanceRows(class CvPlayer* pPlayer, std::vector<Playe
 // by WORLD builds and sparse city replacements.
 bool VoxRlCollectCityRecord(class CvCity& city, PlayerTypes capturingPlayer, CityRecord& row);
 
-// Collects the generated unit fields and their builder-owned reduced values
-// shared by WORLD builds and sparse unit replacements.
-bool VoxRlCollectUnitRecord(class CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row);
-
-// Collects generated dynamic plot fields and the current tactical zone id
-// shared by WORLD builds and sparse plot replacements.
-bool VoxRlCollectPlotDynamicRecord(class CvPlot& plot, class CvTacticalAnalysisMap* zoneMap,
-	PlotDynamicRecord& row);
+// Collects the generated unit fields and their builder-owned reduced values shared by
+// WORLD builds and sparse unit replacements. The movement-count vector receives the
+// unit's nonzero terrain and feature extra-move counts in table order; the caller binds
+// them into the owning section through the generated range helper.
+bool VoxRlCollectUnitRecord(class CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row,
+	std::vector<UnitMovementCountRecord>& movementCounts);
 
 // Collects terrain and feature impassability for every team, including the
 // barbarian team, from the info tables and each team's researched technology.

@@ -374,7 +374,8 @@ bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecor
 	return true;
 }
 
-bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row)
+bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row,
+	std::vector<UnitMovementCountRecord>& movementCounts)
 {
 	if (!CollectUnitRecord(unit, capturingTeam, row)) return false;
 	// The passability arrays are builder-owned fixed-capacity fields, so the
@@ -384,31 +385,51 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
 	row.yieldFromKills = static_cast<i32>(MaxYieldFromKills(unit, false));
 	row.yieldFromBarbarianKills = static_cast<i32>(MaxYieldFromKills(unit, true));
-	row.hasAllowTerrainPassable = unit.GetPromotions().HasAllowTerrainPassable() ? 1 : 0;
-	if (row.hasAllowTerrainPassable != 0)
+	// Sparse movement counts carry only the nonzero per-terrain and per-feature values.
+	movementCounts.clear();
+	for (int terrain = 0; terrain < GC.getNumTerrainInfos(); ++terrain)
+	{
+		const int count = unit.getTerrainExtraMoveCount(static_cast<TerrainTypes>(terrain));
+		if (count == 0) continue;
+		UnitMovementCountRecord entry;
+		ZeroRecord(entry);
+		entry.kind = 0;
+		entry.typeIndex = static_cast<u8>(terrain);
+		entry.count = static_cast<i32>(count);
+		movementCounts.push_back(entry);
+	}
+	for (int feature = 0; feature < GC.getNumFeatureInfos(); ++feature)
+	{
+		const int count = unit.getFeatureExtraMoveCount(static_cast<FeatureTypes>(feature));
+		if (count == 0) continue;
+		UnitMovementCountRecord entry;
+		ZeroRecord(entry);
+		entry.kind = 1;
+		entry.typeIndex = static_cast<u8>(feature);
+		entry.count = static_cast<i32>(count);
+		movementCounts.push_back(entry);
+	}
+	// The promotion passability tables pack one bit per terrain or feature index.
+	row.setHasAllowTerrainPassable(unit.GetPromotions().HasAllowTerrainPassable());
+	if (row.hasAllowTerrainPassable())
 	{
 		for (int terrain = 0; terrain < GC.getNumTerrainInfos(); ++terrain)
 		{
-			row.allowTerrainPassable[terrain] = unit.GetPromotions().GetAllowTerrainPassable(
-				static_cast<TerrainTypes>(terrain), unit.getTeam()) ? 1 : 0;
+			if (unit.GetPromotions().GetAllowTerrainPassable(
+				static_cast<TerrainTypes>(terrain), unit.getTeam()))
+				row.allowTerrainPassable[terrain / 8] = static_cast<u8>(row.allowTerrainPassable[terrain / 8] | (1 << (terrain % 8)));
 		}
 	}
-	row.hasAllowFeaturePassable = unit.GetPromotions().HasAllowFeaturePassable() ? 1 : 0;
-	if (row.hasAllowFeaturePassable != 0)
+	row.setHasAllowFeaturePassable(unit.GetPromotions().HasAllowFeaturePassable());
+	if (row.hasAllowFeaturePassable())
 	{
 		for (int feature = 0; feature < GC.getNumFeatureInfos(); ++feature)
 		{
-			row.allowFeaturePassable[feature] = unit.GetPromotions().GetAllowFeaturePassable(
-				static_cast<FeatureTypes>(feature), unit.getTeam()) ? 1 : 0;
+			if (unit.GetPromotions().GetAllowFeaturePassable(
+				static_cast<FeatureTypes>(feature), unit.getTeam()))
+				row.allowFeaturePassable[feature / 8] = static_cast<u8>(row.allowFeaturePassable[feature / 8] | (1 << (feature % 8)));
 		}
 	}
-	return true;
-}
-
-bool VoxRlCollectPlotDynamicRecord(CvPlot& plot, CvTacticalAnalysisMap* zoneMap, PlotDynamicRecord& row)
-{
-	if (!CollectPlotDynamicRecord(plot, row)) return false;
-	row.zoneId = zoneMap != NULL ? static_cast<i32>(zoneMap->GetDominanceZoneIDWithoutRefresh(plot.GetPlotIndex())) : -1;
 	return true;
 }
 
@@ -786,13 +807,42 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	if (!VoxRlCollectZones(zoneMap, zones)) return false;
 	data.worldZones = zones.zones;
 	data.worldZoneNeighbors = zones.neighbors;
+	// Each plot's zone membership is encoded as a one-based index into the ordered table.
+	// The 16-bit form covers tables up to 65,535 rows; larger tables take the wide form.
+	std::map<int, unsigned int> zoneRowByZoneId;
+	for (size_t zoneIndex = 0; zoneIndex < zones.zones.size(); ++zoneIndex)
+		zoneRowByZoneId[zones.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
+	const bool wideZoneIndices = zones.zones.size() > 65535U;
 	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 	{
 		CvPlot* plot = map.plotByIndex(plotIndex);
 		if (plot == NULL) return false;
-		PlotDynamicRecord row;
+		PlotCoreRecord row;
 		ZeroRecord(row);
-		if (!VoxRlCollectPlotDynamicRecord(*plot, zoneMap, row)) return false;
+		if (!CollectPlotCoreRecord(*plot, row)) return false;
+		data.worldPlotCore.push_back(row);
+		const i32 plotZone = zones.plotZones[plotIndex];
+		unsigned int zoneTableIndex = 0;
+		if (plotZone != -1)
+		{
+			std::map<int, unsigned int>::const_iterator zoneRow = zoneRowByZoneId.find(plotZone);
+			if (zoneRow == zoneRowByZoneId.end()) return false;
+			zoneTableIndex = zoneRow->second;
+		}
+		if (wideZoneIndices)
+		{
+			PlotZoneIndexWideRecord indexRow;
+			ZeroRecord(indexRow);
+			indexRow.zoneTableIndex = zoneTableIndex;
+			data.worldPlotZonesWide.push_back(indexRow);
+		}
+		else
+		{
+			PlotZoneIndexRecord indexRow;
+			ZeroRecord(indexRow);
+			indexRow.zoneTableIndex = static_cast<u16>(zoneTableIndex);
+			data.worldPlotZones.push_back(indexRow);
+		}
 		std::vector<UnitRecord> units;
 		// The default plot node chain omits trade and other managed layers.
 		// WORLD ranges retain every physical unit so owner iteration and later
@@ -804,15 +854,20 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			if (unit == NULL || unit->isDelayedDeath()) continue;
 			UnitRecord unitRow;
 			ZeroRecord(unitRow);
-			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow)) return false;
+			std::vector<UnitMovementCountRecord> movementCounts;
+			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow, movementCounts)) return false;
+			// The range helper appends the entries to the section in captured unit order and
+			// assigns this row's first and count.
+			if (!AppendUnitRecordMovementCountRange(&unitRow, &data, movementCounts)) return false;
 			std::map<VoxRlEntityKey, unsigned int>::const_iterator iteration =
 				iterationByUnit.find(VoxRlEntityKey(static_cast<int>(unit->getOwner()), unit->GetID()));
 			if (iteration == iterationByUnit.end()) return false;
 			unitRow.iterationIndex = iteration->second;
 			units.push_back(unitRow);
 		}
-		if (!AppendPlotDynamicRecordUnitRange(&row, &data, units)) return false;
-		data.worldPlots.push_back(row);
+		// Unit rows append in captured plot order; the loader reconstructs each
+		// plot's packed range from this sequence.
+		data.worldUnits.insert(data.worldUnits.end(), units.begin(), units.end());
 	}
 	if (!VoxRlCollectTeamPassabilityRows(data.worldTeamPassability)) return false;
 	teamPassabilitySnapshot = data.worldTeamPassability;
@@ -1109,7 +1164,9 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 	if (!AppendRequestHeaderRecordDangerEventRange(&output, data.requestDangerEvents) ||
 		!AppendRequestHeaderRecordTeamRelationRange(&output, data.requestTeamRelations) ||
 		!AppendRequestHeaderRecordDeltaUnitRange(&output, data.requestDeltaUnits) ||
-		!AppendRequestHeaderRecordDeltaPlotRange(&output, data.requestDeltaPlots) ||
+		!AppendRequestHeaderRecordDeltaPlotCoreRange(&output, data.requestDeltaPlots) ||
+		!AppendRequestHeaderRecordDeltaPlotZoneRange(&output, data.requestDeltaPlotZones) ||
+		!AppendRequestHeaderRecordDeltaPlotZoneWideRange(&output, data.requestDeltaPlotZonesWide) ||
 		!AppendRequestHeaderRecordZoneReplacementRange(&output, data.requestZoneReplacements) ||
 		!AppendRequestHeaderRecordDeltaCityRange(&output, data.requestDeltaCities) ||
 		!AppendRequestHeaderRecordRemovedUnitRange(&output, data.requestRemovedUnits) ||

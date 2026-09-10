@@ -117,7 +117,7 @@ struct VoxRlCapture::Segment
 
 	// Last emitted plot and city records for the omit-unchanged comparison.
 	// Only entities emitted as deltas in this segment are retained.
-	std::map<VoxRlEntityKey, RequestDeltaPlotRecord> lastPlotRows;
+	std::map<VoxRlEntityKey, RequestDeltaPlotCoreRecord> lastPlotRows;
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 
@@ -1184,6 +1184,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	VoxRlZoneSnapshot zones;
 	if (!VoxRlCollectZones(zoneMap, zones) || zones.plotZones.size() != segment.zoneSnapshot.plotZones.size())
 		return false;
+	std::vector<int> zoneChangedPlots;
 	if (!SameRows(zones.zones, segment.zoneSnapshot.zones) ||
 		!SameRows(zones.neighbors, segment.zoneSnapshot.neighbors))
 	{
@@ -1192,10 +1193,24 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		VoxRlMirrorSparseRows(zones.neighbors, data.requestZoneNeighbors);
 	}
 	for (int plot = 0; plot < plotCount; ++plot)
-		if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot]) segment.dirtyPlots.insert(plot);
+	{
+		if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot])
+		{
+			segment.dirtyPlots.insert(plot);
+			zoneChangedPlots.push_back(plot);
+		}
+	}
 	segment.zoneSnapshot.zones.swap(zones.zones);
 	segment.zoneSnapshot.neighbors.swap(zones.neighbors);
 	segment.zoneSnapshot.plotZones.swap(zones.plotZones);
+	// After the snapshot swap the retained table is exactly the table this request's
+	// assignments decode against: the replacement when one is carried, and otherwise
+	// the previously accepted table. One-based indices address its ordered rows, and
+	// the 16-bit form covers up to 65,535 rows before the wide form takes over.
+	std::map<int, unsigned int> zoneRowByZoneId;
+	for (size_t zoneIndex = 0; zoneIndex < segment.zoneSnapshot.zones.size(); ++zoneIndex)
+		zoneRowByZoneId[segment.zoneSnapshot.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
+	const bool wideZoneIndices = segment.zoneSnapshot.zones.size() > 65535U;
 
 	// Removed units come first so an upsert of the same key is refused.
 	for (std::set<VoxRlEntityKey>::const_iterator key = segment.removedUnits.begin();
@@ -1235,31 +1250,38 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		}
 		UnitRecord record;
 		std::memset(&record, 0, sizeof(record));
-		if (!VoxRlCollectUnitRecord(*pUnit, capturingTeam, record))
+		std::vector<UnitMovementCountRecord> movementCounts;
+		if (!VoxRlCollectUnitRecord(*pUnit, capturingTeam, record, movementCounts))
 		{
 			return false;
 		}
 		record.iterationIndex = UnitIterationIndex(static_cast<PlayerTypes>((*key).owner), (*key).id);
 		RequestDeltaUnitRecord delta;
 		std::memcpy(&delta, &record, sizeof(record));
+		// Each delta carries an independent range into the request-local section; the
+		// mirrored entries follow delta-row order and an empty range clears both tables.
+		std::vector<RequestUnitMovementCountRecord> requestCounts;
+		VoxRlMirrorSparseRows(movementCounts, requestCounts);
+		if (!AppendRequestDeltaUnitRecordMovementCountRange(&delta, &data, requestCounts)) return false;
 		data.requestDeltaUnits.push_back(delta);
 	}
 
+	// Physical plot deltas carry only the dense core fields; zone membership travels
+	// in its own assignment rows driven by the native zone comparison. The dedupe map
+	// retains the last emitted core row.
 	for (std::set<int>::const_iterator plotIndex = segment.dirtyPlots.begin();
 		plotIndex != segment.dirtyPlots.end(); ++plotIndex)
 	{
 		if (*plotIndex < 0 || *plotIndex >= plotCount) continue;
 		CvPlot* plot = map.plotByIndex(*plotIndex);
 		if (plot == NULL) continue;
-		PlotDynamicRecord record;
+		PlotCoreRecord record;
 		std::memset(&record, 0, sizeof(record));
-		if (!VoxRlCollectPlotDynamicRecord(*plot, zoneMap, record))
+		if (!CollectPlotCoreRecord(*plot, record))
 		{
 			return false;
 		}
-		// The packed unit range belongs to the WORLD builder; a delta plot
-		// row carries no unit range and the loader merges the rest.
-		RequestDeltaPlotRecord delta;
+		RequestDeltaPlotCoreRecord delta;
 		std::memset(&delta, 0, sizeof(delta));
 		delta.plotIndex = static_cast<i32>(*plotIndex);
 		delta.effectiveOwningCityId = record.effectiveOwningCityId;
@@ -1268,7 +1290,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		delta.reconCount = record.reconCount;
 		delta.extraMovePathCost = record.extraMovePathCost;
 		delta.unitIncrement = record.unitIncrement;
-		delta.zoneId = record.zoneId;
 		delta.owningCityId = record.owningCityId;
 		delta.effectiveOwningCityOwner = record.effectiveOwningCityOwner;
 		delta.beingWorked = record.beingWorked;
@@ -1282,7 +1303,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		delta.freeMoveAcross = record.freeMoveAcross;
 		delta.owningCityOwner = record.owningCityOwner;
 		const VoxRlEntityKey plotKey(-2, *plotIndex);
-		std::map<VoxRlEntityKey, RequestDeltaPlotRecord>::const_iterator last =
+		std::map<VoxRlEntityKey, RequestDeltaPlotCoreRecord>::const_iterator last =
 			segment.lastPlotRows.find(plotKey);
 		if (last != segment.lastPlotRows.end() && std::memcmp(&last->second, &delta, sizeof(delta)) == 0)
 		{
@@ -1290,6 +1311,38 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		}
 		segment.lastPlotRows[plotKey] = delta;
 		data.requestDeltaPlots.push_back(delta);
+	}
+
+	// Zone assignment deltas carry every plot whose native zone id changed, encoded
+	// against the applicable table. Both widths stay present; exactly one carries rows.
+	for (std::vector<int>::const_iterator plotIndex = zoneChangedPlots.begin();
+		plotIndex != zoneChangedPlots.end(); ++plotIndex)
+	{
+		if (*plotIndex < 0 || *plotIndex >= plotCount) return false;
+		const i32 plotZone = segment.zoneSnapshot.plotZones[*plotIndex];
+		unsigned int zoneTableIndex = 0;
+		if (plotZone != -1)
+		{
+			std::map<int, unsigned int>::const_iterator zoneRow = zoneRowByZoneId.find(plotZone);
+			if (zoneRow == zoneRowByZoneId.end()) return false;
+			zoneTableIndex = zoneRow->second;
+		}
+		if (wideZoneIndices)
+		{
+			RequestDeltaPlotZoneWideRecord row;
+			std::memset(&row, 0, sizeof(row));
+			row.plotIndex = static_cast<i32>(*plotIndex);
+			row.zoneTableIndex = zoneTableIndex;
+			data.requestDeltaPlotZonesWide.push_back(row);
+		}
+		else
+		{
+			RequestDeltaPlotZoneRecord row;
+			std::memset(&row, 0, sizeof(row));
+			row.plotIndex = static_cast<i32>(*plotIndex);
+			row.zoneTableIndex = static_cast<u16>(zoneTableIndex);
+			data.requestDeltaPlotZones.push_back(row);
+		}
 	}
 
 	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyCities.begin();
