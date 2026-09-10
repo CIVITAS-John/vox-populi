@@ -34,6 +34,28 @@ static bool VoxRlHasValidSectionCount(
     return true;
 }
 
+// Checks retained identity options against already validated header pointers.
+static VoxRlBlockStatus VoxRlCheckIdentityOptions(
+    const VoxRlFrameHeader* frame,
+    const VoxRlImageHeader* image,
+    const VoxRlBlockValidationOptions* options)
+{
+    if (options == 0) return VOX_RL_BLOCK_OK;
+    if (frame == 0 || image == 0) return VOX_RL_BLOCK_TRUNCATED_IMAGE;
+    if (options->checkDecisionId && frame->decisionId != options->decisionId) return VOX_RL_BLOCK_EXPECTED_DECISION_ID_MISMATCH;
+    if (options->checkSession &&
+        (image->session.words[0] != options->session.words[0] || image->session.words[1] != options->session.words[1] ||
+         image->session.words[2] != options->session.words[2] || image->session.words[3] != options->session.words[3])) return VOX_RL_BLOCK_BAD_SESSION;
+    if (options->checkTurn && image->turn != options->turn) return VOX_RL_BLOCK_BAD_TURN;
+    if (options->checkPlayer && image->player != options->player) return VOX_RL_BLOCK_BAD_PLAYER;
+    if (options->checkGeneration && image->generation != options->generation) return VOX_RL_BLOCK_BAD_GENERATION;
+    if (options->checkStaticGeneration && image->staticGeneration != options->staticGeneration) return VOX_RL_BLOCK_BAD_STATIC_GENERATION;
+    if (options->checkWorldGeneration && image->worldGeneration != options->worldGeneration) return VOX_RL_BLOCK_BAD_WORLD_GENERATION;
+    if (options->checkCampaignGeneration && image->campaignGeneration != options->campaignGeneration) return VOX_RL_BLOCK_BAD_CAMPAIGN_GENERATION;
+    if (options->checkDeltaSequence && image->deltaSequence != options->deltaSequence) return VOX_RL_BLOCK_BAD_DELTA_SEQUENCE;
+    return VOX_RL_BLOCK_OK;
+}
+
 // Finds one validated directory entry without exposing unchecked image bytes.
 static const VoxRlSectionDirectoryEntry* VoxRlFindDirectoryEntry(
     const VoxRlSectionDirectoryEntry* directory,
@@ -494,47 +516,8 @@ bool VoxRlBlockView::OpenInternal(
             return Fail(VOX_RL_BLOCK_BAD_PLAYER);
         }
     }
-    if (options != 0)
-    {
-        if (options->checkDecisionId && frame->decisionId != options->decisionId)
-        {
-            return Fail(VOX_RL_BLOCK_EXPECTED_DECISION_ID_MISMATCH);
-        }
-        if (options->checkSession &&
-            (imageHeader->session.words[0] != options->session.words[0] || imageHeader->session.words[1] != options->session.words[1] ||
-             imageHeader->session.words[2] != options->session.words[2] || imageHeader->session.words[3] != options->session.words[3]))
-        {
-            return Fail(VOX_RL_BLOCK_BAD_SESSION);
-        }
-        if (options->checkTurn && imageHeader->turn != options->turn)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_TURN);
-        }
-        if (options->checkPlayer && imageHeader->player != options->player)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_PLAYER);
-        }
-        if (options->checkGeneration && imageHeader->generation != options->generation)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_GENERATION);
-        }
-        if (options->checkStaticGeneration && imageHeader->staticGeneration != options->staticGeneration)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_STATIC_GENERATION);
-        }
-        if (options->checkWorldGeneration && imageHeader->worldGeneration != options->worldGeneration)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_WORLD_GENERATION);
-        }
-        if (options->checkCampaignGeneration && imageHeader->campaignGeneration != options->campaignGeneration)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_CAMPAIGN_GENERATION);
-        }
-        if (options->checkDeltaSequence && imageHeader->deltaSequence != options->deltaSequence)
-        {
-            return Fail(VOX_RL_BLOCK_BAD_DELTA_SEQUENCE);
-        }
-    }
+    const VoxRlBlockStatus optionsStatus = VoxRlCheckIdentityOptions(frame, imageHeader, options);
+    if (optionsStatus != VOX_RL_BLOCK_OK) return Fail(optionsStatus);
     bytes_ = bytes;
     byteLength_ = completeLength;
     frameHeader_ = frame;
@@ -542,6 +525,12 @@ bool VoxRlBlockView::OpenInternal(
     directory_ = directory;
     status_ = VOX_RL_BLOCK_OK;
     return true;
+}
+
+// Checks retained identity options against the headers from the latest successful open.
+VoxRlBlockStatus VoxRlBlockView::CheckIdentityOptions(const VoxRlBlockValidationOptions* options) const
+{
+    return VoxRlCheckIdentityOptions(frameHeader_, imageHeader_, options);
 }
 
 // Returns the status from the latest validation attempt.

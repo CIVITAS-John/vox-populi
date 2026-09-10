@@ -12066,13 +12066,15 @@ void CvPlot::IncreaseKnownVisibilityCount(TeamTypes eTeam, TeamTypes eTeam2)
 
 void CvPlot::ResetKnownVisibility()
 {
-	// Vox Deorum: capture the reset as known-visible flips for teams whose bit clears.
+	// Vox Deorum: capture the reset as one operation per affected team. The
+	// reader clears each named team's complete known-visible bitset before the
+	// same request's ordinary flips, so no per-plot rows are needed.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 	{
 		for (int voxTeam = 0; voxTeam < MAX_TEAMS; ++voxTeam)
 		{
 			if (GetKnownVisibilityCount(static_cast<TeamTypes>(voxTeam)) > 0)
-				VoxRlCapture::GetInstance().NoteVisibilityChanged(static_cast<TeamTypes>(voxTeam), GetPlotIndex(), 2, false);
+				VoxRlCapture::GetInstance().NoteKnownVisibilityReset(static_cast<TeamTypes>(voxTeam));
 		}
 	}
 

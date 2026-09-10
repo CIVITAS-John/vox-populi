@@ -18,6 +18,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstring>
 #include <sstream>
 
@@ -37,6 +38,44 @@ namespace
 		return left.size() == right.size() && (left.empty() ||
 			std::memcmp(&left[0], &right[0], left.size() * sizeof(Record)) == 0);
 	}
+
+	// Returns a high-resolution monotonic timestamp in nanoseconds for the
+	// opt-in producer timings.
+	unsigned __int64 TimingNanoseconds()
+	{
+		static LONGLONG frequency = 0;
+		if (frequency == 0)
+		{
+			LARGE_INTEGER period;
+			if (!QueryPerformanceFrequency(&period)) return 0;
+			frequency = period.QuadPart;
+		}
+		LARGE_INTEGER now;
+		if (!QueryPerformanceCounter(&now)) return 0;
+		// Seconds and remainder are converted separately so the multiply cannot
+		// overflow the 64-bit total at any uptime.
+		return static_cast<unsigned __int64>(now.QuadPart / frequency) * 1000000000ULL +
+			(static_cast<unsigned __int64>(now.QuadPart % frequency) * 1000000000ULL) /
+			static_cast<unsigned __int64>(frequency);
+	}
+
+	// Adds one scoped interval to a nanosecond total while timings are enabled.
+	class ScopedTiming
+	{
+	public:
+		ScopedTiming(bool enabled, unsigned __int64& total)
+			: m_enabled(enabled), m_total(total), m_start(enabled ? TimingNanoseconds() : 0)
+		{
+		}
+		~ScopedTiming()
+		{
+			if (m_enabled) m_total += TimingNanoseconds() - m_start;
+		}
+	private:
+		bool m_enabled;
+		unsigned __int64& m_total;
+		unsigned __int64 m_start;
+	};
 }
 
 const bool gVoxRlCaptureEnabled = ReadCaptureEnabled();
@@ -71,11 +110,11 @@ struct VoxRlCapture::Segment
 	// publication. Bounded by the pending byte budget.
 	std::vector<VoxRlFrameEntry> frameTable;
 	std::vector<unsigned char> pendingBytes;
-	// The checkpoint WORLD is retained until the campaign seam permits
-	// publication, so unpublished observers leave no WORLD file behind.
-	// Directories follow the same rule: they are created only when a file
-	// is about to be written.
-	std::vector<unsigned char> worldBytes;
+	// The checkpoint WORLD stays in its completed owned storage until the
+	// campaign seam permits publication, so unpublished observers leave no
+	// WORLD file behind and no duplicate bytes are held. Directories follow
+	// the same rule: they are created only when a file is about to be written.
+	VoxRlOwnedBlockStorage worldStorage;
 	VoxRlZoneSnapshot zoneSnapshot;
 	unsigned int pendingCount;
 	unsigned int committedFrameCount;
@@ -108,18 +147,30 @@ struct VoxRlCapture::Segment
 	std::set<VoxRlEntityKey> removedCities;
 	std::set<int> dirtyPlots;
 	std::map<VoxRlVisibilityKey, unsigned char> visibilityFlips;
+	std::set<int> visibilityResets;                                    // known-visibility reset teams
 	std::map<VoxRlEntityKey, unsigned char> revealedOverrideUpserts;  // team-major key, 1 = present
 	std::set<VoxRlEntityKey> removedRevealedOverrides;                // (team, plot)
 	std::set<int> dirtyInterceptors;
 	std::map<VoxRlEntityKey, unsigned char> dirtyRelations;           // (team, otherTeam)
 	std::vector<RequestDangerEventRecord> pendingDangerEvents;
-	bool sparseDirty[6];
+	// Sparse family dirty entity sets: creation, promotion, and counter hooks mark
+	// only the affected entities, and removals drop their keys from collection work.
+	std::set<VoxRlEntityKey> dirtyUnitModifiers;
+	std::set<VoxRlEntityKey> dirtyUnitPlagues;
+	std::set<VoxRlEntityKey> dirtyUnitBlockedPromotions;
+	std::set<VoxRlEntityKey> dirtyUnitAttackCounts;
+	std::set<int> dirtyPlayerResistances;
+	std::set<VoxRlEntityKey> dirtyCityAttackCounts;
 
 	// Last emitted plot and city records for the omit-unchanged comparison.
 	// Only entities emitted as deltas in this segment are retained.
 	std::map<VoxRlEntityKey, RequestDeltaPlotCoreRecord> lastPlotRows;
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
+
+	// The zone-id-to-row decode table of the currently accepted zone snapshot;
+	// rebuilt only when a replacement accepts a new table.
+	std::map<int, unsigned int> zoneRowByZoneId;
 
 	// Iteration index bookkeeping across deltas.
 	std::map<VoxRlEntityKey, unsigned int> unitIteration;
@@ -131,6 +182,41 @@ struct VoxRlCapture::Segment
 	bool stagingRequest;
 	VoxRlRequestData staged;
 
+	// Opt-in timing accumulators for this segment, reported at closure. All
+	// time members are nanoseconds from the high-resolution performance
+	// counter; the byte and count members carry the measured volumes.
+	struct Timings
+	{
+		unsigned __int64 worldBuildNs;
+		unsigned __int64 campaignBuildNs;
+		unsigned __int64 deltaCollectNs;
+		unsigned __int64 requestBuildNs;
+		unsigned __int64 resultBuildNs;
+		unsigned __int64 streamWriteNs;
+		unsigned __int64 commitNs;
+		unsigned __int64 flushNs;
+		unsigned __int64 worldBuildBytes;
+		unsigned __int64 campaignBuildBytes;
+		unsigned __int64 requestBytes;
+		unsigned __int64 resultBytes;
+		unsigned __int64 streamWriteBytes;
+		unsigned __int64 indexBytes;
+		unsigned __int64 deltaRows;
+		unsigned int deltaCollectCount;
+		unsigned int requestCount;
+		unsigned int resultCount;
+		unsigned int commitCount;
+		Timings()
+			: worldBuildNs(0), campaignBuildNs(0), deltaCollectNs(0), requestBuildNs(0), resultBuildNs(0),
+			streamWriteNs(0), commitNs(0), flushNs(0),
+			worldBuildBytes(0), campaignBuildBytes(0), requestBytes(0), resultBytes(0),
+			streamWriteBytes(0), indexBytes(0), deltaRows(0),
+			deltaCollectCount(0), requestCount(0), resultCount(0), commitCount(0)
+		{
+		}
+	};
+	Timings timings;
+
 	Segment()
 		: player(NO_PLAYER), turn(-1), staticGeneration(0), worldGeneration(0), campaignGeneration(0),
 		staticFramedLength(0), campaignFramedLength(0), worldFramedLength(0),
@@ -140,7 +226,6 @@ struct VoxRlCapture::Segment
 		stagingRequest(false)
 	{
 		closureReason[0] = '\0';
-		for (int index = 0; index < 6; ++index) sparseDirty[index] = false;
 	}
 };
 
@@ -164,7 +249,7 @@ struct VoxRlCapture::Engagement
 };
 
 VoxRlCaptureConfig::VoxRlCaptureConfig()
-	: enabled(false), filterPlayers(false), filterTurns(false)
+	: enabled(false), filterPlayers(false), filterTurns(false), timings(false)
 {
 }
 
@@ -223,6 +308,28 @@ namespace
 		}
 		return text;
 	}
+
+	// Counts the rows one collected request carries across every section.
+	unsigned __int64 CountRequestRows(const VoxRlRequestData& data)
+	{
+		return data.requestDangerEvents.size() + data.requestTeamRelations.size() +
+			data.requestDeltaUnits.size() + data.requestDeltaPlots.size() +
+			data.requestDeltaPlotZones.size() + data.requestDeltaPlotZonesWide.size() +
+			data.requestZoneReplacements.size() + data.requestZoneNeighbors.size() +
+			data.requestDeltaCities.size() + data.requestRemovedUnits.size() +
+			data.requestRemovedCities.size() + data.requestTeamPassability.size() +
+			data.requestVisibilityFlips.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
+			data.requestRemovedRevealedOverrides.size() + data.requestKnownAttackers.size() +
+			data.requestInterceptorReplacements.size() + data.requestInterceptorEntries.size() +
+			data.requestParticipants.size() + data.requestDroppedUnits.size() +
+			data.requestUnitModifierReplacements.size() + data.requestUnitModifierRows.size() +
+			data.requestUnitPlagueReplacements.size() + data.requestUnitPlagueRows.size() +
+			data.requestUnitBlockedPromotionReplacements.size() + data.requestUnitBlockedPromotionRows.size() +
+			data.requestUnitAttackCountReplacements.size() + data.requestUnitAttackCountRows.size() +
+			data.requestPlayerResistanceReplacements.size() + data.requestPlayerResistanceRows.size() +
+			data.requestCityAttackCountReplacements.size() + data.requestCityAttackCountRows.size() +
+			data.requestDeltaUnitMovementCounts.size();
+	}
 }
 
 VoxRlCapture& VoxRlCapture::GetInstance()
@@ -241,6 +348,10 @@ VoxRlCapture::VoxRlCapture()
 	m_worldReplacementPending(false),
 	m_decisionIdCounter(0),
 	m_identityPendingLogged(false),
+	m_staticBuildNs(0),
+	m_staticBuildBytes(0),
+	m_zoneSnapshotDirty(false),
+	m_teamPassabilityDirty(false),
 	m_campaignTurnPlayer(0xFFFFFFFF),
 	m_campaignTurn(-1),
 	m_campaignStaticGeneration(0),
@@ -361,6 +472,10 @@ bool VoxRlCapture::ResolveConfiguration()
 			m_config.players.insert(atoi(entry.c_str()));
 		}
 	}
+	// The opt-in producer timings accumulate in memory and report at segment
+	// closure, so an armed game pays one branch per timing point.
+	const char* timings = getenv("VOX_RL_CAPTURE_TIMINGS");
+	m_config.timings = timings != NULL && timings[0] == '1';
 	return true;
 }
 
@@ -454,6 +569,10 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_worldReplacementPending = false;
 	m_decisionIdCounter = 0;
 	m_identityPendingLogged = false;
+	m_staticBuildNs = 0;
+	m_staticBuildBytes = 0;
+	m_zoneSnapshotDirty = false;
+	m_teamPassabilityDirty = false;
 	m_shuttingDown = false;
 	m_concluded = false;
 	m_config = VoxRlCaptureConfig();
@@ -499,9 +618,39 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 	}
 	if (!m_segment->failed && m_segment->published)
 	{
+		// Closure owns the durability sequence: the stream becomes durable
+		// before the closing index commit is appended, and the index becomes
+		// durable before its handle closes. Ordinary event commits perform no
+		// synchronization, so this is the only point where the segment's
+		// committed prefix is guaranteed to survive power loss.
+		bool flushed = false;
+		{
+			ScopedTiming timing(m_config.timings, m_segment->timings.flushNs);
+			flushed = m_segmentStream.Flush();
+		}
+		if (!flushed)
+		{
+			FailSegment("captureFailure");
+			return;
+		}
 		// A closure-only batch commits without adding binary frames.
 		CommitBatch(true, closureReason);
+		if (m_segment == NULL || m_segment->failed)
+		{
+			return;
+		}
+		bool indexFlushed = false;
+		{
+			ScopedTiming timing(m_config.timings, m_segment->timings.flushNs);
+			indexFlushed = m_segmentIndex.Flush();
+		}
+		if (!indexFlushed)
+		{
+			FailSegment("captureFailure");
+			return;
+		}
 	}
+	WriteTimingSummary(closureReason);
 	delete m_segment;
 	m_segment = NULL;
 	m_segmentStream.Close();
@@ -521,6 +670,7 @@ void VoxRlCapture::FailSegment(const char* closureReason)
 		log->Msg("Capture segment failed: stage=%s player=%d turn=%d.\n", closureReason,
 			static_cast<int>(m_segment->player), m_segment->turn);
 	}
+	WriteTimingSummary(closureReason);
 	// Retain the prior committed prefix exactly as it is on disk. No
 	// further index lines are appended after a damaged tail; capture
 	// restarts at a fresh supported checkpoint.
@@ -551,6 +701,40 @@ void VoxRlCapture::AddCoverageOmission(const char* reason)
 	m_segment->coverageLines.push_back(line);
 }
 
+// Writes one segment's accumulated timing summary to VoxRlCapture.log. The
+// timings are opt-in, accumulate in memory, and publish only at this segment
+// boundary, so ordinary events never pay a log write.
+void VoxRlCapture::WriteTimingSummary(const char* closureReason)
+{
+	if (m_segment == NULL || !m_config.timings)
+	{
+		return;
+	}
+	const Segment::Timings& t = m_segment->timings;
+	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+	if (log == NULL)
+	{
+		m_staticBuildNs = 0;
+		m_staticBuildBytes = 0;
+		return;
+	}
+	log->Msg("Capture timings: player=%d turn=%d world=%u closure=%s frames=%u commits=%u.\n",
+		static_cast<int>(m_segment->player), m_segment->turn, m_segment->worldGeneration,
+		closureReason != NULL ? closureReason : "unknown",
+		static_cast<unsigned int>(m_segment->frameTable.size()), t.commitCount);
+	log->Msg("Capture timings: builds static=%I64uns bytes=%I64u world=%I64uns bytes=%I64u campaign=%I64uns bytes=%I64u.\n",
+		m_staticBuildNs, m_staticBuildBytes, t.worldBuildNs, t.worldBuildBytes,
+		t.campaignBuildNs, t.campaignBuildBytes);
+	log->Msg("Capture timings: deltas count=%u collect=%I64uns rows=%I64u requests=%u build=%I64uns bytes=%I64u.\n",
+		t.deltaCollectCount, t.deltaCollectNs, t.deltaRows, t.requestCount, t.requestBuildNs, t.requestBytes);
+	log->Msg("Capture timings: results=%u build=%I64uns bytes=%I64u stream writes=%I64uns bytes=%I64u.\n",
+		t.resultCount, t.resultBuildNs, t.resultBytes, t.streamWriteNs, t.streamWriteBytes);
+	log->Msg("Capture timings: commits=%u commit=%I64uns indexBytes=%I64u closureFlush=%I64uns.\n",
+		t.commitCount, t.commitNs, t.indexBytes, t.flushNs);
+	m_staticBuildNs = 0;
+	m_staticBuildBytes = 0;
+}
+
 bool VoxRlCapture::BuildAndWriteStatic()
 {
 	VoxRlBlockIdentity identity;
@@ -562,18 +746,22 @@ bool VoxRlCapture::BuildAndWriteStatic()
 
 	VoxRlOwnedBlockStorage storage;
 	unsigned int length = 0;
-	if (!VoxRlBuildStaticBlock(identity, storage, length))
-	{
-		return false;
-	}
-	const std::string directory = m_gameDirectory + "/baselines/static";
 	char fileName[32];
-	sprintf_s(fileName, 32, "static-%u.bin", m_staticGeneration);
-	const std::string path = directory + "/" + fileName;
-	VoxRlOutputFile file;
-	if (!file.OpenNew(path.c_str()) || !file.Write(storage.Bytes(), length) || !file.Flush())
 	{
-		return false;
+		ScopedTiming timing(m_config.timings, m_staticBuildNs);
+		if (!VoxRlBuildStaticBlock(identity, storage, length))
+		{
+			return false;
+		}
+		const std::string directory = m_gameDirectory + "/baselines/static";
+		sprintf_s(fileName, 32, "static-%u.bin", m_staticGeneration);
+		const std::string path = directory + "/" + fileName;
+		VoxRlOutputFile file;
+		if (!file.OpenNew(path.c_str()) || !file.Write(storage.Bytes(), length) || !file.Flush())
+		{
+			return false;
+		}
+		m_staticBuildBytes += length;
 	}
 	m_staticRelPath = "baselines/static/" + std::string(fileName);
 	m_staticFramedLength = length;
@@ -604,19 +792,31 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	VoxRlOwnedBlockStorage storage;
 	unsigned int length = 0;
 	std::vector<TeamPassabilityRecord> teamPassability;
-	if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot, teamPassability))
 	{
-		return false;
+		ScopedTiming timing(m_config.timings, m_segment->timings.worldBuildNs);
+		if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot, teamPassability))
+		{
+			return false;
+		}
 	}
+	segment.timings.worldBuildBytes += length;
 	segment.lastTeamPassabilityRows.clear();
 	for (size_t index = 0; index < teamPassability.size(); ++index)
 		segment.lastTeamPassabilityRows[static_cast<int>(teamPassability[index].team)] = teamPassability[index];
+	// The WORLD build accepts a fresh zone snapshot and the collected team
+	// passability table, so both dirty markers reset here.
+	m_zoneSnapshotDirty = false;
+	m_teamPassabilityDirty = false;
+	segment.zoneRowByZoneId.clear();
+	for (size_t zoneIndex = 0; zoneIndex < segment.zoneSnapshot.zones.size(); ++zoneIndex)
+		segment.zoneRowByZoneId[segment.zoneSnapshot.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
 	char fileName[32];
 	sprintf_s(fileName, 32, "world-%u.bin", segment.worldGeneration);
 	segment.worldRelPath = folder + std::string("/") + fileName;
 	segment.worldFramedLength = length;
-	const unsigned char* bytes = static_cast<const unsigned char*>(storage.Bytes());
-	segment.worldBytes.assign(bytes, bytes + length);
+	// The completed WORLD keeps its built storage; the swap transfers the
+	// allocation without copying the bytes.
+	segment.worldStorage.Swap(&storage);
 	SeedWorldIterationIndices();
 	return true;
 }
@@ -624,17 +824,17 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 bool VoxRlCapture::WriteWorldBaseline()
 {
 	Segment& segment = *m_segment;
-	if (segment.worldBytes.empty() || segment.worldRelPath.empty())
+	if (segment.worldStorage.ByteLength() == 0 || segment.worldRelPath.empty())
 	{
 		return false;
 	}
 	const std::string path = m_gameDirectory + "/" + segment.worldRelPath;
 	VoxRlOutputFile file;
-	if (!file.OpenNew(path.c_str()) || !file.Write(&segment.worldBytes[0], segment.worldFramedLength) || !file.Flush())
+	if (!file.OpenNew(path.c_str()) || !file.Write(segment.worldStorage.Bytes(), segment.worldFramedLength) || !file.Flush())
 	{
 		return false;
 	}
-	segment.worldBytes.clear();
+	segment.worldStorage.Clear();
 	return true;
 }
 
@@ -659,17 +859,21 @@ bool VoxRlCapture::BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn)
 
 	VoxRlOwnedBlockStorage storage;
 	unsigned int length = 0;
-	if (!VoxRlBuildCampaignBlock(identity, ePlayer, storage, length))
-	{
-		return false;
-	}
 	char fileName[36];
-	sprintf_s(fileName, 36, "campaign-%u.bin", campaignGeneration);
-	const std::string path = directory + "/" + fileName;
-	VoxRlOutputFile file;
-	if (!file.OpenNew(path.c_str()) || !file.Write(storage.Bytes(), length) || !file.Flush())
 	{
-		return false;
+		ScopedTiming timing(m_config.timings, segment.timings.campaignBuildNs);
+		if (!VoxRlBuildCampaignBlock(identity, ePlayer, storage, length))
+		{
+			return false;
+		}
+		sprintf_s(fileName, 36, "campaign-%u.bin", campaignGeneration);
+		const std::string path = directory + "/" + fileName;
+		VoxRlOutputFile file;
+		if (!file.OpenNew(path.c_str()) || !file.Write(storage.Bytes(), length) || !file.Flush())
+		{
+			return false;
+		}
+		segment.timings.campaignBuildBytes += length;
 	}
 	m_campaignTurnPlayer = static_cast<unsigned int>(ePlayer);
 	m_campaignTurn = iTurn;
@@ -1023,13 +1227,24 @@ void VoxRlCapture::CommitBatch(bool closureOnly, const char* closureReason)
 	}
 	commit += "}\n";
 
-	// The stream must be durable before its index commit makes its bytes
-	// visible to a reader after a process or system crash.
-	if (!m_segmentStream.Flush() || !AppendIndexLine(batch.c_str()) ||
-		!AppendIndexLine(commit.c_str()) || !m_segmentIndex.Flush())
+	bool appended = false;
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.commitNs);
+		// Ordinary commits append the batch and its commit line without disk
+		// synchronization: completed writes stay readable through the operating
+		// system's file cache, and durability is established only by the closure
+		// sequence in CloseSegment.
+		appended = AppendIndexLine(batch.c_str()) && AppendIndexLine(commit.c_str());
+	}
+	if (!appended)
 	{
 		FailSegment("captureFailure");
 		return;
+	}
+	if (m_config.timings)
+	{
+		segment.timings.commitCount += 1;
+		segment.timings.indexBytes += batch.size() + commit.size();
 	}
 	segment.commitId += 1;
 	segment.committedFrameCount = static_cast<unsigned int>(segment.frameTable.size());
@@ -1058,11 +1273,17 @@ bool VoxRlCapture::EnqueueFrame(const void* bytes, unsigned int length, int bloc
 		entry.requestSequence = requestSequence;
 		entry.decisionId = decisionId;
 		entry.attemptIndex = attemptIndex;
-		if (!m_segmentStream.Write(bytes, length))
+		bool written = false;
+		{
+			ScopedTiming timing(m_config.timings, segment.timings.streamWriteNs);
+			written = m_segmentStream.Write(bytes, length);
+		}
+		if (!written)
 		{
 			FailSegment("captureFailure");
 			return false;
 		}
+		if (m_config.timings) segment.timings.streamWriteBytes += length;
 		m_segmentStreamBytes += length;
 		segment.frameTable.push_back(entry);
 		return true;
@@ -1082,7 +1303,11 @@ bool VoxRlCapture::EnqueueFrame(const void* bytes, unsigned int length, int bloc
 	entry.decisionId = decisionId;
 	entry.attemptIndex = attemptIndex;
 	const unsigned char* cursor = static_cast<const unsigned char*>(bytes);
-	segment.pendingBytes.insert(segment.pendingBytes.end(), cursor, cursor + length);
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.streamWriteNs);
+		segment.pendingBytes.insert(segment.pendingBytes.end(), cursor, cursor + length);
+	}
+	if (m_config.timings) segment.timings.streamWriteBytes += length;
 	segment.pendingCount += 1;
 	segment.frameTable.push_back(entry);
 	return true;
@@ -1097,12 +1322,18 @@ void VoxRlCapture::ClearDirtyState()
 	segment.removedCities.clear();
 	segment.dirtyPlots.clear();
 	segment.visibilityFlips.clear();
+	segment.visibilityResets.clear();
 	segment.revealedOverrideUpserts.clear();
 	segment.removedRevealedOverrides.clear();
 	segment.dirtyInterceptors.clear();
 	segment.dirtyRelations.clear();
 	segment.pendingDangerEvents.clear();
-	for (int index = 0; index < 6; ++index) segment.sparseDirty[index] = false;
+	segment.dirtyUnitModifiers.clear();
+	segment.dirtyUnitPlagues.clear();
+	segment.dirtyUnitBlockedPromotions.clear();
+	segment.dirtyUnitAttackCounts.clear();
+	segment.dirtyPlayerResistances.clear();
+	segment.dirtyCityAttackCounts.clear();
 }
 
 unsigned int VoxRlCapture::UnitIterationIndex(PlayerTypes eOwner, int iUnitId)
@@ -1173,43 +1404,53 @@ void VoxRlCapture::SeedWorldIterationIndices()
 bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 {
 	Segment& segment = *m_segment;
+	ScopedTiming timing(m_config.timings, segment.timings.deltaCollectNs);
 	const PlayerTypes capturingPlayer = segment.player;
 	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
 	const TeamTypes capturingTeam = capturing.getTeam();
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
-	// Zone preparation can change assignments without any plot setter firing.
-	// Carry the current table and every changed assignment in the same request.
-	VoxRlZoneSnapshot zones;
-	if (!VoxRlCollectZones(zoneMap, zones) || zones.plotZones.size() != segment.zoneSnapshot.plotZones.size())
-		return false;
+	// The zone table is recollected only after a native rebuild marked it dirty.
+	// The comparison stays because the native rebuild does not identify changed
+	// plots: it accepts the rebuilt table, carries a replacement when the rows
+	// differ, and records each plot whose assignment changed. While the marker
+	// is clean, the table and every assignment are known unchanged, so the
+	// whole pass is skipped.
 	std::vector<int> zoneChangedPlots;
-	if (!SameRows(zones.zones, segment.zoneSnapshot.zones) ||
-		!SameRows(zones.neighbors, segment.zoneSnapshot.neighbors))
+	if (m_zoneSnapshotDirty)
 	{
-		data.requestHeader.hasZoneReplacement = 1;
-		VoxRlMirrorSparseRows(zones.zones, data.requestZoneReplacements);
-		VoxRlMirrorSparseRows(zones.neighbors, data.requestZoneNeighbors);
-	}
-	for (int plot = 0; plot < plotCount; ++plot)
-	{
-		if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot])
+		VoxRlZoneSnapshot zones;
+		if (!VoxRlCollectZones(zoneMap, zones) || zones.plotZones.size() != segment.zoneSnapshot.plotZones.size())
+			return false;
+		if (!SameRows(zones.zones, segment.zoneSnapshot.zones) ||
+			!SameRows(zones.neighbors, segment.zoneSnapshot.neighbors))
 		{
-			segment.dirtyPlots.insert(plot);
-			zoneChangedPlots.push_back(plot);
+			data.requestHeader.hasZoneReplacement = 1;
+			VoxRlMirrorSparseRows(zones.zones, data.requestZoneReplacements);
+			VoxRlMirrorSparseRows(zones.neighbors, data.requestZoneNeighbors);
+			// The decode table is rebuilt only when a new table is accepted.
+			segment.zoneRowByZoneId.clear();
+			for (size_t zoneIndex = 0; zoneIndex < zones.zones.size(); ++zoneIndex)
+				segment.zoneRowByZoneId[zones.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
 		}
+		for (int plot = 0; plot < plotCount; ++plot)
+		{
+			if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot])
+			{
+				segment.dirtyPlots.insert(plot);
+				zoneChangedPlots.push_back(plot);
+			}
+		}
+		segment.zoneSnapshot.zones.swap(zones.zones);
+		segment.zoneSnapshot.neighbors.swap(zones.neighbors);
+		segment.zoneSnapshot.plotZones.swap(zones.plotZones);
+		m_zoneSnapshotDirty = false;
 	}
-	segment.zoneSnapshot.zones.swap(zones.zones);
-	segment.zoneSnapshot.neighbors.swap(zones.neighbors);
-	segment.zoneSnapshot.plotZones.swap(zones.plotZones);
-	// After the snapshot swap the retained table is exactly the table this request's
-	// assignments decode against: the replacement when one is carried, and otherwise
-	// the previously accepted table. One-based indices address its ordered rows, and
-	// the 16-bit form covers up to 65,535 rows before the wide form takes over.
-	std::map<int, unsigned int> zoneRowByZoneId;
-	for (size_t zoneIndex = 0; zoneIndex < segment.zoneSnapshot.zones.size(); ++zoneIndex)
-		zoneRowByZoneId[segment.zoneSnapshot.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
+	// The retained table is exactly the table this request's assignments decode
+	// against: the replacement when one is carried, and otherwise the previously
+	// accepted table. One-based indices address its ordered rows, and the 16-bit
+	// form covers up to 65,535 rows before the wide form takes over.
 	const bool wideZoneIndices = segment.zoneSnapshot.zones.size() > 65535U;
 
 	// Removed units come first so an upsert of the same key is refused.
@@ -1323,8 +1564,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		unsigned int zoneTableIndex = 0;
 		if (plotZone != -1)
 		{
-			std::map<int, unsigned int>::const_iterator zoneRow = zoneRowByZoneId.find(plotZone);
-			if (zoneRow == zoneRowByZoneId.end()) return false;
+			std::map<int, unsigned int>::const_iterator zoneRow = segment.zoneRowByZoneId.find(plotZone);
+			if (zoneRow == segment.zoneRowByZoneId.end()) return false;
 			zoneTableIndex = zoneRow->second;
 		}
 		if (wideZoneIndices)
@@ -1372,21 +1613,37 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestDeltaCities.push_back(delta);
 	}
 
-	std::vector<TeamPassabilityRecord> teamPassability;
-	if (!VoxRlCollectTeamPassabilityRows(teamPassability)) return false;
-	for (size_t index = 0; index < teamPassability.size(); ++index)
+	// The small team passability table is recollected only after a technology
+	// ownership change marked it dirty; WORLD builds collect it in full.
+	if (m_teamPassabilityDirty)
 	{
-		const TeamPassabilityRecord& record = teamPassability[index];
-		std::map<int, TeamPassabilityRecord>::const_iterator last =
-			segment.lastTeamPassabilityRows.find(static_cast<int>(record.team));
-		if (last != segment.lastTeamPassabilityRows.end() &&
-			std::memcmp(&last->second, &record, sizeof(record)) == 0) continue;
-		RequestTeamPassabilityRecord row;
-		std::memcpy(&row, &record, sizeof(row));
-		segment.lastTeamPassabilityRows[static_cast<int>(record.team)] = record;
-		data.requestTeamPassability.push_back(row);
+		std::vector<TeamPassabilityRecord> teamPassability;
+		if (!VoxRlCollectTeamPassabilityRows(teamPassability)) return false;
+		for (size_t index = 0; index < teamPassability.size(); ++index)
+		{
+			const TeamPassabilityRecord& record = teamPassability[index];
+			std::map<int, TeamPassabilityRecord>::const_iterator last =
+				segment.lastTeamPassabilityRows.find(static_cast<int>(record.team));
+			if (last != segment.lastTeamPassabilityRows.end() &&
+				std::memcmp(&last->second, &record, sizeof(record)) == 0) continue;
+			RequestTeamPassabilityRecord row;
+			std::memcpy(&row, &record, sizeof(row));
+			segment.lastTeamPassabilityRows[static_cast<int>(record.team)] = record;
+			data.requestTeamPassability.push_back(row);
+		}
+		m_teamPassabilityDirty = false;
 	}
 
+	// Known-visibility resets travel before the ordinary flips of the same
+	// request; the reader clears each named team's complete bitset first.
+	for (std::set<int>::const_iterator team = segment.visibilityResets.begin();
+		team != segment.visibilityResets.end(); ++team)
+	{
+		RequestVisibilityResetRecord row;
+		std::memset(&row, 0, sizeof(row));
+		row.team = static_cast<i8>(*team);
+		data.requestVisibilityResets.push_back(row);
+	}
 	for (std::map<VoxRlVisibilityKey, unsigned char>::const_iterator flip = segment.visibilityFlips.begin();
 		flip != segment.visibilityFlips.end(); ++flip)
 	{
@@ -1465,56 +1722,158 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestTeamRelations.push_back(row);
 	}
 
-	// Sparse family replacements publish the complete family. The helpers
-	// collect the WORLD record shapes, which the request sections mirror
-	// field for field.
-	if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_MODIFIERS])
+	// Sparse family replacements are entity-keyed: each replacement names one
+	// entity and carries that entity's complete current rows for its family.
+	// Only dirty entities are recollected; an absent replacement leaves that
+	// entity's rows unchanged.
+	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyUnitModifiers.begin();
+		key != segment.dirtyUnitModifiers.end(); ++key)
 	{
+		CvUnit* pUnit = GET_PLAYER(static_cast<PlayerTypes>((*key).owner)).getUnit((*key).id);
+		if (pUnit == NULL || pUnit->plot() == NULL || pUnit->isDelayedDeath())
+		{
+			// The unit died between the mark and the flush; its removal row
+			// removes the associated sparse rows as well.
+			continue;
+		}
 		std::vector<UnitModifierRecord> rows;
-		if (!VoxRlCollectAllUnitModifierRows(rows)) return false;
-		VoxRlMirrorSparseRows(rows, data.requestUnitModifiers);
+		if (!VoxRlCollectUnitModifierRows(static_cast<PlayerTypes>((*key).owner), (*key).id, pUnit, rows))
+		{
+			return false;
+		}
+		RequestUnitModifierReplacementRecord replacement;
+		std::memset(&replacement, 0, sizeof(replacement));
+		replacement.owner = static_cast<i8>((*key).owner);
+		replacement.unitId = static_cast<i32>((*key).id);
+		std::vector<RequestUnitModifierRowRecord> requestRows;
+		requestRows.resize(rows.size());
+		for (size_t index = 0; index < rows.size(); ++index)
+		{
+			requestRows[index].family = rows[index].family;
+			requestRows[index].index = rows[index].index;
+			requestRows[index].value = rows[index].value;
+		}
+		if (!AppendRequestUnitModifierReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		data.requestUnitModifierReplacements.push_back(replacement);
 	}
-	if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_PLAGUES] || segment.sparseDirty[VOX_RL_SPARSE_UNIT_BLOCKED_PROMOTIONS])
+	// Plagues and blocked promotions come from one native pass per unit, so the two
+	// families share a union walk and each emits only the replacements it marked.
+	std::set<VoxRlEntityKey> plagueOrBlocked;
+	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyUnitPlagues.begin();
+		key != segment.dirtyUnitPlagues.end(); ++key) plagueOrBlocked.insert(*key);
+	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyUnitBlockedPromotions.begin();
+		key != segment.dirtyUnitBlockedPromotions.end(); ++key) plagueOrBlocked.insert(*key);
+	for (std::set<VoxRlEntityKey>::const_iterator key = plagueOrBlocked.begin();
+		key != plagueOrBlocked.end(); ++key)
 	{
+		CvUnit* pUnit = GET_PLAYER(static_cast<PlayerTypes>((*key).owner)).getUnit((*key).id);
+		if (pUnit == NULL || pUnit->plot() == NULL || pUnit->isDelayedDeath()) continue;
 		std::vector<UnitPlagueRecord> plagues;
 		std::vector<UnitBlockedPromotionRecord> blocked;
-		VoxRlCollectAllUnitPlagueRows(plagues, blocked);
-		if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_PLAGUES])
+		VoxRlCollectUnitPlagueRows(static_cast<PlayerTypes>((*key).owner), (*key).id, pUnit, plagues, blocked);
+		if (segment.dirtyUnitPlagues.count(*key) != 0)
 		{
-			VoxRlMirrorSparseRows(plagues, data.requestUnitPlagues);
+			RequestUnitPlagueReplacementRecord replacement;
+			std::memset(&replacement, 0, sizeof(replacement));
+			replacement.owner = static_cast<i8>((*key).owner);
+			replacement.unitId = static_cast<i32>((*key).id);
+			std::vector<RequestUnitPlagueRowRecord> requestRows;
+			requestRows.resize(plagues.size());
+			for (size_t index = 0; index < plagues.size(); ++index)
+			{
+				requestRows[index].plague = plagues[index].plague;
+				requestRows[index].domain = plagues[index].domain;
+				requestRows[index].applyOnAttack = plagues[index].applyOnAttack;
+				requestRows[index].applyOnDefense = plagues[index].applyOnDefense;
+				requestRows[index].applyChance = plagues[index].applyChance;
+			}
+			if (!AppendRequestUnitPlagueReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+			data.requestUnitPlagueReplacements.push_back(replacement);
 		}
-		if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_BLOCKED_PROMOTIONS])
+		if (segment.dirtyUnitBlockedPromotions.count(*key) != 0)
 		{
-			VoxRlMirrorSparseRows(blocked, data.requestUnitBlockedPromotions);
+			RequestUnitBlockedPromotionReplacementRecord replacement;
+			std::memset(&replacement, 0, sizeof(replacement));
+			replacement.owner = static_cast<i8>((*key).owner);
+			replacement.unitId = static_cast<i32>((*key).id);
+			std::vector<RequestUnitBlockedPromotionRowRecord> requestRows;
+			requestRows.resize(blocked.size());
+			for (size_t index = 0; index < blocked.size(); ++index)
+			{
+				requestRows[index].promotion = blocked[index].promotion;
+			}
+			if (!AppendRequestUnitBlockedPromotionReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+			data.requestUnitBlockedPromotionReplacements.push_back(replacement);
 		}
 	}
-	if (segment.sparseDirty[VOX_RL_SPARSE_UNIT_ATTACK_COUNTS])
+	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyUnitAttackCounts.begin();
+		key != segment.dirtyUnitAttackCounts.end(); ++key)
 	{
+		CvUnit* pUnit = GET_PLAYER(static_cast<PlayerTypes>((*key).owner)).getUnit((*key).id);
+		if (pUnit == NULL || pUnit->plot() == NULL || pUnit->isDelayedDeath()) continue;
 		std::vector<UnitAttackCountRecord> rows;
-		VoxRlCollectAllUnitAttackCountRows(rows);
-		VoxRlMirrorSparseRows(rows, data.requestUnitAttackCounts);
+		VoxRlCollectUnitAttackCountRows(static_cast<PlayerTypes>((*key).owner), (*key).id, pUnit, rows);
+		RequestUnitAttackCountReplacementRecord replacement;
+		std::memset(&replacement, 0, sizeof(replacement));
+		replacement.owner = static_cast<i8>((*key).owner);
+		replacement.unitId = static_cast<i32>((*key).id);
+		std::vector<RequestUnitAttackCountRowRecord> requestRows;
+		requestRows.resize(rows.size());
+		for (size_t index = 0; index < rows.size(); ++index)
+		{
+			requestRows[index].attackingPlayer = rows[index].attackingPlayer;
+			requestRows[index].count = rows[index].count;
+		}
+		if (!AppendRequestUnitAttackCountReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		data.requestUnitAttackCountReplacements.push_back(replacement);
 	}
-	if (segment.sparseDirty[VOX_RL_SPARSE_PLAYER_RESISTANCES])
+	for (std::set<int>::const_iterator player = segment.dirtyPlayerResistances.begin();
+		player != segment.dirtyPlayerResistances.end(); ++player)
 	{
 		std::vector<PlayerResistanceRecord> rows;
-		VoxRlCollectAllPlayerResistanceRows(rows);
-		VoxRlMirrorSparseRows(rows, data.requestPlayerResistances);
+		VoxRlCollectPlayerResistanceRows(&GET_PLAYER(static_cast<PlayerTypes>(*player)), rows);
+		RequestPlayerResistanceReplacementRecord replacement;
+		std::memset(&replacement, 0, sizeof(replacement));
+		replacement.player = static_cast<i8>(*player);
+		std::vector<RequestPlayerResistanceRowRecord> requestRows;
+		requestRows.resize(rows.size());
+		for (size_t index = 0; index < rows.size(); ++index)
+		{
+			requestRows[index].opponent = rows[index].opponent;
+			requestRows[index].dominationResistance = rows[index].dominationResistance;
+		}
+		if (!AppendRequestPlayerResistanceReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		data.requestPlayerResistanceReplacements.push_back(replacement);
 	}
-	if (segment.sparseDirty[VOX_RL_SPARSE_CITY_ATTACK_COUNTS])
+	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyCityAttackCounts.begin();
+		key != segment.dirtyCityAttackCounts.end(); ++key)
 	{
+		CvCity* pCity = GET_PLAYER(static_cast<PlayerTypes>((*key).owner)).getCity((*key).id);
+		if (pCity == NULL) continue;
 		std::vector<CityAttackCountRecord> rows;
-		VoxRlCollectAllCityAttackCountRows(rows);
-		VoxRlMirrorSparseRows(rows, data.requestCityAttackCounts);
+		VoxRlCollectCityAttackCountRows(pCity, rows);
+		RequestCityAttackCountReplacementRecord replacement;
+		std::memset(&replacement, 0, sizeof(replacement));
+		replacement.cityOwner = static_cast<i8>((*key).owner);
+		replacement.cityId = static_cast<i32>((*key).id);
+		std::vector<RequestCityAttackCountRowRecord> requestRows;
+		requestRows.resize(rows.size());
+		for (size_t index = 0; index < rows.size(); ++index)
+		{
+			requestRows[index].attackingPlayer = rows[index].attackingPlayer;
+			requestRows[index].count = rows[index].count;
+		}
+		if (!AppendRequestCityAttackCountReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		data.requestCityAttackCountReplacements.push_back(replacement);
 	}
-	unsigned char mask = 0;
-	for (int bit = 0; bit < 6; ++bit)
-	{
-		if (segment.sparseDirty[bit]) mask = static_cast<unsigned char>(mask | (1u << bit));
-	}
-	data.requestHeader.sparseCombatReplacementMask = mask;
 
 	// Pending danger events carry their event-time board in this request.
 	data.requestDangerEvents = segment.pendingDangerEvents;
+	if (m_config.timings)
+	{
+		segment.timings.deltaCollectCount += 1;
+		segment.timings.deltaRows += CountRequestRows(data);
+	}
 	return true;
 }
 
@@ -1538,10 +1897,20 @@ bool VoxRlCapture::EmitStagedRequest()
 
 	VoxRlOwnedBlockStorage storage;
 	unsigned int length = 0;
-	if (!VoxRlBuildRequestBlock(identity, data, storage, length))
+	bool built = false;
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.requestBuildNs);
+		built = VoxRlBuildRequestBlock(identity, data, storage, length);
+	}
+	if (!built)
 	{
 		FailSegment("captureFailure");
 		return false;
+	}
+	if (m_config.timings)
+	{
+		segment.timings.requestCount += 1;
+		segment.timings.requestBytes += length;
 	}
 	if (!EnqueueFrame(storage.Bytes(), length, VOX_RL_BLOCK_REQUEST,
 		segment.nextDeltaSequence, kVoxRlSyncOnlyDecisionId, -1))
@@ -1612,9 +1981,9 @@ void VoxRlCapture::OnDangerRefreshBegin(const CvDangerPlots& danger)
 		AddCoverageOmission("warReplacement");
 	}
 	// Stage the event-time board with the pending dirty event, then add
-	// this refresh event.
-	VoxRlRequestData data;
-	if (!CollectDelta(data))
+	// this refresh event. The delta collects directly into the segment's
+	// staged request, so the staged vectors are transferred, not copied.
+	if (!CollectDelta(m_segment->staged))
 	{
 		FailSegment("captureFailure");
 		return;
@@ -1626,8 +1995,7 @@ void VoxRlCapture::OnDangerRefreshBegin(const CvDangerPlots& danger)
 	event.owner = static_cast<i8>(NO_PLAYER);
 	event.unitId = -1;
 	event.turn = 0;
-	data.requestDangerEvents.push_back(event);
-	m_segment->staged = data;
+	m_segment->staged.requestDangerEvents.push_back(event);
 	m_segment->stagingRequest = true;
 }
 
@@ -1669,9 +2037,10 @@ void VoxRlCapture::OnDangerDiscoveryBegin(const CvDangerPlots& danger, const CvU
 	{
 		return;
 	}
-	// Stage the event-time board the discovery consumes.
-	VoxRlRequestData data;
-	if (!CollectDelta(data))
+	// Stage the event-time board the discovery consumes. The delta collects
+	// directly into the segment's staged request, so the staged vectors are
+	// transferred, not copied.
+	if (!CollectDelta(m_segment->staged))
 	{
 		FailSegment("captureFailure");
 		return;
@@ -1681,8 +2050,7 @@ void VoxRlCapture::OnDangerDiscoveryBegin(const CvDangerPlots& danger, const CvU
 	row.observer = static_cast<i8>(m_segment->player);
 	row.owner = static_cast<i8>(pUnit->getOwner());
 	row.unitId = static_cast<i32>(pUnit->GetID());
-	data.requestKnownAttackers.push_back(row);
-	m_segment->staged = data;
+	m_segment->staged.requestKnownAttackers.push_back(row);
 	m_segment->stagingRequest = true;
 }
 
@@ -1880,12 +2248,22 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 
 	VoxRlOwnedBlockStorage requestStorage;
 	unsigned int requestLength = 0;
-	if (!VoxRlBuildRequestBlock(identity, data, requestStorage, requestLength))
+	bool requestBuilt = false;
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.requestBuildNs);
+		requestBuilt = VoxRlBuildRequestBlock(identity, data, requestStorage, requestLength);
+	}
+	if (!requestBuilt)
 	{
 		FailSegment("captureFailure");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
 			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
 		return;
+	}
+	if (m_config.timings)
+	{
+		segment.timings.requestCount += 1;
+		segment.timings.requestBytes += requestLength;
 	}
 	if (!EnqueueFrame(requestStorage.Bytes(), requestLength, VOX_RL_BLOCK_REQUEST,
 		segment.nextDeltaSequence, engagement.decisionId, engagement.attemptIndex))
@@ -1920,10 +2298,20 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 
 	VoxRlOwnedBlockStorage resultStorage;
 	unsigned int resultLength = 0;
-	if (!assignments.Write(identity, resultStorage, resultLength))
+	bool resultBuilt = false;
+	{
+		ScopedTiming timing(m_config.timings, segment.timings.resultBuildNs);
+		resultBuilt = assignments.Write(identity, resultStorage, resultLength);
+	}
+	if (!resultBuilt)
 	{
 		FailSegment("captureFailure");
 		return;
+	}
+	if (m_config.timings)
+	{
+		segment.timings.resultCount += 1;
+		segment.timings.resultBytes += resultLength;
 	}
 	if (!EnqueueFrame(resultStorage.Bytes(), resultLength, VOX_RL_BLOCK_RESULT,
 		segment.lastRequestSequence, engagement.decisionId, engagement.attemptIndex))
@@ -1977,21 +2365,23 @@ void VoxRlCapture::NoteUnitPromotionsChanged(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	NoteUnitChanged(eOwner, iUnitId);
-	// Promotions change the sparse modifier, plague, and blocked-promotion
-	// families, which are published as complete replacements.
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_MODIFIERS] = true;
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_PLAGUES] = true;
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_BLOCKED_PROMOTIONS] = true;
+	// Promotions change the sparse modifier, plague, and blocked-promotion rows
+	// of this unit only; other entities are not recollected.
+	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
+	m_segment->dirtyUnitModifiers.insert(key);
+	m_segment->dirtyUnitPlagues.insert(key);
+	m_segment->dirtyUnitBlockedPromotions.insert(key);
 }
 
 void VoxRlCapture::NoteUnitCreated(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	NoteUnitChanged(eOwner, iUnitId);
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_MODIFIERS] = true;
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_PLAGUES] = true;
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_BLOCKED_PROMOTIONS] = true;
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_ATTACK_COUNTS] = true;
+	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
+	m_segment->dirtyUnitModifiers.insert(key);
+	m_segment->dirtyUnitPlagues.insert(key);
+	m_segment->dirtyUnitBlockedPromotions.insert(key);
+	m_segment->dirtyUnitAttackCounts.insert(key);
 }
 
 void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
@@ -2000,6 +2390,12 @@ void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
 	m_segment->dirtyUnits.erase(key);
 	m_segment->removedUnits.insert(key);
+	// Deletion removes the unit's associated sparse rows, so no family
+	// tombstone or collection work remains for it.
+	m_segment->dirtyUnitModifiers.erase(key);
+	m_segment->dirtyUnitPlagues.erase(key);
+	m_segment->dirtyUnitBlockedPromotions.erase(key);
+	m_segment->dirtyUnitAttackCounts.erase(key);
 }
 
 void VoxRlCapture::NoteCityChanged(PlayerTypes eOwner, int iCityId)
@@ -2013,7 +2409,7 @@ void VoxRlCapture::NoteCityCreated(PlayerTypes eOwner, int iCityId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	NoteCityChanged(eOwner, iCityId);
-	m_segment->sparseDirty[VOX_RL_SPARSE_CITY_ATTACK_COUNTS] = true;
+	m_segment->dirtyCityAttackCounts.insert(VoxRlEntityKey(static_cast<int>(eOwner), iCityId));
 }
 
 void VoxRlCapture::NoteCityRemoved(PlayerTypes eOwner, int iCityId)
@@ -2023,6 +2419,9 @@ void VoxRlCapture::NoteCityRemoved(PlayerTypes eOwner, int iCityId)
 	m_segment->dirtyCities.erase(key);
 	m_segment->removedCities.insert(key);
 	m_segment->lastCityRows.erase(key);
+	// Deletion removes the city's associated sparse rows, so no family
+	// tombstone or collection work remains for it.
+	m_segment->dirtyCityAttackCounts.erase(key);
 }
 
 void VoxRlCapture::NotePlotChanged(int iPlotIndex)
@@ -2037,6 +2436,44 @@ void VoxRlCapture::NoteVisibilityChanged(TeamTypes eTeam, int iPlotIndex, int iB
 	if (eTeam == NO_TEAM) return;
 	const VoxRlVisibilityKey key(static_cast<int>(eTeam), iPlotIndex, iBitsetKind);
 	m_segment->visibilityFlips[key] = bValue ? 1 : 0;
+}
+
+void VoxRlCapture::NoteKnownVisibilityReset(TeamTypes eTeam)
+{
+	if (m_segment == NULL || m_segment->failed) return;
+	if (eTeam == NO_TEAM) return;
+	Segment& segment = *m_segment;
+	segment.visibilityResets.insert(static_cast<int>(eTeam));
+	// The reset supersedes this team's pending known-visible entries. The map
+	// is keyed team-major, so the team's range is contiguous and the scan never
+	// touches other teams' entries; other bitset kinds are preserved.
+	std::map<VoxRlVisibilityKey, unsigned char>::iterator flip =
+		segment.visibilityFlips.lower_bound(VoxRlVisibilityKey(static_cast<int>(eTeam), INT_MIN, 0));
+	while (flip != segment.visibilityFlips.end() && (*flip).first.team == static_cast<int>(eTeam))
+	{
+		if ((*flip).first.kind == VOX_RL_BITSET_KNOWN_VISIBLE)
+		{
+			segment.visibilityFlips.erase(flip++);
+		}
+		else
+		{
+			++flip;
+		}
+	}
+}
+
+void VoxRlCapture::NoteTacticalZonesRebuilt()
+{
+	// The native dominance zone table was rebuilt; the next collection compares
+	// it against the accepted snapshot and re-accepts what changed.
+	m_zoneSnapshotDirty = true;
+}
+
+void VoxRlCapture::NoteTeamTechsChanged()
+{
+	// A technology ownership change can flip terrain and feature passability;
+	// the next collection recollects the small team table.
+	m_teamPassabilityDirty = true;
 }
 
 void VoxRlCapture::NoteRevealedOverrideChanged(TeamTypes eTeam, int iPlotIndex, bool bRemoved)
@@ -2096,19 +2533,19 @@ void VoxRlCapture::NoteWarStateChanged(TeamTypes eTeam, TeamTypes eOtherTeam)
 void VoxRlCapture::NoteUnitAttackCountChanged(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
-	m_segment->sparseDirty[VOX_RL_SPARSE_UNIT_ATTACK_COUNTS] = true;
+	m_segment->dirtyUnitAttackCounts.insert(VoxRlEntityKey(static_cast<int>(eOwner), iUnitId));
 }
 
 void VoxRlCapture::NoteCityAttackCountChanged(PlayerTypes eOwner, int iCityId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
-	m_segment->sparseDirty[VOX_RL_SPARSE_CITY_ATTACK_COUNTS] = true;
+	m_segment->dirtyCityAttackCounts.insert(VoxRlEntityKey(static_cast<int>(eOwner), iCityId));
 }
 
 void VoxRlCapture::NotePlayerResistanceChanged(PlayerTypes ePlayer, PlayerTypes eOpponent)
 {
 	if (m_segment == NULL || m_segment->failed) return;
-	m_segment->sparseDirty[VOX_RL_SPARSE_PLAYER_RESISTANCES] = true;
+	m_segment->dirtyPlayerResistances.insert(static_cast<int>(ePlayer));
 }
 
 void VoxRlCapture::NoteTopologyInvalidated()

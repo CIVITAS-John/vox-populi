@@ -91,6 +91,9 @@ public:
     // Returns the status from the most recent Open attempt.
     VoxRlBlockStatus Status() const;
 
+    // Checks retained identity options against this already validated view without reopening it.
+    VoxRlBlockStatus CheckIdentityOptions(const VoxRlBlockValidationOptions* options) const;
+
     // Returns whether Open has completed successfully.
     bool IsValid() const;
 

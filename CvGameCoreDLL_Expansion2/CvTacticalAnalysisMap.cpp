@@ -11,6 +11,8 @@
 #include "CvMilitaryAI.h"
 #include "cvStopWatch.h"
 #include "CvDiplomacyAI.h"
+// Vox Deorum: capture notification for the rebuilt dominance zone table.
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include <sstream>
 #include <iomanip>
 
@@ -617,6 +619,13 @@ void CvTacticalAnalysisMap::RefreshIfOutdated()
 
 	//this is where the sausage is made
 	CreateDominanceZones();
+
+	// Vox Deorum: the rebuilt dominance zones mark the capture snapshot dirty,
+	// so the next collected request compares and re-accepts the table.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteTacticalZonesRebuilt();
+	}
 
 	//barbarians don't care about tactical dominance
 	if(m_ePlayer!=BARBARIAN_PLAYER)

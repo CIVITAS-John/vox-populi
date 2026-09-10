@@ -47,8 +47,10 @@ public:
 	bool OpenAppend(const char* utf8Path);
 	// Appends bytes at the current end.
 	bool Write(const void* bytes, unsigned int length);
-	// Flushes the file to disk; the complete flushed commit line is the
-	// logical publication marker for the recording index.
+	// Flushes the file to disk. Segment closure synchronizes the stream and
+	// then the index; the complete commit line remains the logical
+	// publication marker, while a successful closure flush establishes
+	// durability.
 	bool Flush();
 	void Close();
 

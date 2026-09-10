@@ -44,17 +44,6 @@ enum
 	VOX_RL_RETRY_PREVIOUS_EXECUTION_FAILED = 2
 };
 
-// Sparse combat replacement family indices, matching the request header mask.
-enum
-{
-	VOX_RL_SPARSE_UNIT_MODIFIERS = 0,
-	VOX_RL_SPARSE_UNIT_PLAGUES = 1,
-	VOX_RL_SPARSE_UNIT_BLOCKED_PROMOTIONS = 2,
-	VOX_RL_SPARSE_UNIT_ATTACK_COUNTS = 3,
-	VOX_RL_SPARSE_PLAYER_RESISTANCES = 4,
-	VOX_RL_SPARSE_CITY_ATTACK_COUNTS = 5
-};
-
 // Visibility bitset kinds for flip records.
 enum
 {
@@ -116,6 +105,7 @@ struct VoxRlCaptureConfig
 	bool filterPlayers;
 	std::set<int> players;       // VOX_RL_CAPTURE_PLAYERS
 	bool filterTurns;
+	bool timings;                // VOX_RL_CAPTURE_TIMINGS
 	VoxRlCaptureConfig();
 };
 
@@ -174,6 +164,15 @@ public:
 	void NoteCityRemoved(PlayerTypes eOwner, int iCityId);
 	void NotePlotChanged(int iPlotIndex);
 	void NoteVisibilityChanged(TeamTypes eTeam, int iPlotIndex, int iBitsetKind, bool bValue);
+	// Records one team's known-visibility reset: the reader clears that team's
+	// complete known-visible bitset before the same request's ordinary flips.
+	void NoteKnownVisibilityReset(TeamTypes eTeam);
+	// Marks the captured zone snapshot dirty after a native dominance zone
+	// rebuild; the next collection compares and re-accepts the table.
+	void NoteTacticalZonesRebuilt();
+	// Marks the captured team passability table dirty after a technology
+	// ownership change; the next collection recollects the small team table.
+	void NoteTeamTechsChanged();
 	void NoteRevealedOverrideChanged(TeamTypes eTeam, int iPlotIndex, bool bRemoved);
 	void NoteInterceptorCacheChanged(PlayerTypes ePlayer);
 	void NoteTeamRelationChanged(TeamTypes eTeam, TeamTypes eOtherTeam);
@@ -233,6 +232,9 @@ private:
 	void PublishPendingFrames();
 	bool AppendIndexLine(const char* line);
 	void AddCoverageOmission(const char* reason);
+	// Writes one segment's accumulated timing summary to VoxRlCapture.log when
+	// the opt-in timing configuration is active.
+	void WriteTimingSummary(const char* closureReason);
 	// Publishes every frame appended since the previous commit as one
 	// batch. A closure-only batch commits without new binary frames.
 	void CommitBatch(bool closureOnly, const char* closureReason);
@@ -288,6 +290,16 @@ private:
 	bool m_worldReplacementPending;
 	unsigned int m_decisionIdCounter;
 	bool m_identityPendingLogged;
+	// Pending STATIC construction time and bytes accrued since the previous
+	// timing summary; folded into the next segment summary.
+	unsigned __int64 m_staticBuildNs;
+	unsigned __int64 m_staticBuildBytes;
+	// True when the native tactical zone table was rebuilt since the last
+	// accepted snapshot; collection compares and re-accepts when set.
+	bool m_zoneSnapshotDirty;
+	// True when technology ownership changed since the last collected team
+	// passability table.
+	bool m_teamPassabilityDirty;
 	Segment* m_segment;
 	Engagement* m_engagement;
 	// Nested danger refreshes belong to the active search request.

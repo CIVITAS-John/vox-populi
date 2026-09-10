@@ -1172,6 +1172,7 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 		!AppendRequestHeaderRecordRemovedUnitRange(&output, data.requestRemovedUnits) ||
 		!AppendRequestHeaderRecordRemovedCityRange(&output, data.requestRemovedCities) ||
 		!AppendRequestHeaderRecordTeamPassabilityRange(&output, data.requestTeamPassability) ||
+		!AppendRequestHeaderRecordVisibilityResetRange(&output, data.requestVisibilityResets) ||
 		!AppendRequestHeaderRecordVisibilityFlipRange(&output, data.requestVisibilityFlips) ||
 		!AppendRequestHeaderRecordRevealedOverrideUpsertRange(&output, data.requestRevealedOverrideUpserts) ||
 		!AppendRequestHeaderRecordRemovedRevealedOverrideRange(&output, data.requestRemovedRevealedOverrides) ||
@@ -1179,13 +1180,23 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 		!AppendRequestHeaderRecordInterceptorReplacementRange(&output, data.requestInterceptorReplacements) ||
 		!AppendRequestHeaderRecordParticipantRange(&output, data.requestParticipants) ||
 		!AppendRequestHeaderRecordDroppedUnitRange(&output, data.requestDroppedUnits) ||
-		!AppendRequestHeaderRecordUnitModifierReplacementRange(&output, data.requestUnitModifiers) ||
-		!AppendRequestHeaderRecordUnitPlagueReplacementRange(&output, data.requestUnitPlagues) ||
-		!AppendRequestHeaderRecordUnitBlockedPromotionReplacementRange(&output, data.requestUnitBlockedPromotions) ||
-		!AppendRequestHeaderRecordUnitAttackCountReplacementRange(&output, data.requestUnitAttackCounts) ||
-		!AppendRequestHeaderRecordPlayerResistanceReplacementRange(&output, data.requestPlayerResistances) ||
-		!AppendRequestHeaderRecordCityAttackCountReplacementRange(&output, data.requestCityAttackCounts)) return false;
+		!AppendRequestHeaderRecordUnitModifierReplacementRange(&output, data.requestUnitModifierReplacements) ||
+		!AppendRequestHeaderRecordUnitPlagueReplacementRange(&output, data.requestUnitPlagueReplacements) ||
+		!AppendRequestHeaderRecordUnitBlockedPromotionReplacementRange(&output, data.requestUnitBlockedPromotionReplacements) ||
+		!AppendRequestHeaderRecordUnitAttackCountReplacementRange(&output, data.requestUnitAttackCountReplacements) ||
+		!AppendRequestHeaderRecordPlayerResistanceReplacementRange(&output, data.requestPlayerResistanceReplacements) ||
+		!AppendRequestHeaderRecordCityAttackCountReplacementRange(&output, data.requestCityAttackCountReplacements)) return false;
 	output.requestZoneNeighbors = data.requestZoneNeighbors;
+	// The sparse replacement parents keep the row ranges they were bound to at
+	// collection time, and the child row sections copy in the same order, so
+	// those ranges stay exact; the generated request validator re-checks the
+	// tiling inside Write.
+	output.requestUnitModifierRows = data.requestUnitModifierRows;
+	output.requestUnitPlagueRows = data.requestUnitPlagueRows;
+	output.requestUnitBlockedPromotionRows = data.requestUnitBlockedPromotionRows;
+	output.requestUnitAttackCountRows = data.requestUnitAttackCountRows;
+	output.requestPlayerResistanceRows = data.requestPlayerResistanceRows;
+	output.requestCityAttackCountRows = data.requestCityAttackCountRows;
 	size_t entryCursor = 0;
 	for (size_t index = 0; index < data.requestInterceptorReplacements.size(); ++index)
 	{
@@ -1200,7 +1211,7 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 		if (!AppendRequestInterceptorReplacementRecordEntryRange(&replacement, &output, entries)) return false;
 	}
 	if (entryCursor != data.requestInterceptorEntries.size()) return false;
-	// The sparse replacement mask consistency is enforced by the generated
-	// request validator, which runs inside Write.
+	// The sparse replacement tiling and identity consistency are enforced by the
+	// generated request validator, which runs inside Write.
 	return output.Write(identity, storage, length);
 }

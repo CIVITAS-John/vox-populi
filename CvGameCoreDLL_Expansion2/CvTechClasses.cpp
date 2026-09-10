@@ -16,6 +16,8 @@
 #include "CvInfosSerializationHelper.h"
 #include "CvEnumMapSerialization.h"
 #include "CvSpanSerialization.h"
+// Vox Deorum: capture notification for technology-driven passability changes.
+#include "VoxDeorumRL/VoxRlCapture.h"
 
 #include "LintFree.h"
 
@@ -2281,6 +2283,14 @@ void CvTeamTechs::SetHasTech(TechTypes eIndex, bool bNewValue)
 	if(m_pabHasTech[eIndex] != bNewValue)
 	{
 		m_pabHasTech[eIndex] = bNewValue;
+
+		// Vox Deorum: technology ownership is the single write point that can
+		// flip terrain and feature passability, so it marks the captured team
+		// passability table dirty.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NoteTeamTechsChanged();
+		}
 
 		if(bNewValue)
 			SetLastTechAcquired(eIndex);
