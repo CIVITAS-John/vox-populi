@@ -735,7 +735,7 @@ void VoxRlCapture::WriteTimingSummary(const char* closureReason)
 	{
 		log->Msg("game_uuid,player,turn,world_generation,closure,failed,published,frames,commits,"
 			"plots,units,cities,alive_players,alive_teams,static_construct_ns,static_write_flush_ns,static_bytes,"
-			"world_construct_ns,world_owner_iteration_ns,world_player_citadel_ns,world_danger_sparse_relations_ns,"
+			"world_construct_ns,world_owner_iteration_ns,world_danger_sparse_relations_ns,"
 			"world_zone_ns,world_plot_unit_ns,world_visibility_ns,world_entity_relation_ns,world_serialize_ns,"
 			"world_write_flush_ns,world_bytes,campaign_construct_ns,campaign_write_flush_ns,campaign_bytes,"
 			"delta_collections,delta_collect_ns,delta_rows,requests,request_build_ns,request_bytes,results,"
@@ -745,7 +745,7 @@ void VoxRlCapture::WriteTimingSummary(const char* closureReason)
 		headerWritten = true;
 	}
 	log->Msg("%s,%d,%d,%u,%s,%d,%d,%u,%u,%u,%u,%u,%u,%u,"
-		"%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,"
+		"%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,"
 		"%I64u,%I64u,%I64u,%u,%I64u,%I64u,%u,%I64u,%I64u,%u,%I64u,%I64u,%I64u,%I64u,%I64u,"
 		"%I64u,%I64u,%I64u,%I64u,%I64u,%I64u,%I64u\n",
 		m_gameUuidText, static_cast<int>(m_segment->player), m_segment->turn, m_segment->worldGeneration,
@@ -754,8 +754,8 @@ void VoxRlCapture::WriteTimingSummary(const char* closureReason)
 		t.worldPhases.plotCount, t.worldPhases.unitCount, t.worldPhases.cityCount,
 		t.worldPhases.alivePlayerCount, t.worldPhases.aliveTeamCount,
 		m_staticConstructNs, m_staticWriteFlushNs, m_staticBuildBytes,
-		t.worldBuildNs, t.worldPhases.ownerIterationNs, t.worldPhases.playerCitadelNs,
-		t.worldPhases.dangerSparseRelationsNs, t.worldPhases.zoneNs, t.worldPhases.plotUnitNs,
+		t.worldBuildNs, t.worldPhases.ownerIterationNs, t.worldPhases.dangerSparseRelationsNs,
+		t.worldPhases.zoneNs, t.worldPhases.plotUnitNs,
 		t.worldPhases.visibilityNs, t.worldPhases.entityRelationNs, t.worldPhases.serializeNs,
 		t.worldWriteFlushNs, t.worldBuildBytes, t.campaignConstructNs, t.campaignWriteFlushNs,
 		t.campaignBuildBytes, t.deltaCollectCount, t.deltaCollectNs, t.deltaRows,

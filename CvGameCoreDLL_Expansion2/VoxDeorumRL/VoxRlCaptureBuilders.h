@@ -3,9 +3,7 @@
 // Vox Deorum: recording capture block builders. Builders stage rows from the
 // generated collectors and hand-written loops, then write complete framed
 // blocks through the shared writer in canonical section order. They perform
-// no file I/O and never mutate game state except through documented lazy
-// native caches (citadel preparation). Zone tables are always read without
-// triggering a refresh.
+// no file I/O. Zone tables are always read without triggering a refresh.
 #ifndef VOX_RL_CAPTURE_BUILDERS_H
 #define VOX_RL_CAPTURE_BUILDERS_H
 
@@ -26,7 +24,6 @@ struct VoxRlZoneSnapshot
 struct VoxRlWorldBuildTimings
 {
 	unsigned __int64 ownerIterationNs;
-	unsigned __int64 playerCitadelNs;
 	unsigned __int64 dangerSparseRelationsNs;
 	unsigned __int64 zoneNs;
 	unsigned __int64 plotUnitNs;
@@ -40,7 +37,7 @@ struct VoxRlWorldBuildTimings
 	unsigned int aliveTeamCount;
 	// Initializes every optional phase and volume to zero.
 	VoxRlWorldBuildTimings()
-		: ownerIterationNs(0), playerCitadelNs(0), dangerSparseRelationsNs(0), zoneNs(0),
+		: ownerIterationNs(0), dangerSparseRelationsNs(0), zoneNs(0),
 		plotUnitNs(0), visibilityNs(0), entityRelationNs(0), serializeNs(0),
 		plotCount(0), unitCount(0), cityCount(0), alivePlayerCount(0), aliveTeamCount(0)
 	{

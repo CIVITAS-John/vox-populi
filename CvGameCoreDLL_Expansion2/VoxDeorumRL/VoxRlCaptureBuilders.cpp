@@ -780,32 +780,6 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	}
 	ownerIterationTiming.Stop();
 
-	// Prepare the native citadel cache before zone preparation, as at the capture checkpoint.
-	ScopedWorldTiming playerCitadelTiming(timings != NULL ? &timings->playerCitadelNs : NULL);
-	for (int player = 0; player < MAX_PLAYERS; ++player)
-	{
-		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
-		PlayerRecord row;
-		ZeroRecord(row);
-		std::vector<CitadelPlotRecord> citadels;
-		if (owner.isAlive())
-		{
-			const PlotIndexContainer& plots = owner.GetPlots();
-			for (size_t index = 0; index < plots.size(); ++index)
-			{
-				CvPlot* plot = map.plotByIndex(plots[index]);
-				if (plot == NULL || !owner.IsNicePlotForCitadel(plot)) continue;
-				CitadelPlotRecord entry;
-				ZeroRecord(entry);
-				entry.plotIndex = static_cast<i32>(plots[index]);
-				citadels.push_back(entry);
-			}
-		}
-		if (!AppendPlayerRecordCitadelPlotRange(&row, &data, citadels)) return false;
-		data.worldPlayers.push_back(row);
-	}
-	playerCitadelTiming.Stop();
-
 	ScopedWorldTiming dangerSparseTiming(timings != NULL ? &timings->dangerSparseRelationsNs : NULL);
 	const CvDangerPlots* danger = capturing.GetDangerPlots();
 	if (danger == NULL) return false;
@@ -1003,15 +977,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			row.iterationIndex = iteration++;
 			data.worldCities.push_back(row);
 		}
-		const u32 citadelRangeFirst = data.worldPlayers[player].citadelPlotRangeFirst;
-		const u32 citadelRangeCount = data.worldPlayers[player].citadelPlotRangeCount;
 		PlayerRecord row;
 		ZeroRecord(row);
 		if (!CollectPlayerRecord(owner, capturingPlayer, row)) return false;
 		row.id = static_cast<i8>(player);
-		row.citadelPlotRangeFirst = citadelRangeFirst;
-		row.citadelPlotRangeCount = citadelRangeCount;
-		data.worldPlayers[player] = row;
+		data.worldPlayers.push_back(row);
 	}
 	for (int team = 0; team < MAX_TEAMS; ++team)
 	{
