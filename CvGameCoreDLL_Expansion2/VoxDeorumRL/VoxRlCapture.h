@@ -9,6 +9,7 @@
 #define VOX_RL_CAPTURE_H
 
 #include "VoxDeorumRL/schema/VoxRlFrame.h"
+#include "VoxDeorumRL/schema/VoxRlBlockStorage.h"
 #include "VoxDeorumRL/VoxRlCaptureFiles.h"
 
 #include <map>
@@ -82,6 +83,30 @@ struct VoxRlVisibilityKey
 		if (plotIndex != other.plotIndex) return plotIndex < other.plotIndex;
 		return kind < other.kind;
 	}
+};
+
+// One grouped visibility word: the team, kind, and thirty-two-plot word position.
+struct VoxRlVisibilityWordKey
+{
+	int team;
+	int kind;
+	int wordIndex;
+	VoxRlVisibilityWordKey() : team(-1), kind(-1), wordIndex(-1) {}
+	VoxRlVisibilityWordKey(int iTeam, int iKind, int iWord) : team(iTeam), kind(iKind), wordIndex(iWord) {}
+	bool operator<(const VoxRlVisibilityWordKey& other) const
+	{
+		if (team != other.team) return team < other.team;
+		if (kind != other.kind) return kind < other.kind;
+		return wordIndex < other.wordIndex;
+	}
+};
+
+// One grouped visibility word's accumulated payload: the changed bits and their values.
+struct VoxRlVisibilityWordValue
+{
+	unsigned int mask;
+	unsigned int bits;
+	VoxRlVisibilityWordValue() : mask(0), bits(0) {}
 };
 
 // One published or pending frame in a segment stream.
@@ -195,14 +220,18 @@ private:
 	class PendingRequest;
 	struct Engagement;
 
-	// Per-attachment turn-scoped campaign reuse: one CAMPAIGN file serves
-	// compatible same-turn WORLD replacements.
+	// Per-attachment turn-scoped campaign reuse: one CAMPAIGN block serves
+	// compatible same-turn WORLD replacements. The built bytes stay in
+	// capture-level storage until the first segment that publishes writes
+	// them, so a suppressed first segment leaves the block available for the
+	// next same-turn segment.
 	unsigned int m_campaignTurnPlayer;
 	int m_campaignTurn;
 	unsigned int m_campaignStaticGeneration;
 	unsigned int m_campaignGeneration;
 	std::string m_campaignRelPath;
 	unsigned int m_campaignFramedLength;
+	VoxRlOwnedBlockStorage m_campaignStorage;
 
 	// Open segment streams and index. The stream, the index, and the
 	// segment directory itself are created only when the segment publishes;
@@ -228,8 +257,20 @@ private:
 	bool BuildWorldBaseline(PlayerTypes ePlayer, int iTurn);
 	// Writes the checkpoint WORLD retained by BuildWorldBaseline.
 	bool WriteWorldBaseline();
-	bool BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn);
-	void PublishPendingFrames();
+	// Builds the CAMPAIGN block into capture-level storage and binds this
+	// segment to it. The file write happens at publication.
+	bool BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn);
+	// Writes the capture-level CAMPAIGN bytes to their reserved path.
+	bool WriteCampaignBaseline();
+	// Appends one suppressed-segment line to suppressed.jsonl at the
+	// recording root, carrying the omissions that would otherwise never
+	// reach disk.
+	void AppendSuppressedLine(const char* closureReason);
+	// Publishes the segment when a compatible CAMPAIGN is bound and a
+	// decision request has been enqueued. The budget overflow path may pass
+	// allowWithoutDecision to flush a large synchronization-only backlog
+	// instead of failing the segment.
+	void PublishPendingFrames(bool allowWithoutDecision = false);
 	bool AppendIndexLine(const char* line);
 	void AddCoverageOmission(const char* reason);
 	// Writes one segment's accumulated timing summary to VoxRlCapture.csv when

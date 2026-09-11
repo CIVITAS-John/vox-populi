@@ -187,7 +187,9 @@ bool VoxRlOutputFile::OpenAppend(const char* utf8Path)
 	{
 		return false;
 	}
-	HANDLE handle = CreateFileW(widePath.c_str(), FILE_APPEND_DATA | GENERIC_WRITE, FILE_SHARE_READ, NULL,
+	// GENERIC_WRITE is needed for FlushFileBuffers but also grants FILE_WRITE_DATA,
+	// so FILE_APPEND_DATA cannot force writes to EOF. Seek past the existing bytes.
+	HANDLE handle = CreateFileW(widePath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, NULL,
 		OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
@@ -196,6 +198,11 @@ bool VoxRlOutputFile::OpenAppend(const char* utf8Path)
 	LARGE_INTEGER size;
 	size.QuadPart = 0;
 	if (!GetFileSizeEx(handle, &size))
+	{
+		CloseHandle(handle);
+		return false;
+	}
+	if (!SetFilePointerEx(handle, size, NULL, FILE_BEGIN))
 	{
 		CloseHandle(handle);
 		return false;

@@ -579,6 +579,16 @@ const VoxRlSectionDirectoryEntry* VoxRlBlockView::FindSection(u16 sectionKind) c
     return VoxRlFindDirectoryEntry(directory_, imageHeader_->sectionCount, sectionKind);
 }
 
+// Returns one validated directory entry by its canonical position.
+const VoxRlSectionDirectoryEntry* VoxRlBlockView::DirectoryEntry(u16 index) const
+{
+    if (!IsValid() || index >= imageHeader_->sectionCount)
+    {
+        return 0;
+    }
+    return directory_ + index;
+}
+
 // Returns the first byte of one validated section.
 const u8* VoxRlBlockView::SectionBytes(u16 sectionKind) const
 {

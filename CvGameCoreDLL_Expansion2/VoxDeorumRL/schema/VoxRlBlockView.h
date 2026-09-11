@@ -112,6 +112,10 @@ public:
     // Returns the validated directory entry for a known section, or zero when absent.
     const VoxRlSectionDirectoryEntry* FindSection(u16 sectionKind) const;
 
+    // Returns the validated directory entry at one zero-based position in canonical
+    // section order. The index must be below the image header's section count.
+    const VoxRlSectionDirectoryEntry* DirectoryEntry(u16 index) const;
+
     // Returns read-only bytes for a validated section, or zero when the section is absent.
     const u8* SectionBytes(u16 sectionKind) const;
 

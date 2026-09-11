@@ -9,7 +9,142 @@
 
 #include "VoxDeorumRL/schema/VoxRlBuilders.generated.h"
 #include <cstring>
+#include <map>
+#include <set>
+#include <utility>
 #include <vector>
+
+// One owner-qualified city identity with its stable (owner, id) ordering.
+typedef std::pair<int, int> VoxRlCityKey;
+
+// Builds the sorted unique city reference table covering every non-null owning and
+// effective owning city in the collected rows. Token zero stays reserved for the null
+// pair, so row N's token is its one-based position. The template covers the WORLD rows
+// and their request mirrors, which share the field layout. The table fits the
+// sixteen-bit tokens.
+template <typename ReferenceRow>
+bool VoxRlBuildCityReferenceTable(const std::vector<PlotCaptureRecord>& rows,
+	std::vector<ReferenceRow>* table, std::map<VoxRlCityKey, unsigned int>* tokenByCity)
+{
+	if (table == 0 || tokenByCity == 0) return false;
+	table->clear();
+	tokenByCity->clear();
+	std::set<VoxRlCityKey> references;
+	for (size_t index = 0; index < rows.size(); ++index)
+	{
+		const PlotCaptureRecord& row = rows[index];
+		if (row.owningCityOwner >= 0 && row.owningCityId >= 0)
+			references.insert(VoxRlCityKey(row.owningCityOwner, row.owningCityId));
+		if (row.effectiveOwningCityOwner >= 0 && row.effectiveOwningCityId >= 0)
+			references.insert(VoxRlCityKey(row.effectiveOwningCityOwner, row.effectiveOwningCityId));
+	}
+	// Tokens are sixteen bits with zero reserved, so the table itself stays below 65536.
+	if (references.size() > 65535U) return false;
+	for (std::set<VoxRlCityKey>::const_iterator reference = references.begin();
+		reference != references.end(); ++reference)
+	{
+		ReferenceRow record = ReferenceRow();
+		record.owner = static_cast<signed char>(reference->first);
+		record.id = reference->second;
+		tokenByCity->insert(std::make_pair(*reference, static_cast<unsigned int>(table->size() + 1U)));
+		table->push_back(record);
+	}
+	return true;
+}
+
+// Encodes one collected plot's shared core fields into a WORLD or request delta row:
+// city tokens from the block's table and bounded one-byte types, all checked against
+// the wire contract before narrowing.
+template <typename CoreRow>
+bool VoxRlEncodePlotCore(const PlotCaptureRecord& source,
+	const std::map<VoxRlCityKey, unsigned int>& tokenByCity, CoreRow& out,
+	VoxRlFieldRangeFailure* failure);
+
+// Encodes one collected plot's three counters into a sparse counter row, checked
+// against their wire domains. Returns false when every counter is zero, meaning the
+// row is omitted.
+template <typename CounterRow>
+bool VoxRlEncodePlotCounters(const PlotCaptureRecord& source, int plotIndex,
+	CounterRow& out, VoxRlFieldRangeFailure* failure);
+
+// Resolves one city reference pair to its token: zero for the null pair, the table
+// position otherwise. Mixed half-null pairs fail capture as invalid references.
+inline bool VoxRlEncodeCityToken(int owner, int id, const std::map<VoxRlCityKey, unsigned int>& tokenByCity,
+	unsigned short* out, VoxRlFieldRangeFailure* failure)
+{
+	const bool nullOwner = owner < 0;
+	const bool nullId = id < 0;
+	if (nullOwner != nullId)
+		return VoxRlFailFieldRange(failure, "pair", "PlotCaptureRecord", "owningCity", owner < 0 ? id : owner, -1, -1);
+	if (nullOwner && nullId)
+	{
+		*out = 0;
+		return true;
+	}
+	std::map<VoxRlCityKey, unsigned int>::const_iterator token = tokenByCity.find(VoxRlCityKey(owner, id));
+	if (token == tokenByCity.end())
+		return VoxRlFailFieldRange(failure, "pair", "PlotCaptureRecord", "owningCity", id, -1, -1);
+	*out = static_cast<unsigned short>(token->second);
+	return true;
+}
+
+// Encodes one optional plot reference into its sixteen-bit wire field; -1 marks absence
+// and any value outside the plot domain fails with a diagnostic instead of truncating.
+inline bool VoxRlEncodeOptionalPlotIndex(int source, short* out, VoxRlFieldRangeFailure* failure)
+{
+	if (source < -1 || source > 32767)
+		return VoxRlFailFieldRange(failure, "range", "CampaignAttackTargetRecord", "plotIndex", source, -1, 32767);
+	*out = static_cast<short>(source);
+	return true;
+}
+
+// Encodes one collected plot's shared core fields; see the declaration above.
+template <typename CoreRow>
+bool VoxRlEncodePlotCore(const PlotCaptureRecord& source,
+	const std::map<VoxRlCityKey, unsigned int>& tokenByCity, CoreRow& out,
+	VoxRlFieldRangeFailure* failure)
+{
+	if (!VoxRlEncodeCityToken(source.owningCityOwner, source.owningCityId, tokenByCity, &out.owningCityToken, failure)) return false;
+	if (!VoxRlEncodeCityToken(source.effectiveOwningCityOwner, source.effectiveOwningCityId, tokenByCity, &out.effectiveOwningCityToken, failure)) return false;
+	if (source.improvementType < -1 || source.improvementType > 127)
+		return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "improvementType", source.improvementType, -1, 127);
+	if (source.resourceType < -1 || source.resourceType > 127)
+		return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "resourceType", source.resourceType, -1, 127);
+	out.improvementType = static_cast<signed char>(source.improvementType);
+	out.resourceType = static_cast<signed char>(source.resourceType);
+	out.owner = source.owner;
+	out.featureType = source.featureType;
+	out.routeType = source.routeType;
+	out.setBeingWorked(source.beingWorked != 0);
+	out.setImprovementPillaged(source.improvementPillaged != 0);
+	out.setImprovementPassable(source.improvementPassable != 0);
+	out.setRoutePillaged(source.routePillaged != 0);
+	out.setRestoreMoves(source.restoreMoves != 0);
+	out.setFreeMoveAcross(source.freeMoveAcross != 0);
+	return true;
+}
+
+// Encodes one collected plot's counters; see the declaration above.
+template <typename CounterRow>
+bool VoxRlEncodePlotCounters(const PlotCaptureRecord& source, int plotIndex,
+	CounterRow& out, VoxRlFieldRangeFailure* failure)
+{
+	if (source.reconCount != 0 || source.extraMovePathCost != 0 || source.unitIncrement != 0)
+	{
+		if (plotIndex < 0 || plotIndex > 32767)
+			return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "plotIndex", plotIndex, 0, 32767);
+		if (source.reconCount < 0 || source.reconCount > 127)
+			return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "reconCount", source.reconCount, 0, 127);
+		if (source.unitIncrement < -32768 || source.unitIncrement > 32767)
+			return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "unitIncrement", source.unitIncrement, -32768, 32767);
+		out.plotIndex = static_cast<short>(plotIndex);
+		out.reconCount = static_cast<signed char>(source.reconCount);
+		out.extraMovePathCost = source.extraMovePathCost;
+		out.unitIncrement = static_cast<short>(source.unitIncrement);
+		return true;
+	}
+	return false;
+}
 
 // Retains a no-refresh tactical zone table and its per-plot assignments.
 struct VoxRlZoneSnapshot
@@ -46,6 +181,12 @@ struct VoxRlWorldBuildTimings
 
 // Collects current zone records without triggering native map preparation.
 bool VoxRlCollectZones(class CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapshot);
+
+// Reports one rejected conversion or sparse row through the shared capture log. The
+// generated collectors call the first form; split call sites wrap the failure struct.
+void VoxRlNoteCaptureRangeFailure(const char* reason, const char* record, const char* field,
+	int value, int minValue, int maxValue);
+void VoxRlNoteSplitFailure(const VoxRlFieldRangeFailure& failure);
 
 // Reserves storage and builds one complete STATIC block from the global
 // defines, info tables, and map topology.

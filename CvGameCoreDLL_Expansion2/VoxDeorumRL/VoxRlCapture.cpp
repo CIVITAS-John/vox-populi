@@ -104,6 +104,10 @@ struct VoxRlCapture::Segment
 	bool published;
 	bool failed;
 	bool closed;
+	// True once a decision request frame has been enqueued. Publication
+	// waits for the first decision so segments that never decide leave no
+	// files behind.
+	bool hasDecision;
 	char closureReason[40];
 
 	// Pending frames collected before a compatible CAMPAIGN permits
@@ -138,7 +142,10 @@ struct VoxRlCapture::Segment
 		unsigned int previousWorldGeneration;
 	};
 	std::vector<DecisionRow> decisions;
-	std::vector<std::string> coverageLines;
+	// Coverage omission reasons accumulated since the previous commit. They
+	// render as one coverage line per reason at commit time, and a segment
+	// that never publishes carries them into its suppressed.jsonl line.
+	std::vector<std::string> coverageReasons;
 
 	// Dirty sets filled by setter notifications.
 	std::set<VoxRlEntityKey> dirtyUnits;
@@ -164,7 +171,7 @@ struct VoxRlCapture::Segment
 
 	// Last emitted plot and city records for the omit-unchanged comparison.
 	// Only entities emitted as deltas in this segment are retained.
-	std::map<VoxRlEntityKey, RequestDeltaPlotCoreRecord> lastPlotRows;
+	std::map<VoxRlEntityKey, PlotCaptureRecord> lastPlotRows;
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 
@@ -229,7 +236,7 @@ struct VoxRlCapture::Segment
 	Segment()
 		: player(NO_PLAYER), turn(-1), staticGeneration(0), worldGeneration(0), campaignGeneration(0),
 		staticFramedLength(0), campaignFramedLength(0), worldFramedLength(0),
-		nextDeltaSequence(0), published(false), failed(false), closed(false),
+		nextDeltaSequence(0), published(false), failed(false), closed(false), hasDecision(false),
 		pendingCount(0), committedFrameCount(0), committedDecisionCount(0), committedCoverageCount(0),
 		commitId(0), firstRequestSequence(0), lastRequestSequence(0), hasRequests(false),
 		stagingRequest(false)
@@ -327,7 +334,7 @@ namespace
 			data.requestZoneReplacements.size() + data.requestZoneNeighbors.size() +
 			data.requestDeltaCities.size() + data.requestRemovedUnits.size() +
 			data.requestRemovedCities.size() + data.requestTeamPassability.size() +
-			data.requestVisibilityFlips.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
+			data.requestVisibilityWords.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
 			data.requestRemovedRevealedOverrides.size() + data.requestKnownAttackers.size() +
 			data.requestInterceptorReplacements.size() + data.requestInterceptorEntries.size() +
 			data.requestParticipants.size() + data.requestDroppedUnits.size() +
@@ -336,9 +343,10 @@ namespace
 			data.requestUnitBlockedPromotionReplacements.size() + data.requestUnitBlockedPromotionRows.size() +
 			data.requestUnitAttackCountReplacements.size() + data.requestUnitAttackCountRows.size() +
 			data.requestPlayerResistanceReplacements.size() + data.requestPlayerResistanceRows.size() +
-			data.requestCityAttackCountReplacements.size() + data.requestCityAttackCountRows.size() +
-			data.requestDeltaUnitMovementCounts.size();
-	}
+		data.requestCityAttackCountReplacements.size() + data.requestCityAttackCountRows.size() +
+		data.requestDeltaUnitMovementCounts.size() + data.requestDeltaUnitSparseFields.size() +
+		data.requestDeltaPlotSparseCounters.size() + data.requestCityReferences.size();
+}
 }
 
 VoxRlCapture& VoxRlCapture::GetInstance()
@@ -575,6 +583,7 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_campaignGeneration = 0;
 	m_campaignRelPath.clear();
 	m_campaignFramedLength = 0;
+	m_campaignStorage.Clear();
 	m_topologyInvalidated = false;
 	m_worldReplacementPending = false;
 	m_decisionIdCounter = 0;
@@ -598,6 +607,8 @@ void VoxRlCapture::Shutdown()
 	m_shuttingDown = true;
 	EndEngagement();
 	CloseSegment("gameTeardown");
+	// The retained CAMPAIGN bytes belong to the finished attachment.
+	m_campaignStorage.Clear();
 }
 
 void VoxRlCapture::OnGameConcluded()
@@ -641,7 +652,7 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 		}
 		if (!flushed)
 		{
-			FailSegment("captureFailure");
+			FailSegment("streamFlush");
 			return;
 		}
 		// A closure-only batch commits without adding binary frames.
@@ -657,9 +668,24 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 		}
 		if (!indexFlushed)
 		{
-			FailSegment("captureFailure");
+			FailSegment("indexFlush");
 			return;
 		}
+	}
+	else if (!m_segment->failed && !m_segment->published && m_segment->hasDecision)
+	{
+		// A decision was made but the segment closed before it could publish
+		// (its CAMPAIGN was never bound in time). Suppression is reserved for
+		// segments that genuinely never decided, so this is a capture failure
+		// rather than a silent drop of real decision data.
+		FailSegment("unpublishedDecision");
+		return;
+	}
+	else if (!m_segment->failed && !m_segment->published)
+	{
+		// A segment that never decided leaves no files behind. Its coverage
+		// omissions travel to suppressed.jsonl so they still reach disk.
+		AppendSuppressedLine(closureReason);
 	}
 	WriteTimingSummary(closureReason);
 	delete m_segment;
@@ -706,10 +732,7 @@ void VoxRlCapture::AddCoverageOmission(const char* reason)
 	{
 		return;
 	}
-	std::string line = "{\"type\":\"coverage\",\"omissions\":[{\"reason\":";
-	AppendJsonString(line, reason);
-	line += "}]}\n";
-	m_segment->coverageLines.push_back(line);
+	m_segment->coverageReasons.push_back(reason);
 }
 
 // Writes one segment's accumulated timing summary to VoxRlCapture.csv. The
@@ -881,7 +904,11 @@ bool VoxRlCapture::WriteWorldBaseline()
 	return true;
 }
 
-bool VoxRlCapture::BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn)
+// Builds the CAMPAIGN block into capture-level storage and binds this segment
+// to it. The file write happens at publication, so a segment that closes
+// without a decision leaves no CAMPAIGN file behind and the next same-turn
+// segment can still publish the retained bytes.
+bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn)
 {
 	Segment& segment = *m_segment;
 	char folder[80];
@@ -910,17 +937,9 @@ bool VoxRlCapture::BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn)
 			return false;
 		}
 	}
-	{
-		ScopedTiming timing(m_config.timings, segment.timings.campaignWriteFlushNs);
-		sprintf_s(fileName, 36, "campaign-%u.bin", campaignGeneration);
-		const std::string path = directory + "/" + fileName;
-		VoxRlOutputFile file;
-		if (!file.OpenNew(path.c_str()) || !file.Write(storage.Bytes(), length) || !file.Flush())
-		{
-			return false;
-		}
-		segment.timings.campaignBuildBytes += length;
-	}
+	// The completed bytes swap into capture-level storage without copying.
+	m_campaignStorage.Swap(&storage);
+	sprintf_s(fileName, 36, "campaign-%u.bin", campaignGeneration);
 	m_campaignTurnPlayer = static_cast<unsigned int>(ePlayer);
 	m_campaignTurn = iTurn;
 	m_campaignStaticGeneration = segment.staticGeneration;
@@ -930,6 +949,34 @@ bool VoxRlCapture::BuildAndWriteCampaign(PlayerTypes ePlayer, int iTurn)
 	segment.campaignGeneration = campaignGeneration;
 	segment.campaignRelPath = m_campaignRelPath;
 	segment.campaignFramedLength = length;
+	return true;
+}
+
+// Writes the capture-level CAMPAIGN bytes to their reserved path. The first
+// same-turn segment that publishes performs the write; later segments reuse
+// the existing file.
+bool VoxRlCapture::WriteCampaignBaseline()
+{
+	if (m_campaignStorage.ByteLength() == 0 || m_campaignRelPath.empty())
+	{
+		return false;
+	}
+	const std::string path = m_gameDirectory + "/" + m_campaignRelPath;
+	VoxRlOutputFile file;
+	bool written = false;
+	{
+		ScopedTiming timing(m_config.timings, m_segment->timings.campaignWriteFlushNs);
+		written = file.OpenNew(path.c_str()) &&
+			file.Write(m_campaignStorage.Bytes(), m_campaignFramedLength) && file.Flush();
+	}
+	if (!written)
+	{
+		return false;
+	}
+	if (m_config.timings) m_segment->timings.campaignBuildBytes += m_campaignFramedLength;
+	// The bytes travel to disk once; the capture-level copy only served
+	// deferred publication.
+	m_campaignStorage.Clear();
 	return true;
 }
 
@@ -1054,55 +1101,122 @@ void VoxRlCapture::OnCampaignSeam(PlayerTypes ePlayer)
 		return;
 	}
 	Segment& segment = *m_segment;
-	if (segment.campaignGeneration != 0)
+	if (segment.campaignGeneration == 0)
 	{
-		// Already bound through same-turn reuse.
-		if (!segment.published)
+		if (!BuildAndBindCampaign(ePlayer, segment.turn))
 		{
-			PublishPendingFrames();
+			FailSegment("campaignBuild");
+			return;
 		}
-		return;
 	}
-	if (!BuildAndWriteCampaign(ePlayer, segment.turn))
+	// Publication still waits for the segment's first decision request.
+	if (!segment.published)
 	{
-		FailSegment("captureFailure");
-		return;
+		PublishPendingFrames();
 	}
-	PublishPendingFrames();
 }
 
-void VoxRlCapture::PublishPendingFrames()
+// Appends one suppressed-segment line to suppressed.jsonl at the recording
+// root. The line carries the omissions the segment accumulated because no
+// committed index will ever hold them. The generation number is omitted
+// because ReserveGeneration may hand it to the next segment.
+void VoxRlCapture::AppendSuppressedLine(const char* closureReason)
+{
+	const Segment& segment = *m_segment;
+	std::string line = "{\"type\":\"suppressed\",\"player\":";
+	AppendInt(line, static_cast<int>(segment.player));
+	line += ",\"turn\":";
+	AppendInt(line, segment.turn);
+	line += ",\"requestCount\":";
+	AppendNumber(line, segment.nextDeltaSequence);
+	line += ",\"closureReason\":";
+	AppendJsonString(line, closureReason != NULL ? closureReason : "unknown");
+	line += ",\"omissions\":[";
+	for (size_t index = 0; index < segment.coverageReasons.size(); ++index)
+	{
+		if (index != 0) line += ",";
+		line += "{\"reason\":";
+		AppendJsonString(line, segment.coverageReasons[index].c_str());
+		line += "}";
+	}
+	line += "]}\n";
+	VoxRlOutputFile file;
+	if (!file.OpenAppend((m_gameDirectory + "/suppressed.jsonl").c_str()) ||
+		!file.Write(line.c_str(), static_cast<unsigned int>(line.size())))
+	{
+		if (GC.getLogging())
+		{
+			FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+			if (log != NULL)
+			{
+				log->Msg("Could not append the suppressed-segment line for player=%d turn=%d.\n",
+					static_cast<int>(segment.player), segment.turn);
+			}
+		}
+	}
+}
+
+void VoxRlCapture::PublishPendingFrames(bool allowWithoutDecision)
 {
 	Segment& segment = *m_segment;
 	if (segment.published || segment.failed)
 	{
 		return;
 	}
+	// Publication requires a bound compatible CAMPAIGN and, outside the
+	// pending-budget escape hatch, the segment's first decision request.
+	// Without both the attempt is a no-op, not a failure.
+	if (segment.campaignGeneration == 0)
+	{
+		return;
+	}
+	if (!segment.hasDecision && !allowWithoutDecision)
+	{
+		return;
+	}
+	// The retained CAMPAIGN bytes are written by whichever same-turn segment
+	// publishes first; a later segment finds the file already present.
+	if (m_campaignStorage.ByteLength() != 0)
+	{
+		if (!WriteCampaignBaseline())
+		{
+			FailSegment("campaignWrite");
+			return;
+		}
+	}
 	// The WORLD snapshot was captured at the pre-danger checkpoint. Write it
-	// only now, after the campaign seam makes this segment publishable.
+	// only now, when publication makes this segment's files reachable.
 	if (!WriteWorldBaseline())
 	{
 		FailSegment("worldWrite");
 		return;
 	}
 	// Dependencies must exist before the index publishes them.
-	if (!VoxRlFileExists((m_gameDirectory + "/" + segment.staticRelPath).c_str()) ||
-		!VoxRlFileExists((m_gameDirectory + "/" + segment.campaignRelPath).c_str()) ||
-		!VoxRlFileExists((m_gameDirectory + "/" + segment.worldRelPath).c_str()))
+	if (!VoxRlFileExists((m_gameDirectory + "/" + segment.staticRelPath).c_str()))
 	{
-		FailSegment("captureFailure");
+		FailSegment("missingStaticDependency");
+		return;
+	}
+	if (!VoxRlFileExists((m_gameDirectory + "/" + segment.campaignRelPath).c_str()))
+	{
+		FailSegment("missingCampaignDependency");
+		return;
+	}
+	if (!VoxRlFileExists((m_gameDirectory + "/" + segment.worldRelPath).c_str()))
+	{
+		FailSegment("missingWorldDependency");
 		return;
 	}
 	// Opening the stream and index creates the segment directory; until
 	// this point the segment existed only in memory.
 	if (!m_segmentStream.OpenNew(segment.streamPath.c_str()))
 	{
-		FailSegment("captureFailure");
+		FailSegment("streamOpen");
 		return;
 	}
 	if (!m_segmentIndex.OpenNew(segment.indexPath.c_str()))
 	{
-		FailSegment("captureFailure");
+		FailSegment("indexOpen");
 		return;
 	}
 	const std::string streamRelPath = segment.relativeSegmentDir + "/stream.bin";
@@ -1152,7 +1266,7 @@ void VoxRlCapture::PublishPendingFrames()
 	line += ",\"checkpoint\":{\"kind\":\"postDiplomacy\",\"warReplacement\":false}}\n";
 	if (!AppendIndexLine(line.c_str()))
 	{
-		FailSegment("captureFailure");
+		FailSegment("segmentIndexWrite");
 		return;
 	}
 	segment.published = true;
@@ -1167,7 +1281,7 @@ void VoxRlCapture::PublishPendingFrames()
 	}
 	if (!pendingWritten)
 	{
-		FailSegment("captureFailure");
+		FailSegment("pendingPublishWrite");
 		return;
 	}
 	if (m_config.timings) segment.timings.pendingPublishWriteBytes += pendingBytes;
@@ -1235,13 +1349,16 @@ void VoxRlCapture::CommitBatch(bool closureOnly, const char* closureReason)
 		batch += "}\n";
 	}
 	// Coverage lines describe newly known omissions and are never rewritten.
-	for (size_t index = 0; index < segment.coverageLines.size(); ++index)
+	std::string coverageBatch;
+	for (size_t index = 0; index < segment.coverageReasons.size(); ++index)
 	{
-		batch += segment.coverageLines[index];
+		coverageBatch += "{\"type\":\"coverage\",\"omissions\":[{\"reason\":";
+		AppendJsonString(coverageBatch, segment.coverageReasons[index].c_str());
+		coverageBatch += "}]}\n";
 	}
 	const unsigned int coverageCount = segment.committedCoverageCount +
-		static_cast<unsigned int>(segment.coverageLines.size());
-	segment.coverageLines.clear();
+		static_cast<unsigned int>(segment.coverageReasons.size());
+	segment.coverageReasons.clear();
 
 	std::string commit = "{\"type\":\"commit\",\"commitId\":" + NumberText(segment.commitId + 1) +
 		",\"frameCount\":" + NumberText(segment.frameTable.size()) +
@@ -1286,17 +1403,18 @@ void VoxRlCapture::CommitBatch(bool closureOnly, const char* closureReason)
 		// synchronization: completed writes stay readable through the operating
 		// system's file cache, and durability is established only by the closure
 		// sequence in CloseSegment.
-		appended = AppendIndexLine(batch.c_str()) && AppendIndexLine(commit.c_str());
+		appended = AppendIndexLine(batch.c_str()) && AppendIndexLine(coverageBatch.c_str()) &&
+			AppendIndexLine(commit.c_str());
 	}
 	if (!appended)
 	{
-		FailSegment("captureFailure");
+		FailSegment("commitIndexWrite");
 		return;
 	}
 	if (m_config.timings)
 	{
 		segment.timings.commitCount += 1;
-		segment.timings.indexBytes += batch.size() + commit.size();
+		segment.timings.indexBytes += batch.size() + coverageBatch.size() + commit.size();
 	}
 	segment.commitId += 1;
 	segment.committedFrameCount = static_cast<unsigned int>(segment.frameTable.size());
@@ -1332,7 +1450,7 @@ bool VoxRlCapture::EnqueueFrame(const void* bytes, unsigned int length, int bloc
 		}
 		if (!written)
 		{
-			FailSegment("captureFailure");
+			FailSegment("streamWrite");
 			return false;
 		}
 		if (m_config.timings) segment.timings.streamWriteBytes += length;
@@ -1340,12 +1458,19 @@ bool VoxRlCapture::EnqueueFrame(const void* bytes, unsigned int length, int bloc
 		segment.frameTable.push_back(entry);
 		return true;
 	}
-	// Pre-publication frames wait in bounded memory until a compatible
-	// CAMPAIGN permits publication.
+	// Pre-publication frames wait in bounded memory until the segment
+	// publishes. When the budget fills before a decision arrives, a bound
+	// compatible CAMPAIGN lets the synchronization backlog publish instead
+	// of failing the segment.
 	if (segment.pendingBytes.size() + length > kVoxRlPendingBudgetBytes)
 	{
-		FailSegment("budgetExceeded");
-		return false;
+		PublishPendingFrames(true);
+		if (m_segment == NULL || m_segment->failed || !m_segment->published)
+		{
+			FailSegment("budgetExceeded");
+			return false;
+		}
+		return EnqueueFrame(bytes, length, blockKind, requestSequence, decisionId, attemptIndex);
 	}
 	VoxRlFrameEntry entry;
 	entry.offset = static_cast<unsigned __int64>(segment.pendingBytes.size());
@@ -1526,7 +1651,9 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	}
 
 	// The dirty set deduplicates notifications, so each live dirty unit
-	// emits one complete record per flush.
+	// emits one complete record per flush. The collected full record splits
+	// into the wire row and its sparse rows, and the request mirror carries
+	// request-local copies of both child row sections.
 	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyUnits.begin();
 		key != segment.dirtyUnits.end(); ++key)
 	{
@@ -1549,61 +1676,85 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			return false;
 		}
 		record.iterationIndex = UnitIterationIndex(static_cast<PlayerTypes>((*key).owner), (*key).id);
+		UnitWireRecord wireRow;
+		std::vector<UnitSparseFieldRecord> sparseRows;
+		VoxRlFieldRangeFailure splitFailure;
+		if (!VoxRlSplitUnitRecord(record, wireRow, sparseRows, &splitFailure))
+		{
+			VoxRlNoteSplitFailure(splitFailure);
+			return false;
+		}
 		RequestDeltaUnitRecord delta;
-		std::memcpy(&delta, &record, sizeof(record));
+		std::memcpy(&delta, &wireRow, sizeof(wireRow));
 		// Each delta carries an independent range into the request-local section; the
 		// mirrored entries follow delta-row order and an empty range clears both tables.
 		std::vector<RequestUnitMovementCountRecord> requestCounts;
 		VoxRlMirrorSparseRows(movementCounts, requestCounts);
+		std::vector<RequestUnitSparseFieldRecord> requestSparseRows;
+		VoxRlMirrorSparseRows(sparseRows, requestSparseRows);
 		if (!AppendRequestDeltaUnitRecordMovementCountRange(&delta, &data, requestCounts)) return false;
+		if (!AppendRequestDeltaUnitRecordSparseFieldRange(&delta, &data, requestSparseRows)) return false;
 		data.requestDeltaUnits.push_back(delta);
 	}
 
-	// Physical plot deltas carry only the dense core fields; zone membership travels
-	// in its own assignment rows driven by the native zone comparison. The dedupe map
-	// retains the last emitted core row.
+	// Physical plot deltas carry the compact core row plus an optional counter row for
+	// each changed plot; zone membership travels in its own assignment rows driven by
+	// the native zone comparison. The dedupe map retains the last collected full record,
+	// so comparisons run on expanded plot values before the request's tokens exist.
+	std::vector<PlotCaptureRecord> changedPlots;
+	std::vector<int> changedPlotIndices;
 	for (std::set<int>::const_iterator plotIndex = segment.dirtyPlots.begin();
 		plotIndex != segment.dirtyPlots.end(); ++plotIndex)
 	{
 		if (*plotIndex < 0 || *plotIndex >= plotCount) continue;
 		CvPlot* plot = map.plotByIndex(*plotIndex);
 		if (plot == NULL) continue;
-		PlotCoreRecord record;
+		PlotCaptureRecord record;
 		std::memset(&record, 0, sizeof(record));
-		if (!CollectPlotCoreRecord(*plot, record))
+		if (!CollectPlotCaptureRecord(*plot, record))
 		{
 			return false;
 		}
-		RequestDeltaPlotCoreRecord delta;
-		std::memset(&delta, 0, sizeof(delta));
-		delta.plotIndex = static_cast<i32>(*plotIndex);
-		delta.effectiveOwningCityId = record.effectiveOwningCityId;
-		delta.improvementType = record.improvementType;
-		delta.resourceType = record.resourceType;
-		delta.reconCount = record.reconCount;
-		delta.extraMovePathCost = record.extraMovePathCost;
-		delta.unitIncrement = record.unitIncrement;
-		delta.owningCityId = record.owningCityId;
-		delta.effectiveOwningCityOwner = record.effectiveOwningCityOwner;
-		delta.beingWorked = record.beingWorked;
-		delta.owner = record.owner;
-		delta.featureType = record.featureType;
-		delta.improvementPillaged = record.improvementPillaged;
-		delta.improvementPassable = record.improvementPassable;
-		delta.routeType = record.routeType;
-		delta.routePillaged = record.routePillaged;
-		delta.restoreMoves = record.restoreMoves;
-		delta.freeMoveAcross = record.freeMoveAcross;
-		delta.owningCityOwner = record.owningCityOwner;
 		const VoxRlEntityKey plotKey(-2, *plotIndex);
-		std::map<VoxRlEntityKey, RequestDeltaPlotCoreRecord>::const_iterator last =
+		std::map<VoxRlEntityKey, PlotCaptureRecord>::const_iterator last =
 			segment.lastPlotRows.find(plotKey);
-		if (last != segment.lastPlotRows.end() && std::memcmp(&last->second, &delta, sizeof(delta)) == 0)
+		if (last != segment.lastPlotRows.end() && std::memcmp(&last->second, &record, sizeof(record)) == 0)
 		{
 			continue;
 		}
-		segment.lastPlotRows[plotKey] = delta;
+		segment.lastPlotRows[plotKey] = record;
+		changedPlots.push_back(record);
+		changedPlotIndices.push_back(*plotIndex);
+	}
+	// The request carries its own city reference table, built only from the changed
+	// plots it carries, so the tokens never reference another block's numbering.
+	std::vector<RequestCityReferenceRecord> requestCityReferences;
+	std::map<VoxRlCityKey, unsigned int> requestTokenByCity;
+	if (!VoxRlBuildCityReferenceTable(changedPlots, &requestCityReferences, &requestTokenByCity)) return false;
+	data.requestCityReferences = requestCityReferences;
+	for (size_t index = 0; index < changedPlots.size(); ++index)
+	{
+		RequestDeltaPlotCoreRecord delta;
+		std::memset(&delta, 0, sizeof(delta));
+		VoxRlFieldRangeFailure encodeFailure;
+		if (!VoxRlEncodePlotCore(changedPlots[index], requestTokenByCity, delta, &encodeFailure))
+		{
+			VoxRlNoteSplitFailure(encodeFailure);
+			return false;
+		}
+		delta.plotIndex = changedPlotIndices[index];
 		data.requestDeltaPlots.push_back(delta);
+		RequestDeltaPlotSparseCountersRecord counters;
+		std::memset(&counters, 0, sizeof(counters));
+		if (VoxRlEncodePlotCounters(changedPlots[index], changedPlotIndices[index], counters, &encodeFailure))
+		{
+			data.requestDeltaPlotSparseCounters.push_back(counters);
+		}
+		else if (encodeFailure.record != 0)
+		{
+			VoxRlNoteSplitFailure(encodeFailure);
+			return false;
+		}
 	}
 
 	// Zone assignment deltas carry every plot whose native zone id changed, encoded
@@ -1696,16 +1847,32 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		row.team = static_cast<i8>(*team);
 		data.requestVisibilityResets.push_back(row);
 	}
-	for (std::map<VoxRlVisibilityKey, unsigned char>::const_iterator flip = segment.visibilityFlips.begin();
-		flip != segment.visibilityFlips.end(); ++flip)
+	// Pending flips group into one masked word row per team, kind, and thirty-two-plot
+	// word, built from the flips alone: the mask covers exactly the changed plots, so no
+	// native read is needed. The map iterates team-major, so the grouping is deterministic.
 	{
-		RequestVisibilityFlipRecord row;
-		std::memset(&row, 0, sizeof(row));
-		row.team = static_cast<i8>((*flip).first.team);
-		row.plotIndex = static_cast<i32>((*flip).first.plotIndex);
-		row.bitsetKind = static_cast<u8>((*flip).first.kind);
-		row.value = (*flip).second != 0 ? 1 : 0;
-		data.requestVisibilityFlips.push_back(row);
+		std::map<VoxRlVisibilityWordKey, VoxRlVisibilityWordValue> words;
+		for (std::map<VoxRlVisibilityKey, unsigned char>::const_iterator flip = segment.visibilityFlips.begin();
+			flip != segment.visibilityFlips.end(); ++flip)
+		{
+			const VoxRlVisibilityWordKey key((*flip).first.team, (*flip).first.kind, (*flip).first.plotIndex / 32);
+			const unsigned int bit = static_cast<unsigned int>((*flip).first.plotIndex % 32);
+			VoxRlVisibilityWordValue& word = words[key];
+			word.mask |= 1U << bit;
+			if ((*flip).second != 0) word.bits |= 1U << bit;
+		}
+		for (std::map<VoxRlVisibilityWordKey, VoxRlVisibilityWordValue>::const_iterator word = words.begin();
+			word != words.end(); ++word)
+		{
+			RequestVisibilityWordRecord row;
+			std::memset(&row, 0, sizeof(row));
+			row.team = static_cast<i8>((*word).first.team);
+			row.bitsetKind = static_cast<u8>((*word).first.kind);
+			row.wordIndex = static_cast<u16>((*word).first.wordIndex);
+			row.mask = (*word).second.mask;
+			row.bits = (*word).second.bits;
+			data.requestVisibilityWords.push_back(row);
+		}
 	}
 
 	for (std::map<VoxRlEntityKey, unsigned char>::const_iterator upsert = segment.revealedOverrideUpserts.begin();
@@ -1956,7 +2123,7 @@ bool VoxRlCapture::EmitStagedRequest()
 	}
 	if (!built)
 	{
-		FailSegment("captureFailure");
+		FailSegment("stagedRequestBuild");
 		return false;
 	}
 	if (m_config.timings)
@@ -2037,7 +2204,7 @@ void VoxRlCapture::OnDangerRefreshBegin(const CvDangerPlots& danger)
 	// staged request, so the staged vectors are transferred, not copied.
 	if (!CollectDelta(m_segment->staged))
 	{
-		FailSegment("captureFailure");
+		FailSegment("refreshDeltaCollect");
 		return;
 	}
 	RequestDangerEventRecord event;
@@ -2094,7 +2261,7 @@ void VoxRlCapture::OnDangerDiscoveryBegin(const CvDangerPlots& danger, const CvU
 	// transferred, not copied.
 	if (!CollectDelta(m_segment->staged))
 	{
-		FailSegment("captureFailure");
+		FailSegment("knownAttackerDeltaCollect");
 		return;
 	}
 	RequestKnownAttackerRecord row;
@@ -2246,7 +2413,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	VoxRlRequestData data;
 	if (!CollectDelta(data))
 	{
-		FailSegment("captureFailure");
+		FailSegment("decisionDeltaCollect");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
 			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
 		return;
@@ -2259,7 +2426,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	data.requestHeader.resolvedIntent = 0;
 	data.requestHeader.previousAttemptWorldGeneration = engagement.attemptIndex == 0
 		? kVoxRlAbsentGeneration : engagement.lastAttemptWorldGeneration;
-	data.requestHeader.targetPlotIndex = pTarget != NULL ? static_cast<i32>(pTarget->GetPlotIndex()) : static_cast<i32>(kVoxRlAbsentPlotIndex);
+	data.requestHeader.targetPlotIndex = pTarget != NULL ? static_cast<i16>(pTarget->GetPlotIndex()) : static_cast<i16>(kVoxRlAbsentPlotIndex);
 	data.requestHeader.saveMovement = static_cast<i32>(iSaveMovement);
 	data.requestHeader.aggressionLevel = static_cast<u8>(eAggression);
 	data.requestHeader.targetDistanceRelevant = bTargetDistanceRelevant ? 1 : 0;
@@ -2307,7 +2474,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	}
 	if (!requestBuilt)
 	{
-		FailSegment("captureFailure");
+		FailSegment("decisionRequestBuild");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
 			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
 		return;
@@ -2316,6 +2483,23 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	{
 		segment.timings.requestCount += 1;
 		segment.timings.requestBytes += requestLength;
+	}
+	// The decision request makes this segment publishable. Publication runs
+	// before the request frame is enqueued so the request, its result, and
+	// the decision row commit together in one batch; the reader rejects a
+	// committed decision request without its row. A segment started by a
+	// mid-turn war replacement after the seam publishes here at its first
+	// decision instead of waiting for a second seam.
+	segment.hasDecision = true;
+	if (!segment.published)
+	{
+		PublishPendingFrames();
+		if (m_segment == NULL || m_segment->failed)
+		{
+			results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
+				bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+			return;
+		}
 	}
 	if (!EnqueueFrame(requestStorage.Bytes(), requestLength, VOX_RL_BLOCK_REQUEST,
 		segment.nextDeltaSequence, engagement.decisionId, engagement.attemptIndex))
@@ -2344,7 +2528,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	VoxRlResultData assignments;
 	if (!VoxRlCollectAssignmentRows(ePlayer, results, assignments))
 	{
-		FailSegment("captureFailure");
+		FailSegment("assignmentCollect");
 		return;
 	}
 
@@ -2357,7 +2541,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	}
 	if (!resultBuilt)
 	{
-		FailSegment("captureFailure");
+		FailSegment("resultBuild");
 		return;
 	}
 	if (m_config.timings)

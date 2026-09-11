@@ -128,6 +128,28 @@ namespace
 
 }
 
+// Reports one capture conversion or row the wire contract rejected. The generated
+// collectors and split call sites call this immediately before failing their build,
+// so the capture log names the reason, record, field, original value, and allowed
+// interval.
+void VoxRlNoteCaptureRangeFailure(const char* reason, const char* record, const char* field, i32 value, i32 minValue, i32 maxValue)
+{
+	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+	if (log != NULL)
+	{
+		log->Msg("Capture rejected a value: reason=%s record=%s field=%s value=%d allowed=%d..%d.\n",
+			reason != NULL ? reason : "?", record != NULL ? record : "?",
+			field != NULL ? field : "?", value, minValue, maxValue);
+	}
+}
+
+// Notes one split or expand failure through the shared capture log.
+void VoxRlNoteSplitFailure(const VoxRlFieldRangeFailure& failure)
+{
+	VoxRlNoteCaptureRangeFailure(failure.reason, failure.record, failure.field,
+		failure.value, failure.minValue, failure.maxValue);
+}
+
 // Resolves the owner of a bare damage-ledger unit id following the item 7
 // replay disposition: the smallest non-acting owner that has the unit, and
 // the acting player when nobody else does.
@@ -365,6 +387,9 @@ void VoxRlCollectUnitAttackCountRows(PlayerTypes eOwner, int iUnitId, CvUnit* pU
 	if (pUnit == NULL) return;
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
+		// The ledger is read only through acting units of live owners, so counts for
+		// eliminated attackers never reach a simulation and stay uncaptured.
+		if (!GET_PLAYER(static_cast<PlayerTypes>(player)).isAlive()) continue;
 		const int count = pUnit->GetNumTimesAttackedThisTurn(static_cast<PlayerTypes>(player));
 		if (count == 0) continue;
 		UnitAttackCountRecord row;
@@ -382,6 +407,9 @@ void VoxRlCollectCityAttackCountRows(CvCity* pCity, std::vector<CityAttackCountR
 	if (pCity == NULL) return;
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
+		// The ledger is read only through acting units of live owners, so counts for
+		// eliminated attackers never reach a simulation and stay uncaptured.
+		if (!GET_PLAYER(static_cast<PlayerTypes>(player)).isAlive()) continue;
 		const int count = pCity->GetNumTimesAttackedThisTurn(static_cast<PlayerTypes>(player));
 		if (count == 0) continue;
 		CityAttackCountRecord row;
@@ -400,6 +428,9 @@ void VoxRlCollectPlayerResistanceRows(CvPlayer* pPlayer, std::vector<PlayerResis
 	for (int opponent = 0; opponent < MAX_PLAYERS; ++opponent)
 	{
 		if (opponent == static_cast<int>(pPlayer->GetID())) continue;
+		// A dead opponent can never attack and a dead player can never query, so pairs
+		// involving an eliminated player never reach a simulation.
+		if (!GET_PLAYER(static_cast<PlayerTypes>(opponent)).isAlive()) continue;
 		const int resistance = pPlayer->GetDominationResistance(static_cast<PlayerTypes>(opponent));
 		if (resistance == 0) continue;
 		PlayerResistanceRecord row;
@@ -490,6 +521,9 @@ bool VoxRlCollectTeamPassabilityRows(std::vector<TeamPassabilityRecord>& rows)
 	{
 		const TeamTypes teamType = static_cast<TeamTypes>(teamIndex);
 		CvTeam& team = GET_TEAM(teamType);
+		// Passability rows follow the team rows: alive member teams plus the barbarian
+		// team. The loader marks every other team absent and uses its terrain fallback.
+		if (!team.isAlive() && teamIndex != BARBARIAN_TEAM) continue;
 		TeamPassabilityRecord row;
 		ZeroRecord(row);
 		row.team = static_cast<i8>(teamType);
@@ -658,6 +692,15 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	}
 	ZeroRecord(data.staticBuildIds);
 	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) return false;
+	// Plot indices travel as signed sixteen-bit wire values, so only maps of one through
+	// 32768 plots can record. The wide product rejects bad dimensions before any
+	// plot-indexed data is collected, and the same rule is rechecked on every load.
+	{
+		const int gridWidth = GC.getMap().getGridWidth();
+		const int gridHeight = GC.getMap().getGridHeight();
+		if (gridWidth <= 0 || gridHeight <= 0 ||
+			static_cast<unsigned __int64>(gridWidth) * static_cast<unsigned __int64>(gridHeight) > 32768ULL) return false;
+	}
 	ZeroRecord(data.staticMapTopology);
 	if (!CollectMapTopologyRecord(GC.getMap(), data.staticMapTopology)) return false;
 	for (int index = 0; index < GC.getMap().numPlots(); ++index)
@@ -749,7 +792,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 {
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
-	if (plotCount <= 0) return false;
+	// The world build rechecks the map bound from the static generation, because capture
+	// fails before any plot-indexed row is collected when the map exceeds the wire width.
+	if (plotCount <= 0 || plotCount > 32768) return false;
 	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
 	const TeamTypes capturingTeam = capturing.getTeam();
 	VoxRlWorldData data;
@@ -779,7 +824,6 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		}
 	}
 	ownerIterationTiming.Stop();
-
 	ScopedWorldTiming dangerSparseTiming(timings != NULL ? &timings->dangerSparseRelationsNs : NULL);
 	const CvDangerPlots* danger = capturing.GetDangerPlots();
 	if (danger == NULL) return false;
@@ -847,14 +891,18 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	zoneTiming.Stop();
 	const bool wideZoneIndices = zones.zones.size() > 65535U;
 	ScopedWorldTiming plotUnitTiming(timings != NULL ? &timings->plotUnitNs : NULL);
+	std::vector<PlotCaptureRecord> plotCaptures;
+	plotCaptures.reserve(static_cast<size_t>(plotCount));
 	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 	{
 		CvPlot* plot = map.plotByIndex(plotIndex);
 		if (plot == NULL) return false;
-		PlotCoreRecord row;
+		// The full-width record is collected first; the compact core row, the counter
+		// rows, and the city tokens are encoded from it after every plot is collected.
+		PlotCaptureRecord row;
 		ZeroRecord(row);
-		if (!CollectPlotCoreRecord(*plot, row)) return false;
-		data.worldPlotCore.push_back(row);
+		if (!CollectPlotCaptureRecord(*plot, row)) return false;
+		plotCaptures.push_back(row);
 		const i32 plotZone = zones.plotZones[plotIndex];
 		unsigned int zoneTableIndex = 0;
 		if (plotZone != -1)
@@ -877,7 +925,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			indexRow.zoneTableIndex = static_cast<u16>(zoneTableIndex);
 			data.worldPlotZones.push_back(indexRow);
 		}
-		std::vector<UnitRecord> units;
+		std::vector<UnitWireRecord> units;
 		// The default plot node chain omits trade and other managed layers.
 		// WORLD ranges retain every physical unit so owner iteration and later
 		// deltas remain complete while the simulator filters tactical occupancy.
@@ -890,18 +938,56 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			ZeroRecord(unitRow);
 			std::vector<UnitMovementCountRecord> movementCounts;
 			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow, movementCounts)) return false;
-			// The range helper appends the entries to the section in captured unit order and
-			// assigns this row's first and count.
-			if (!AppendUnitRecordMovementCountRange(&unitRow, &data, movementCounts)) return false;
 			std::map<VoxRlEntityKey, unsigned int>::const_iterator iteration =
 				iterationByUnit.find(VoxRlEntityKey(static_cast<int>(unit->getOwner()), unit->GetID()));
 			if (iteration == iterationByUnit.end()) return false;
 			unitRow.iterationIndex = iteration->second;
-			units.push_back(unitRow);
+			// The full record splits into the wire row and its sparse rows; both child
+			// ranges append through their generated helpers in captured unit order.
+			UnitWireRecord wireRow;
+			std::vector<UnitSparseFieldRecord> sparseRows;
+			VoxRlFieldRangeFailure splitFailure;
+			if (!VoxRlSplitUnitRecord(unitRow, wireRow, sparseRows, &splitFailure))
+			{
+				VoxRlNoteSplitFailure(splitFailure);
+				return false;
+			}
+			if (!AppendUnitWireRecordMovementCountRange(&wireRow, &data, movementCounts)) return false;
+			if (!AppendUnitWireRecordSparseFieldRange(&wireRow, &data, sparseRows)) return false;
+			units.push_back(wireRow);
 		}
 		// Unit rows append in captured plot order; the loader reconstructs each
 		// plot's packed range from this sequence.
 		data.worldUnits.insert(data.worldUnits.end(), units.begin(), units.end());
+	}
+	// The city reference table covers every non-null owning and effective owning city in
+	// the block, then each plot's core row and optional counter row encode against it.
+	std::vector<CityReferenceRecord> cityReferences;
+	std::map<VoxRlCityKey, unsigned int> tokenByCity;
+	if (!VoxRlBuildCityReferenceTable(plotCaptures, &cityReferences, &tokenByCity)) return false;
+	data.worldCityReferences = cityReferences;
+	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
+	{
+		PlotCoreRecord core;
+		ZeroRecord(core);
+		PlotSparseCountersRecord counters;
+		ZeroRecord(counters);
+		VoxRlFieldRangeFailure encodeFailure;
+		if (!VoxRlEncodePlotCore(plotCaptures[plotIndex], tokenByCity, core, &encodeFailure))
+		{
+			VoxRlNoteSplitFailure(encodeFailure);
+			return false;
+		}
+		if (VoxRlEncodePlotCounters(plotCaptures[plotIndex], plotIndex, counters, &encodeFailure))
+		{
+			data.worldPlotSparseCounters.push_back(counters);
+		}
+		else if (encodeFailure.record != 0)
+		{
+			VoxRlNoteSplitFailure(encodeFailure);
+			return false;
+		}
+		data.worldPlotCore.push_back(core);
 	}
 	if (!VoxRlCollectTeamPassabilityRows(data.worldTeamPassability)) return false;
 	teamPassabilitySnapshot = data.worldTeamPassability;
@@ -967,6 +1053,10 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
+		// The WORLD carries player rows only for alive players plus the barbarian slot.
+		// A dead player's cities and units are gone or dying, and historical references
+		// keep their IDs without needing captured player state.
+		if (!owner.isAlive() && player != BARBARIAN_PLAYER) continue;
 		unsigned int iteration = 0;
 		int loop = 0;
 		for (CvCity* city = owner.firstCity(&loop); city != NULL; city = owner.nextCity(&loop))
@@ -985,9 +1075,13 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	}
 	for (int team = 0; team < MAX_TEAMS; ++team)
 	{
+		// Team rows follow the same rule as players: teams with an alive member plus the
+		// barbarian team. Dead teams keep their IDs in relations and revealed overrides.
+		CvTeam& teamRecord = GET_TEAM(static_cast<TeamTypes>(team));
+		if (!teamRecord.isAlive() && team != BARBARIAN_TEAM) continue;
 		TeamRecord row;
 		ZeroRecord(row);
-		if (!CollectTeamRecord(GET_TEAM(static_cast<TeamTypes>(team)), row)) return false;
+		if (!CollectTeamRecord(teamRecord, row)) return false;
 		data.worldTeams.push_back(row);
 	}
 	for (size_t team = 0; team < aliveTeams.size(); ++team)
@@ -1013,7 +1107,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			ZeroRecord(entry);
 			entry.owner = static_cast<i8>(owner.GetID());
 			entry.unitId = static_cast<i32>(nativeEntries[index].first);
-			entry.plotIndex = static_cast<i32>(nativeEntries[index].second);
+			entry.plotIndex = static_cast<i16>(nativeEntries[index].second);
 			entries.push_back(entry);
 		}
 		if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) return false;
@@ -1066,9 +1160,16 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		CampaignAttackTargetRecord row;
 		ZeroRecord(row);
 		row.armyType = static_cast<i8>(attackTargets[index].m_armyType);
-		row.musterPlotIndex = static_cast<i32>(attackTargets[index].m_iMusterPlotIndex);
-		row.stagingPlotIndex = static_cast<i32>(attackTargets[index].m_iStagingPlotIndex);
-		row.targetPlotIndex = static_cast<i32>(attackTargets[index].m_iTargetPlotIndex);
+		// The three plot references carry the optional -1 sentinel; the checked
+		// conversion rejects anything outside the sixteen-bit plot domain.
+		VoxRlFieldRangeFailure plotFailure;
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iMusterPlotIndex, &row.musterPlotIndex, &plotFailure) ||
+			!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iStagingPlotIndex, &row.stagingPlotIndex, &plotFailure) ||
+			!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iTargetPlotIndex, &row.targetPlotIndex, &plotFailure))
+		{
+			VoxRlNoteSplitFailure(plotFailure);
+			return false;
+		}
 		row.pathLength = static_cast<i32>(attackTargets[index].m_iPathLength);
 		row.approachScore = static_cast<i32>(attackTargets[index].m_iApproachScore);
 		row.preferred = attackTargets[index].m_bPreferred ? 1 : 0;
@@ -1197,46 +1298,12 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData& data,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
-	VoxRlRequestData output;
-	RequestHeaderRecord& header = output.requestHeader;
-	header = data.requestHeader;
-	header.decisionId = static_cast<u32>(identity.decisionId);
-	if (!AppendRequestHeaderRecordDangerEventRange(&output, data.requestDangerEvents) ||
-		!AppendRequestHeaderRecordTeamRelationRange(&output, data.requestTeamRelations) ||
-		!AppendRequestHeaderRecordDeltaUnitRange(&output, data.requestDeltaUnits) ||
-		!AppendRequestHeaderRecordDeltaPlotCoreRange(&output, data.requestDeltaPlots) ||
-		!AppendRequestHeaderRecordDeltaPlotZoneRange(&output, data.requestDeltaPlotZones) ||
-		!AppendRequestHeaderRecordDeltaPlotZoneWideRange(&output, data.requestDeltaPlotZonesWide) ||
-		!AppendRequestHeaderRecordZoneReplacementRange(&output, data.requestZoneReplacements) ||
-		!AppendRequestHeaderRecordDeltaCityRange(&output, data.requestDeltaCities) ||
-		!AppendRequestHeaderRecordRemovedUnitRange(&output, data.requestRemovedUnits) ||
-		!AppendRequestHeaderRecordRemovedCityRange(&output, data.requestRemovedCities) ||
-		!AppendRequestHeaderRecordTeamPassabilityRange(&output, data.requestTeamPassability) ||
-		!AppendRequestHeaderRecordVisibilityResetRange(&output, data.requestVisibilityResets) ||
-		!AppendRequestHeaderRecordVisibilityFlipRange(&output, data.requestVisibilityFlips) ||
-		!AppendRequestHeaderRecordRevealedOverrideUpsertRange(&output, data.requestRevealedOverrideUpserts) ||
-		!AppendRequestHeaderRecordRemovedRevealedOverrideRange(&output, data.requestRemovedRevealedOverrides) ||
-		!AppendRequestHeaderRecordKnownAttackerRange(&output, data.requestKnownAttackers) ||
-		!AppendRequestHeaderRecordInterceptorReplacementRange(&output, data.requestInterceptorReplacements) ||
-		!AppendRequestHeaderRecordParticipantRange(&output, data.requestParticipants) ||
-		!AppendRequestHeaderRecordDroppedUnitRange(&output, data.requestDroppedUnits) ||
-		!AppendRequestHeaderRecordUnitModifierReplacementRange(&output, data.requestUnitModifierReplacements) ||
-		!AppendRequestHeaderRecordUnitPlagueReplacementRange(&output, data.requestUnitPlagueReplacements) ||
-		!AppendRequestHeaderRecordUnitBlockedPromotionReplacementRange(&output, data.requestUnitBlockedPromotionReplacements) ||
-		!AppendRequestHeaderRecordUnitAttackCountReplacementRange(&output, data.requestUnitAttackCountReplacements) ||
-		!AppendRequestHeaderRecordPlayerResistanceReplacementRange(&output, data.requestPlayerResistanceReplacements) ||
-		!AppendRequestHeaderRecordCityAttackCountReplacementRange(&output, data.requestCityAttackCountReplacements)) return false;
-	output.requestZoneNeighbors = data.requestZoneNeighbors;
-	// The sparse replacement parents keep the row ranges they were bound to at
-	// collection time, and the child row sections copy in the same order, so
-	// those ranges stay exact; the generated request validator re-checks the
-	// tiling inside Write.
-	output.requestUnitModifierRows = data.requestUnitModifierRows;
-	output.requestUnitPlagueRows = data.requestUnitPlagueRows;
-	output.requestUnitBlockedPromotionRows = data.requestUnitBlockedPromotionRows;
-	output.requestUnitAttackCountRows = data.requestUnitAttackCountRows;
-	output.requestPlayerResistanceRows = data.requestPlayerResistanceRows;
-	output.requestCityAttackCountRows = data.requestCityAttackCountRows;
+	// Preserve every section, including parent rows and their request-local children.
+	// Section row counts now replace the header helpers that used to copy these rows.
+	VoxRlRequestData output = data;
+	output.requestHeader.decisionId = static_cast<u32>(identity.decisionId);
+	// Interceptor ranges are bound below from the collected entries in player order.
+	output.requestInterceptorEntries.clear();
 	size_t entryCursor = 0;
 	for (size_t index = 0; index < data.requestInterceptorReplacements.size(); ++index)
 	{
