@@ -7,6 +7,7 @@
 #include "schema/VoxRlCollectors.generated.h"
 #include "VoxDeorumRL/VoxRlCaptureFiles.h"
 #include "VoxDeorumRL/schema/VoxRlBlockMetadata.h"
+#include "VoxDeorumRL/schema/VoxRlBlockView.h"
 #include "VoxDeorumRL/schema/VoxRlBlockStorage.h"
 #include "VoxDeorumRL/schema/VoxRlBlockWriter.h"
 #include "VoxDeorumRL/schema/MilitaryFlavors.h"
@@ -176,6 +177,8 @@ struct VoxRlCapture::Segment
 	std::map<VoxRlEntityKey, PlotCaptureRecord> lastPlotRows;
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
+	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
+	std::map<int, PlayerRecord> lastPlayerRows;
 
 	// The zone-id-to-row decode table of the currently accepted zone snapshot;
 	// rebuilt only when a replacement accepts a new table.
@@ -347,7 +350,8 @@ namespace
 			data.requestPlayerResistanceReplacements.size() + data.requestPlayerResistanceRows.size() +
 		data.requestCityAttackCountReplacements.size() + data.requestCityAttackCountRows.size() +
 		data.requestDeltaUnitMovementCounts.size() + data.requestDeltaUnitSparseFields.size() +
-		data.requestDeltaPlotSparseCounters.size() + data.requestCityReferences.size();
+		data.requestDeltaPlotSparseCounters.size() + data.requestCityReferences.size() +
+		data.requestDeltaPlayers.size();
 }
 }
 
@@ -866,6 +870,23 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 		}
 	}
 	segment.timings.worldBuildBytes += length;
+	// Seed from the exact serialized WORLD rows so the first request compares against
+	// the bytes that the reader will actually load.
+	{
+		VoxRlBlockView worldView;
+		if (!worldView.Open(storage.Bytes(), length)) return false;
+		const VoxRlSectionDirectoryEntry* players = worldView.FindSection(VOX_RL_SECTION_WORLD_PLAYERS);
+		const u32 playerCount = players == NULL ? 0U : players->count;
+		const u8* playerBytes = playerCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_PLAYERS);
+		if (playerCount != 0U && playerBytes == NULL) return false;
+		segment.lastPlayerRows.clear();
+		for (u32 index = 0; index < playerCount; ++index)
+		{
+			PlayerRecord row;
+			std::memcpy(&row, playerBytes + index * sizeof(PlayerRecord), sizeof(row));
+			if (!segment.lastPlayerRows.insert(std::make_pair(static_cast<int>(row.id), row)).second) return false;
+		}
+	}
 	segment.lastTeamPassabilityRows.clear();
 	for (size_t index = 0; index < teamPassability.size(); ++index)
 		segment.lastTeamPassabilityRows[static_cast<int>(teamPassability[index].team)] = teamPassability[index];
@@ -1594,6 +1615,22 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
+	// Compare the captured roster with its last emitted state, including policy
+	// bonuses and empire totals, without requiring setter hooks.
+	for (std::map<int, PlayerRecord>::iterator baseline = segment.lastPlayerRows.begin();
+		baseline != segment.lastPlayerRows.end(); ++baseline)
+	{
+		PlayerRecord row;
+		std::memset(&row, 0, sizeof(row));
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(baseline->first));
+		if (!CollectPlayerRecord(owner, capturingPlayer, row)) return false;
+		row.id = static_cast<i8>(baseline->first);
+		if (std::memcmp(&baseline->second, &row, sizeof(row)) == 0) continue;
+		RequestDeltaPlayerRecord delta;
+		std::memcpy(&delta, &row, sizeof(delta));
+		data.requestDeltaPlayers.push_back(delta);
+		baseline->second = row;
+	}
 	// The zone table is recollected only after a native rebuild marked it dirty.
 	// The comparison stays because the native rebuild does not identify changed
 	// plots: it accepts the rebuilt table, carries a replacement when the rows
