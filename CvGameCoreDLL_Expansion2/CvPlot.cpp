@@ -11574,7 +11574,15 @@ void CvPlot::flipVisibility(TeamTypes eTeam)
 	//flip visibility
 	if (m_aiVisibilityCountThisTurnMax[eTeam] != m_aiVisibilityCount[eTeam])
 	{
+		// Vox Deorum: capture effective visibility when delayed sight expires.
+		const bool voxVisibleBefore = isVisible(eTeam);
 		m_aiVisibilityCountThisTurnMax[eTeam] = m_aiVisibilityCount[eTeam];
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			const bool voxVisibleAfter = isVisible(eTeam);
+			if (voxVisibleAfter != voxVisibleBefore)
+				VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 1, voxVisibleAfter);
+		}
 		if (m_aiVisibilityCount[eTeam] == 0) //in case it's now invisible
 			updateFog();
 	}
@@ -11600,16 +11608,16 @@ PlotVisibilityChangeResult CvPlot::changeVisibilityCount(TeamTypes eTeam, int iC
 	// Apparently it's legal to decrease sight below zero - so catch that
 	m_aiVisibilityCount[eTeam] = max(0, m_aiVisibilityCount[eTeam] + iChange);
 
-	// Vox Deorum: capture the visible bit flip when the count crosses zero.
-	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-	{
-		const bool voxVisibleAfter = (m_aiVisibilityCount[eTeam] > 0);
-		if (voxVisibleAfter != bOldVisibility)
-			VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 1, voxVisibleAfter);
-	}
-
 	// Remember the maximum
 	m_aiVisibilityCountThisTurnMax[eTeam] = max(m_aiVisibilityCountThisTurnMax[eTeam], m_aiVisibilityCount[eTeam]);
+
+	// Vox Deorum: capture effective visibility after applying delayed sight.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		const bool voxVisibleAfter = isVisible(eTeam);
+		if (voxVisibleAfter != bOldMaxVisibility)
+			VoxRlCapture::GetInstance().NoteVisibilityChanged(eTeam, GetPlotIndex(), 1, voxVisibleAfter);
+	}
 
 	if (eSeeInvisible != NO_INVISIBLE)
 	{
