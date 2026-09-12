@@ -7409,6 +7409,9 @@ void CvUnit::SetTurnProcessed(bool bValue)
 	if(TurnProcessed() != bValue && !isDelayedDeath())
 	{
 		m_bAITurnProcessed = bValue;
+		// Vox Deorum: capture turn processing changes for end-turn friendly support scoring.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 	}
 }
 
