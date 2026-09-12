@@ -4,10 +4,12 @@
 #include "CvGameCoreDLLPCH.h"
 #include "VoxDeorumRL/VoxRlCaptureBuilders.h"
 #include "schema/VoxRlCollectors.generated.h"
+#include "schema/MilitaryFlavors.h"
 
 #include "VoxDeorumRL/VoxRlCapture.h"
 #include "CvDangerPlots.h"
 #include "CvDiplomacyAI.h"
+#include "CvGrandStrategyAI.h"
 #include "CvMilitaryAI.h"
 #include "CvTacticalAnalysisMap.h"
 
@@ -1132,6 +1134,10 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	CampaignHeaderRecord& header = data.campaignHeader;
 	ZeroRecord(header);
 	if (!CollectCampaignHeaderRecord(*military, capturing, header)) return false;
+	InitializeBaselineMilitaryFlavors(
+		capturing.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
+			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
+		header.militaryFlavors);
 	header.numLandUnits = static_cast<i32>(military->GetNumLandUnits());
 	header.numNavalUnits = static_cast<i32>(military->GetNumNavalUnits());
 	header.numLandUnitsInArmies = static_cast<i32>(military->GetNumLandUnitsInArmies());
@@ -1140,6 +1146,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	header.recommendedNavalUnits = static_cast<i32>(military->GetRecommendedNavalUnits());
 	header.recommendedExplorerUnits = static_cast<i32>(military->GetRecommendedExplorerUnits());
 	header.treasury = static_cast<i32>(capturing.GetTreasury()->GetGold());
+	data.campaignMilitaryFlavorOverrides.clear();
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		if (player == static_cast<int>(capturingPlayer)) continue;

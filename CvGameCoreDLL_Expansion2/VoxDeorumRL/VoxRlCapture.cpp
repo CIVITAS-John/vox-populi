@@ -9,10 +9,12 @@
 #include "VoxDeorumRL/schema/VoxRlBlockMetadata.h"
 #include "VoxDeorumRL/schema/VoxRlBlockStorage.h"
 #include "VoxDeorumRL/schema/VoxRlBlockWriter.h"
+#include "VoxDeorumRL/schema/MilitaryFlavors.h"
 
 #include "../commit_id.inc"
 #include "CvConnectionService.h"
 #include "CvDangerPlots.h"
+#include "CvGrandStrategyAI.h"
 #include "CvTacticalAI.h"
 #include "CvTacticalAnalysisMap.h"
 
@@ -1591,6 +1593,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	const TeamTypes capturingTeam = capturing.getTeam();
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	CvMap& map = GC.getMap();
+	InitializeNeutralMilitaryFlavors(data.requestHeader.militaryFlavors);
 	const int plotCount = map.numPlots();
 	// The zone table is recollected only after a native rebuild marked it dirty.
 	// The comparison stays because the native rebuild does not identify changed
@@ -2425,9 +2428,10 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 	data.requestHeader.callerType = static_cast<i32>(callerType);
 	data.requestHeader.attemptIndex = static_cast<i32>(engagement.attemptIndex);
 	data.requestHeader.retryOutcome = static_cast<i32>(engagement.lastOutcome);
-	// The resolved intent field stays absent until a later policy bridge
-	// defines the mapping.
-	data.requestHeader.resolvedIntent = 0;
+	InitializeBaselineMilitaryFlavors(
+		GET_PLAYER(ePlayer).GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
+			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
+		data.requestHeader.militaryFlavors);
 	data.requestHeader.previousAttemptWorldGeneration = engagement.attemptIndex == 0
 		? kVoxRlAbsentGeneration : engagement.lastAttemptWorldGeneration;
 	data.requestHeader.targetPlotIndex = pTarget != NULL ? static_cast<i16>(pTarget->GetPlotIndex()) : static_cast<i16>(kVoxRlAbsentPlotIndex);
