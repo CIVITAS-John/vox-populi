@@ -547,11 +547,15 @@ bool VoxRlCapture::AdmitsPlayer(PlayerTypes ePlayer) const
 
 unsigned int VoxRlCapture::ReserveGeneration(const std::string& directory, const char* prefix)
 {
-	// Generation numbers are unique within the game directory: the next
-	// free file name is reserved without overwriting prior or unfinished
-	// files, which also covers process restarts.
-	unsigned int candidate = m_staticGeneration + 1;
-	if (candidate < 1) candidate = 1;
+	// Generation numbers count files within one target directory and
+	// prefix: every kind starts at 1 and the search advances past
+	// existing files, so prior or unfinished files are never
+	// overwritten and process restarts are covered. A restarted
+	// capture may select a free lower number in an existing directory,
+	// so generation order is not chronological order. The numbers are
+	// independent per kind; identity remains the existing game, turn,
+	// player, kind, and generation combination.
+	unsigned int candidate = 1;
 	while (true)
 	{
 		char suffix[32];

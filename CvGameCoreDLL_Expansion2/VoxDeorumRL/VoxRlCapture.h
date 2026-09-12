@@ -244,7 +244,8 @@ private:
 	bool ResolveConfiguration();
 	bool ResolveCaptureRoot();
 	bool AdmitsPlayer(PlayerTypes ePlayer) const;
-	// Reserves the next unused generation number for a baseline file.
+	// Reserves the next free generation number for a baseline file,
+	// counting from one within the target directory and prefix.
 	unsigned int ReserveGeneration(const std::string& directory, const char* prefix);
 
 	// Segment lifecycle helpers.
