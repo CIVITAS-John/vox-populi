@@ -10273,6 +10273,8 @@ void CvPlayer::doTurnPostDiplomacy()
 		UpdatePlots();
 		UpdateAreaEffectUnits();
 		UpdateAreaEffectPlots();
+		// Vox Deorum: Moved this so the capture stays together and true.
+		UpdateMilitaryStats();
 		// Vox Deorum: recording capture builds WORLD at this supported
 		// pre-refresh checkpoint, immediately before the danger refresh.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -10281,7 +10283,6 @@ void CvPlayer::doTurnPostDiplomacy()
 		}
 		UpdateDangerPlots();
 		GetTacticalAI()->GetTacticalAnalysisMap()->Invalidate();
-		UpdateMilitaryStats();
 		GET_TEAM(getTeam()).ClearWarDeclarationCache();
 		UpdateCurrentAndFutureWars();
 
