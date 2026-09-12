@@ -9,10 +9,21 @@
 
 #include "VoxDeorumRL/schema/VoxRlBuilders.generated.h"
 #include <cstring>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
 #include <vector>
+
+// Saturates a native integer to the destination schema field's storage range before
+// narrowing. Wide bounds keep signed inputs comparable with unsigned field limits.
+template <typename Target>
+void VoxRlAssignClamped(Target& destination, i32 value)
+{
+	const __int64 minimum = (std::numeric_limits<Target>::min)();
+	const __int64 maximum = (std::numeric_limits<Target>::max)();
+	destination = static_cast<Target>(value < minimum ? minimum : value > maximum ? maximum : value);
+}
 
 // One owner-qualified city identity with its stable (owner, id) ordering.
 typedef std::pair<int, int> VoxRlCityKey;
@@ -60,9 +71,9 @@ bool VoxRlEncodePlotCore(const PlotCaptureRecord& source,
 	const std::map<VoxRlCityKey, unsigned int>& tokenByCity, CoreRow& out,
 	VoxRlFieldRangeFailure* failure);
 
-// Encodes one collected plot's three counters into a sparse counter row, checked
-// against their wire domains. Returns false when every counter is zero, meaning the
-// row is omitted.
+// Encodes one collected plot's three counters into a sparse counter row. Movement
+// cost saturates to its storage range; the other counters are checked against their
+// wire domains. Returns false when every counter is zero, meaning the row is omitted.
 template <typename CounterRow>
 bool VoxRlEncodePlotCounters(const PlotCaptureRecord& source, int plotIndex,
 	CounterRow& out, VoxRlFieldRangeFailure* failure);
@@ -139,7 +150,7 @@ bool VoxRlEncodePlotCounters(const PlotCaptureRecord& source, int plotIndex,
 			return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "unitIncrement", source.unitIncrement, -32768, 32767);
 		out.plotIndex = static_cast<short>(plotIndex);
 		out.reconCount = static_cast<signed char>(source.reconCount);
-		out.extraMovePathCost = source.extraMovePathCost;
+		VoxRlAssignClamped(out.extraMovePathCost, source.extraMovePathCost);
 		out.unitIncrement = static_cast<short>(source.unitIncrement);
 		return true;
 	}

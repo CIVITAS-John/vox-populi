@@ -286,10 +286,10 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const int defense = pUnit->getExtraTerrainDefensePercent(terrain);
 		const int vpAttack = pUnit->GetTerrainModifierAttack(terrain);
 		const int vpDefense = pUnit->GetTerrainModifierDefense(terrain);
-		if (attack != 0) { row.family = 0; row.index = index; row.value = attack; rows.push_back(row); }
-		if (defense != 0) { row.family = 1; row.index = index; row.value = defense; rows.push_back(row); }
-		if (vpAttack != 0) { row.family = 2; row.index = index; row.value = vpAttack; rows.push_back(row); }
-		if (vpDefense != 0) { row.family = 3; row.index = index; row.value = vpDefense; rows.push_back(row); }
+		if (attack != 0) { row.family = 0; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
+		if (defense != 0) { row.family = 1; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
+		if (vpAttack != 0) { row.family = 2; row.index = index; VoxRlAssignClamped(row.value, vpAttack); rows.push_back(row); }
+		if (vpDefense != 0) { row.family = 3; row.index = index; VoxRlAssignClamped(row.value, vpDefense); rows.push_back(row); }
 	}
 	const int featureCount = GC.getNumFeatureInfos();
 	for (int index = 0; index < featureCount; ++index)
@@ -297,8 +297,8 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const FeatureTypes feature = static_cast<FeatureTypes>(index);
 		const int attack = pUnit->getExtraFeatureAttackPercent(feature);
 		const int defense = pUnit->getExtraFeatureDefensePercent(feature);
-		if (attack != 0) { row.family = 4; row.index = index; row.value = attack; rows.push_back(row); }
-		if (defense != 0) { row.family = 5; row.index = index; row.value = defense; rows.push_back(row); }
+		if (attack != 0) { row.family = 4; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
+		if (defense != 0) { row.family = 5; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
 	}
 	// Unit class, unit class attack and defense.
 	const int unitClassCount = GC.getNumUnitClassInfos();
@@ -308,9 +308,9 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const int generic = pUnit->getUnitClassModifier(unitClass);
 		const int attack = pUnit->getUnitClassAttackMod(unitClass);
 		const int defense = pUnit->getUnitClassDefenseMod(unitClass);
-		if (generic != 0) { row.family = 6; row.index = index; row.value = generic; rows.push_back(row); }
-		if (attack != 0) { row.family = 7; row.index = index; row.value = attack; rows.push_back(row); }
-		if (defense != 0) { row.family = 8; row.index = index; row.value = defense; rows.push_back(row); }
+		if (generic != 0) { row.family = 6; row.index = index; VoxRlAssignClamped(row.value, generic); rows.push_back(row); }
+		if (attack != 0) { row.family = 7; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
+		if (defense != 0) { row.family = 8; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
 	}
 	// Unit combat, unit combat attack and defense.
 	const int combatCount = GC.getNumUnitCombatClassInfos();
@@ -320,9 +320,9 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const int generic = pUnit->getExtraUnitCombatModifier(combat);
 		const int attack = pUnit->getExtraUnitCombatModifierAttack(combat);
 		const int defense = pUnit->getExtraUnitCombatModifierDefense(combat);
-		if (generic != 0) { row.family = 9; row.index = index; row.value = generic; rows.push_back(row); }
-		if (attack != 0) { row.family = 10; row.index = index; row.value = attack; rows.push_back(row); }
-		if (defense != 0) { row.family = 11; row.index = index; row.value = defense; rows.push_back(row); }
+		if (generic != 0) { row.family = 9; row.index = index; VoxRlAssignClamped(row.value, generic); rows.push_back(row); }
+		if (attack != 0) { row.family = 10; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
+		if (defense != 0) { row.family = 11; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
 	}
 	// Domain, domain attack and defense.
 	const int domainCount = NUM_DOMAIN_TYPES;
@@ -332,9 +332,9 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const int generic = pUnit->getExtraDomainModifier(domain);
 		const int attack = pUnit->getExtraDomainAttack(domain);
 		const int defense = pUnit->getExtraDomainDefense(domain);
-		if (generic != 0) { row.family = 12; row.index = index; row.value = generic; rows.push_back(row); }
-		if (attack != 0) { row.family = 13; row.index = index; row.value = attack; rows.push_back(row); }
-		if (defense != 0) { row.family = 14; row.index = index; row.value = defense; rows.push_back(row); }
+		if (generic != 0) { row.family = 12; row.index = index; VoxRlAssignClamped(row.value, generic); rows.push_back(row); }
+		if (attack != 0) { row.family = 13; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
+		if (defense != 0) { row.family = 14; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
 	}
 	// The three per-adjacent-combat-class families close the manifest order.
 	for (int index = 0; index < combatCount; ++index)
@@ -343,9 +343,9 @@ bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit
 		const int adjacent = pUnit->getCombatModPerAdjacentUnitCombatModifier(combat);
 		const int adjacentAttack = pUnit->getCombatModPerAdjacentUnitCombatAttackMod(combat);
 		const int adjacentDefense = pUnit->getCombatModPerAdjacentUnitCombatDefenseMod(combat);
-		if (adjacent != 0) { row.family = 15; row.index = index; row.value = adjacent; rows.push_back(row); }
-		if (adjacentAttack != 0) { row.family = 16; row.index = index; row.value = adjacentAttack; rows.push_back(row); }
-		if (adjacentDefense != 0) { row.family = 17; row.index = index; row.value = adjacentDefense; rows.push_back(row); }
+		if (adjacent != 0) { row.family = 15; row.index = index; VoxRlAssignClamped(row.value, adjacent); rows.push_back(row); }
+		if (adjacentAttack != 0) { row.family = 16; row.index = index; VoxRlAssignClamped(row.value, adjacentAttack); rows.push_back(row); }
+		if (adjacentDefense != 0) { row.family = 17; row.index = index; VoxRlAssignClamped(row.value, adjacentDefense); rows.push_back(row); }
 	}
 	return true;
 }
@@ -366,7 +366,7 @@ void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 		row.domain = static_cast<i8>(toInflict[index].eDomain);
 		row.applyOnAttack = toInflict[index].bApplyOnAttack ? 1 : 0;
 		row.applyOnDefense = toInflict[index].bApplyOnDefense ? 1 : 0;
-		row.applyChance = static_cast<i32>(toInflict[index].iApplyChance);
+		VoxRlAssignClamped(row.applyChance, toInflict[index].iApplyChance);
 		plagues.push_back(row);
 	}
 	const int promotionCount = GC.getNumPromotionInfos();
@@ -399,7 +399,7 @@ void VoxRlCollectUnitAttackCountRows(PlayerTypes eOwner, int iUnitId, CvUnit* pU
 		row.owner = static_cast<i8>(eOwner);
 		row.unitId = static_cast<i32>(iUnitId);
 		row.attackingPlayer = static_cast<i8>(player);
-		row.count = static_cast<i32>(count);
+		VoxRlAssignClamped(row.count, count);
 		rows.push_back(row);
 	}
 }
@@ -419,7 +419,7 @@ void VoxRlCollectCityAttackCountRows(CvCity* pCity, std::vector<CityAttackCountR
 		row.cityOwner = static_cast<i8>(pCity->getOwner());
 		row.cityId = static_cast<i32>(pCity->GetID());
 		row.attackingPlayer = static_cast<i8>(player);
-		row.count = static_cast<i32>(count);
+		VoxRlAssignClamped(row.count, count);
 		rows.push_back(row);
 	}
 }
@@ -439,7 +439,7 @@ void VoxRlCollectPlayerResistanceRows(CvPlayer* pPlayer, std::vector<PlayerResis
 		ZeroRecord(row);
 		row.player = static_cast<i8>(pPlayer->GetID());
 		row.opponent = static_cast<i8>(opponent);
-		row.dominationResistance = static_cast<i32>(resistance);
+		VoxRlAssignClamped(row.dominationResistance, resistance);
 		rows.push_back(row);
 	}
 }
@@ -447,8 +447,8 @@ void VoxRlCollectPlayerResistanceRows(CvPlayer* pPlayer, std::vector<PlayerResis
 bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& row)
 {
 	if (!CollectCityRecord(city, capturingPlayer, row)) return false;
-	row.strengthValueRanged = static_cast<i32>(city.getStrengthValueRanged());
-	row.cityBeliefRangeStrikeModifier = static_cast<i32>(city.GetCityBeliefRangeStrikeModifier());
+	VoxRlAssignClamped(row.strengthValueRanged, city.getStrengthValueRanged());
+	VoxRlAssignClamped(row.cityBeliefRangeStrikeModifier, city.GetCityBeliefRangeStrikeModifier());
 	return true;
 }
 
@@ -461,8 +461,8 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 	// generated collector's guards for other unit fields.
 	if (GC.getNumTerrainInfos() > VoxRlTerrainCapacity ||
 		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
-	row.yieldFromKills = static_cast<i32>(MaxYieldFromKills(unit, false));
-	row.yieldFromBarbarianKills = static_cast<i32>(MaxYieldFromKills(unit, true));
+	VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(unit, false));
+	VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(unit, true));
 	// Sparse movement counts carry only the nonzero per-terrain and per-feature values.
 	movementCounts.clear();
 	for (int terrain = 0; terrain < GC.getNumTerrainInfos(); ++terrain)
@@ -473,7 +473,7 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 		ZeroRecord(entry);
 		entry.kind = 0;
 		entry.typeIndex = static_cast<u8>(terrain);
-		entry.count = static_cast<i32>(count);
+		VoxRlAssignClamped(entry.count, count);
 		movementCounts.push_back(entry);
 	}
 	for (int feature = 0; feature < GC.getNumFeatureInfos(); ++feature)
@@ -484,7 +484,7 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 		ZeroRecord(entry);
 		entry.kind = 1;
 		entry.typeIndex = static_cast<u8>(feature);
-		entry.count = static_cast<i32>(count);
+		VoxRlAssignClamped(entry.count, count);
 		movementCounts.push_back(entry);
 	}
 	// The promotion passability tables pack one bit per terrain or feature index.
@@ -687,8 +687,8 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		if (entry != NULL)
 		{
 			if (!CollectUnitEntryInfoRecord(*entry, row)) return false;
-			row.yieldFromKills = static_cast<i32>(MaxYieldFromKills(*entry, false));
-			row.yieldFromBarbarianKills = static_cast<i32>(MaxYieldFromKills(*entry, true));
+			VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(*entry, false));
+			VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(*entry, true));
 		}
 		data.staticUnitEntryInfos.push_back(row);
 	}
@@ -832,7 +832,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	DangerPlayerRecord dangerRow;
 	ZeroRecord(dangerRow);
 	if (!CollectDangerPlayerRecord(capturingPlayer, dangerRow)) return false;
-	dangerRow.turnBuilt = static_cast<i32>(danger->GetTurnBuilt());
+	VoxRlAssignClamped(dangerRow.turnBuilt, danger->GetTurnBuilt());
 	dangerRow.dirty = danger->IsDirty() ? 1 : 0;
 	std::vector<KnownAttackerRecord> known;
 	for (UnitSet::const_iterator entry = danger->GetKnownUnits().begin(); entry != danger->GetKnownUnits().end(); ++entry)
@@ -1138,13 +1138,13 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		capturing.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
 			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
 		header.militaryFlavors);
-	header.numLandUnits = static_cast<i32>(military->GetNumLandUnits());
-	header.numNavalUnits = static_cast<i32>(military->GetNumNavalUnits());
-	header.numLandUnitsInArmies = static_cast<i32>(military->GetNumLandUnitsInArmies());
-	header.numNavalUnitsInArmies = static_cast<i32>(military->GetNumNavalUnitsInArmies());
-	header.recommendedLandUnits = static_cast<i32>(military->GetRecommendedLandUnits());
-	header.recommendedNavalUnits = static_cast<i32>(military->GetRecommendedNavalUnits());
-	header.recommendedExplorerUnits = static_cast<i32>(military->GetRecommendedExplorerUnits());
+	VoxRlAssignClamped(header.numLandUnits, military->GetNumLandUnits());
+	VoxRlAssignClamped(header.numNavalUnits, military->GetNumNavalUnits());
+	VoxRlAssignClamped(header.numLandUnitsInArmies, military->GetNumLandUnitsInArmies());
+	VoxRlAssignClamped(header.numNavalUnitsInArmies, military->GetNumNavalUnitsInArmies());
+	VoxRlAssignClamped(header.recommendedLandUnits, military->GetRecommendedLandUnits());
+	VoxRlAssignClamped(header.recommendedNavalUnits, military->GetRecommendedNavalUnits());
+	VoxRlAssignClamped(header.recommendedExplorerUnits, military->GetRecommendedExplorerUnits());
 	header.treasury = static_cast<i32>(capturing.GetTreasury()->GetGold());
 	data.campaignMilitaryFlavorOverrides.clear();
 	for (int player = 0; player < MAX_PLAYERS; ++player)
