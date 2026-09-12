@@ -1593,7 +1593,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	const TeamTypes capturingTeam = capturing.getTeam();
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	CvMap& map = GC.getMap();
-	InitializeNeutralMilitaryFlavors(data.requestHeader.militaryFlavors);
 	const int plotCount = map.numPlots();
 	// The zone table is recollected only after a native rebuild marked it dirty.
 	// The comparison stays because the native rebuild does not identify changed

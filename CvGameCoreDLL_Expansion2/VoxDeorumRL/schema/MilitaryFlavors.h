@@ -11,26 +11,27 @@ enum MilitaryFlavorSlot
     kMilitaryFlavorRisk = 0,
     kMilitaryFlavorOccupation = 1,
     kMilitaryFlavorAttrition = 2,
-    kMilitaryFlavorHold = 3,
-    kMilitaryFlavorFlexibility = 4,
+    kMilitaryFlavorHoldCity = 3,
+    kMilitaryFlavorHoldGround = 4,
     kMilitaryFlavorCount = 5
 };
 
 enum
 {
     kMilitaryFlavorNeutral = 50,
-    kMilitaryFlavorMaximum = 100,
-    kMilitaryFlavorPresenceMask = (1 << kMilitaryFlavorCount) - 1
+    kMilitaryFlavorMaximum = 100
 };
 
-// Supplies editable display names without coupling schema fields to flavor semantics.
+// Supplies display names in the Vox Populi flavor naming pattern without coupling
+// schema fields to flavor semantics. Value bounds live in the manifest, which the
+// generator turns into per-record validators shared by builders and readers.
 static const char* const kMilitaryFlavorNames[kMilitaryFlavorCount] =
 {
-    "risk",
-    "occupation",
-    "attrition",
-    "hold",
-    "flexibility"
+    "RISK",
+    "OCCUPATION",
+    "ATTRITION",
+    "HOLD_CITY",
+    "HOLD_GROUND"
 };
 
 // Initializes every military flavor to its neutral value.
@@ -57,27 +58,10 @@ inline void InitializeBaselineMilitaryFlavors(int offense, u8 (&flavors)[kMilita
     flavors[kMilitaryFlavorRisk] = MilitaryRiskFromOffense(offense);
 }
 
-// Converts risk back to the nearest legacy 0..10 offense value.
+// Converts a validated risk value back to the nearest legacy 0..10 offense value.
 inline int MilitaryRiskToLegacyOffense(u8 risk)
 {
-    const int boundedRisk = risk > kMilitaryFlavorMaximum ? kMilitaryFlavorMaximum : risk;
-    return (kMilitaryFlavorMaximum - boundedRisk + 5) / 10;
-}
-
-// Checks that every flavor value lies on the portable 0..100 scale.
-inline bool IsValidMilitaryFlavors(const u8 (&flavors)[kMilitaryFlavorCount])
-{
-    for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
-    {
-        if (flavors[slot] > kMilitaryFlavorMaximum) return false;
-    }
-    return true;
-}
-
-// Checks that an override mask names only defined military flavor slots.
-inline bool IsValidMilitaryFlavorPresenceMask(u8 presenceMask)
-{
-    return (presenceMask & ~static_cast<u8>(kMilitaryFlavorPresenceMask)) == 0;
+    return (kMilitaryFlavorMaximum - risk + 5) / 10;
 }
 
 #endif
