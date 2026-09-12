@@ -128,6 +128,15 @@ namespace
 		return maximum;
 	}
 
+	// Resolves the unit-level portion of native pillage legality without freezing a plot result.
+	bool IsPillageCapable(const CvUnit& unit)
+	{
+		const CvUnitEntry& info = unit.getUnitInfo();
+		if (!info.IsPillage()) return false;
+		const TechTypes prerequisite = static_cast<TechTypes>(info.GetPrereqPillageTech());
+		return prerequisite == NO_TECH || GET_TEAM(unit.getTeam()).GetTeamTechs()->HasTech(prerequisite);
+	}
+
 }
 
 // Reports one capture conversion or row the wire contract rejected. The generated
@@ -463,6 +472,7 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
 	VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(unit, false));
 	VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(unit, true));
+	row.setPillageCapable(IsPillageCapable(unit));
 	// Sparse movement counts carry only the nonzero per-terrain and per-feature values.
 	movementCounts.clear();
 	for (int terrain = 0; terrain < GC.getNumTerrainInfos(); ++terrain)
