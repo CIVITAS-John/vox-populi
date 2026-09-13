@@ -6764,8 +6764,6 @@ void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDama
 	key.iPlotId = iDefenderPlot;
 	key.iPrevDamage = iPrevDamage;
 	key.iDamageHash = unitDamageDealt.GetHash();
-	// Keep an owned snapshot of the damage state for exact cache matching.
-	key.unitDamageDealt = unitDamageDealt;
 
 	dangerStats[key] = iDanger;
 }
@@ -6777,8 +6775,6 @@ bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamag
 	key.iPlotId = iDefenderPlot;
 	key.iPrevDamage = iPrevDamage;
 	key.iDamageHash = unitDamageDealt.GetHash();
-	// Match exact damage entries even when their hashes collide.
-	key.unitDamageDealt = unitDamageDealt;
 
 	std::tr1::unordered_map<DefendKey, int, DefendKeyHash>::const_iterator it =
 		dangerStats.find(key);
