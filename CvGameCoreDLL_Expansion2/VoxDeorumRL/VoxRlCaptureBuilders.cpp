@@ -1088,7 +1088,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	for (int team = 0; team < MAX_TEAMS; ++team)
 	{
 		// Team rows follow the same rule as players: teams with an alive member plus the
-		// barbarian team. Dead teams keep their IDs in relations and revealed overrides.
+		// barbarian team. The WORLD visibility team domain is the live-team list above.
 		CvTeam& teamRecord = GET_TEAM(static_cast<TeamTypes>(team));
 		if (!teamRecord.isAlive() && team != BARBARIAN_TEAM) continue;
 		TeamRecord row;

@@ -1029,7 +1029,7 @@ struct AttackKey
 		return iAttackerId == rhs.iAttackerId &&
 			iAttackerPlot == rhs.iAttackerPlot &&
 			iDefenderId == rhs.iDefenderId &&
-			iGarrisonId == rhs.iGarrisonId;
+			iGarrisonId == rhs.iGarrisonId &&
 			iPrevSelfDamage == rhs.iPrevSelfDamage &&
 			iPrevUnitDamage == rhs.iPrevUnitDamage &&
 			iPrevCityDamage == rhs.iPrevCityDamage;

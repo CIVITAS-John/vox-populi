@@ -158,6 +158,9 @@ struct VoxRlCapture::Segment
 	std::set<int> dirtyPlots;
 	std::map<VoxRlVisibilityKey, unsigned char> visibilityFlips;
 	std::set<int> visibilityResets;                                    // known-visibility reset teams
+	// Team ids present in the WORLD visibility sections. Delta visibility and
+	// revealed-override rows must stay within this baseline-owned domain.
+	std::set<int> capturedTeams;
 	std::map<VoxRlEntityKey, unsigned char> revealedOverrideUpserts;  // team-major key, 1 = present
 	std::set<VoxRlEntityKey> removedRevealedOverrides;                // (team, plot)
 	std::set<int> dirtyInterceptors;
@@ -885,6 +888,18 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			PlayerRecord row;
 			std::memcpy(&row, playerBytes + index * sizeof(PlayerRecord), sizeof(row));
 			if (!segment.lastPlayerRows.insert(std::make_pair(static_cast<int>(row.id), row)).second) return false;
+		}
+		// Keep the baseline's visibility domain even if a team dies later in the segment.
+		segment.capturedTeams.clear();
+		const VoxRlSectionDirectoryEntry* teams = worldView.FindSection(VOX_RL_SECTION_WORLD_PLOT_TEAMS);
+		const u32 teamCount = teams == NULL ? 0U : teams->count;
+		const u8* teamBytes = teamCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_PLOT_TEAMS);
+		if (teamCount != 0U && teamBytes == NULL) return false;
+		for (u32 index = 0; index < teamCount; ++index)
+		{
+			PlotTeamRecord row;
+			std::memcpy(&row, teamBytes + index * sizeof(PlotTeamRecord), sizeof(row));
+			if (!segment.capturedTeams.insert(static_cast<int>(row.team)).second) return false;
 		}
 	}
 	segment.lastTeamPassabilityRows.clear();
@@ -1885,6 +1900,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	for (std::set<int>::const_iterator team = segment.visibilityResets.begin();
 		team != segment.visibilityResets.end(); ++team)
 	{
+		if (segment.capturedTeams.count(*team) == 0) continue;
 		RequestVisibilityResetRecord row;
 		std::memset(&row, 0, sizeof(row));
 		row.team = static_cast<i8>(*team);
@@ -1898,6 +1914,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		for (std::map<VoxRlVisibilityKey, unsigned char>::const_iterator flip = segment.visibilityFlips.begin();
 			flip != segment.visibilityFlips.end(); ++flip)
 		{
+			if (segment.capturedTeams.count((*flip).first.team) == 0) continue;
 			const VoxRlVisibilityWordKey key((*flip).first.team, (*flip).first.kind, (*flip).first.plotIndex / 32);
 			const unsigned int bit = static_cast<unsigned int>((*flip).first.plotIndex % 32);
 			VoxRlVisibilityWordValue& word = words[key];
@@ -1922,6 +1939,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		upsert != segment.revealedOverrideUpserts.end(); ++upsert)
 	{
 		if ((*upsert).second == 0) continue;
+		if (segment.capturedTeams.count((*upsert).first.owner) == 0) continue;
 		if ((*upsert).first.id < 0 || (*upsert).first.id >= plotCount) continue;
 		CvPlot* plot = map.plotByIndex((*upsert).first.id);
 		if (plot == NULL) continue;
@@ -1937,6 +1955,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	for (std::set<VoxRlEntityKey>::const_iterator removal = segment.removedRevealedOverrides.begin();
 		removal != segment.removedRevealedOverrides.end(); ++removal)
 	{
+		if (segment.capturedTeams.count((*removal).owner) == 0) continue;
 		RequestRemovedRevealedOverrideRecord row;
 		std::memset(&row, 0, sizeof(row));
 		row.team = static_cast<i8>((*removal).owner);
