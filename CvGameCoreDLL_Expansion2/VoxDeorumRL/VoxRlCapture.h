@@ -10,6 +10,7 @@
 
 #include "VoxDeorumRL/schema/VoxRlFrame.h"
 #include "VoxDeorumRL/schema/VoxRlBlockStorage.h"
+#include "VoxDeorumRL/schema/SearchIntent.h"
 #include "VoxDeorumRL/VoxRlCaptureFiles.h"
 
 #include <map>
@@ -164,9 +165,9 @@ public:
 	void EndEngagement();
 	void NoteExecutionResult(bool bSuccess);
 	// Wraps one native FindBestUnitAssignments call: builds the decision
-	// request with pending changes, invokes the native search once,
+	// request with pending changes and explicit purpose, invokes the native search once,
 	// and snapshots the result. The native search itself is unchanged.
-	std::vector<STacticalAssignment> SearchAssignments(int callerType, PlayerTypes ePlayer,
+	std::vector<STacticalAssignment> SearchAssignments(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 		const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 		std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
 		bool bReturnToStartPositions, int iSaveMovement);
@@ -293,9 +294,9 @@ private:
 	std::vector<STacticalAssignment> RunNativeSearch(const std::vector<CvUnit*>& vUnits,
 		class CvPlot* pTarget, int eAggression, std::set<int>& unuseableUnits,
 		bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement);
-	// Builds and closes a decision request/result pair around one native
-	// search invocation.
-	void RunCapturedSearch(int callerType, PlayerTypes ePlayer,
+	// Builds and closes a purpose-labeled decision request/result pair around
+	// one native search invocation.
+	void RunCapturedSearch(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 		const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 		std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
 		bool bReturnToStartPositions, int iSaveMovement,

@@ -11,6 +11,8 @@
 #define CIV5_TACTICAL_AI_H
 
 #include "CvAStar.h"
+// Vox Deorum: share the stable purpose identifiers used by tactical capture.
+#include "VoxDeorumRL/schema/SearchIntent.h"
 
 class FDataStream;
 
@@ -447,9 +449,9 @@ private:
 	void ExecuteParadropPillage(CvPlot* pTargetPlot);
 	void ExecuteLandingOperation(CvPlot* pTargetPlot);
 	bool ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot);
-	bool ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl);
+	bool ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	bool ExecuteAttackWithCities(CvUnit* pDefender);
-	bool PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget);
+	bool PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget, SearchIntent eSearchIntent);
 	void ExecuteAirSweep(CvPlot* pTargetPlot);
 	void ExecuteAirAttack(CvPlot* pTargetPlot);
 	void ExecuteRepositionMoves();
@@ -461,7 +463,7 @@ private:
 	void ExecuteNavalBlockadeMove(CvPlot* pTarget);
 	void ExecuteAirPatrolMoves();
 	void ExecuteAirSweepMoves();
-	bool ExecuteDestroyEnemyUnits(CvTacticalTarget& kTarget, eAggressionLevel aggLvl = AL_MEDIUM);
+	bool ExecuteDestroyEnemyUnits(CvTacticalTarget& kTarget, eAggressionLevel aggLvl, SearchIntent eSearchIntent);
 	void ExecuteWithdrawMoves();
 	void ExecuteEscortEmbarkedMoves(std::vector<CvUnit*> vTargets);
 
@@ -1556,7 +1558,7 @@ namespace TacticalAIHelpers
 	int GetOtherPlayerImprovementDamage(const CvPlot* pPlot, PlayerTypes ePlayer, bool bCheckWar);
 	int SentryScore(const CvPlot* pPlot, PlayerTypes ePlayer);
 
-	bool FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl);
+	bool FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0);
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);

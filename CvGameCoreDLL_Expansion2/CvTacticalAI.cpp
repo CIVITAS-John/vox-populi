@@ -975,7 +975,8 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 				}
 
 				//finally do the attack. be a bit more careful if we have few melee units
-				ExecuteAttackWithUnits(pPlot, iMeleeCount>2 ? AL_HIGH : AL_MEDIUM);
+				// Vox Deorum: city capture keeps its resolved aggression while overriding the surrounding posture intent.
+				ExecuteAttackWithUnits(pPlot, iMeleeCount>2 ? AL_HIGH : AL_MEDIUM, kSearchIntentCityAssault);
 
 				// Did it work?  If so, don't need a temporary dominance zone if had one here
 				if (pPlot->getOwner() == m_pPlayer->GetID())
@@ -1148,7 +1149,7 @@ void CvTacticalAI::PlotBarbarianAttacks()
 	ClearCurrentMoveUnits(AI_TACTICAL_BARBARIAN_HUNT);
 	ExecuteBarbarianTheft();
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_BRAVEHEART); pTarget != NULL; pTarget = GetNextZoneTarget(AL_BRAVEHEART))
-		ExecuteDestroyEnemyUnits(*pTarget, AL_BRAVEHEART);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_BRAVEHEART, kSearchIntentBarbarianAttack);
 	ExecuteCaptureCityMoves();
 }
 
@@ -1840,7 +1841,7 @@ void CvTacticalAI::PlotAttritionAttacks(CvTacticalDominanceZone* pZone)
 	//todo: the targets are sorted in a very rough "how bad can they hit us" order
 	//but we should probably sort them in a "how bad can we hit them" order
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_LOW); pTarget!=NULL; pTarget = GetNextZoneTarget(AL_LOW))
-		ExecuteDestroyEnemyUnits(*pTarget,AL_LOW);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_LOW, kSearchIntentAttrition);
 
 	//don't expose our units for city attacks here; if we are likely to succeed we don't call PlotAttritionAttacks
 }
@@ -1852,7 +1853,7 @@ void CvTacticalAI::PlotExploitFlanksMoves(CvTacticalDominanceZone* pZone)
 	ClearCurrentMoveUnits(AI_TACTICAL_FLANKATTACK);
 
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_MEDIUM); pTarget!=NULL; pTarget = GetNextZoneTarget(AL_MEDIUM))
-		ExecuteDestroyEnemyUnits(*pTarget, AL_MEDIUM);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_MEDIUM, kSearchIntentExploitFlanks);
 
 	//just in case there is a city ... it can happen that the city is wide open and the defenders are on another island
 	ExecuteCaptureCityMoves();
@@ -1866,7 +1867,7 @@ void CvTacticalAI::PlotSteamrollMoves(CvTacticalDominanceZone* pZone)
 
 	// See if there are any kill attacks we can make.
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_HIGH); pTarget != NULL; pTarget = GetNextZoneTarget(AL_HIGH))
-		ExecuteDestroyEnemyUnits(*pTarget, AL_HIGH);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_HIGH, kSearchIntentSteamroll);
 
 	// Now go after the city
 	ExecuteCaptureCityMoves();
@@ -1883,7 +1884,7 @@ void CvTacticalAI::PlotSurgicalCityStrikeMoves(CvTacticalDominanceZone* pZone)
 
 	// Take any other really good attacks we've set up
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_MEDIUM); pTarget != NULL; pTarget = GetNextZoneTarget(AL_MEDIUM))
-		ExecuteDestroyEnemyUnits(*pTarget, AL_MEDIUM);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_MEDIUM, kSearchIntentSurgicalStrikeSupport);
 }
 
 /// Build a defensive shell around this city
@@ -1893,7 +1894,7 @@ void CvTacticalAI::PlotHedgehogMoves(CvTacticalDominanceZone* pZone)
 
 	// Be careful with our units, we don't have so many
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_LOW); pTarget != NULL; pTarget = GetNextZoneTarget(AL_LOW))
-		ExecuteDestroyEnemyUnits(*pTarget, AL_LOW);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_LOW, kSearchIntentHedgehog);
 
 	// exception : early reinforcement before attacks in other zones are considered
 	PlotReinforcementMoves(pZone);
@@ -1907,7 +1908,7 @@ void CvTacticalAI::PlotCounterattackMoves(CvTacticalDominanceZone* pZone)
 
 	// Attack priority unit targets
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT, AL_MEDIUM); pTarget != NULL; pTarget = GetNextZoneTarget(AL_MEDIUM))
-		ExecuteDestroyEnemyUnits(*pTarget, AL_MEDIUM);
+		ExecuteDestroyEnemyUnits(*pTarget, AL_MEDIUM, kSearchIntentCounterattack);
 
 }
 
@@ -2089,7 +2090,7 @@ void CvTacticalAI::PlotReinforcementMoves(CvTacticalDominanceZone* pTargetZone)
 				vUnits.push_back(pUnit);
 		}
 
-		PositionUnitsAroundTarget(vUnits,pTargetPlot);
+		PositionUnitsAroundTarget(vUnits, pTargetPlot, kSearchIntentReinforce);
 	}
 }
 
@@ -2674,7 +2675,7 @@ bool CvTacticalAI::CheckForEnemiesNearArmy(CvArmyAI* pArmy)
 	if (pZone && pZone->GetZoneCity() && pZone->GetTerritoryType()==TACTICAL_TERRITORY_ENEMY && pZone->GetOverallDominanceFlag() == TACTICAL_DOMINANCE_ENEMY)
 		return false;
 
-	return TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), ourUnitsFinal, pClosestEnemyPlot, AL_MEDIUM);
+	return TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), ourUnitsFinal, pClosestEnemyPlot, AL_MEDIUM, kSearchIntentArmyContact);
 }
 
 void CvTacticalAI::ExecuteGatherMoves(CvArmyAI * pArmy, CvPlot * pTurnTarget)
@@ -2707,7 +2708,7 @@ void CvTacticalAI::ExecuteGatherMoves(CvArmyAI * pArmy, CvPlot * pTurnTarget)
 	//we used to pass the army's target plot as a fallback target
 	//but for sneak attacks the target plot may be unreachable
 	//so we just go step by step
-	PositionUnitsAroundTarget(vUnits, pTurnTarget);
+	PositionUnitsAroundTarget(vUnits, pTurnTarget, kSearchIntentGather);
 }
 
 // ROUTINES TO PROCESS AND SORT TARGETS
@@ -2912,7 +2913,7 @@ void CvTacticalAI::ExecuteBarbarianCampMove(CvPlot* pTargetPlot)
 
 		//just get into position, we will attack next turn when in place
 		if (nGoodAttackers>1)
-			PositionUnitsAroundTarget(vUnits, pTargetPlot);
+			PositionUnitsAroundTarget(vUnits, pTargetPlot, kSearchIntentClearCamp);
 	}
 	else
 	{
@@ -3308,7 +3309,8 @@ bool CvTacticalAI::ExecuteAttackWithCities(CvUnit* pDefender)
 
 //evaluate many possible unit assignments around the target plot and choose the best one
 //will not necessarily attack only the target plot when other targets are present!
-bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl)
+// Vox Deorum: carry the requesting posture or city purpose into every retry.
+bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl, SearchIntent eSearchIntent)
 {
 	vector<CvUnit*> vUnits;
 	for (size_t i=0; i<m_CurrentMoveUnits.size(); i++)
@@ -3332,11 +3334,12 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 		LogTacticalMessage(CvString::format("trying attack on %d:%d, agg level %d", pTargetPlot->getX(), pTargetPlot->getY(), eAggLvl));
 #endif
 
-	return TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vUnits, pTargetPlot, eAggLvl);
+	return TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vUnits, pTargetPlot, eAggLvl, eSearchIntent);
 }
 
 //target can be friendly, neutral or hostile
-bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget)
+// Vox Deorum: preserve the caller's reinforcement, gathering, or camp purpose.
+bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget, SearchIntent eSearchIntent)
 {
 	//try to improve visibility. however, if the target is too far away this may fail ... in that case we chance it
 	ExecuteSpotterMove(vUnits, pTarget);
@@ -3346,7 +3349,7 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 
 	//first round: in case there are enemies around, do a combat simulation
 	vector<CvUnit*> vSimUnits = vUnits; //make a copy we can modify!
-	bool bTactSimSuccess = TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vSimUnits, pTarget, AL_LOW);
+	bool bTactSimSuccess = TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vSimUnits, pTarget, AL_LOW, eSearchIntent);
 
 	//sometimes tactsim cannot use all units, eg if they are too far out
 	vector<CvUnit*> farout;
@@ -4179,7 +4182,8 @@ void CvTacticalAI::ExecuteAirSweepMoves()
 }
 
 /// Bombard enemy units from plots they can't reach (return true if some attack made)
-bool CvTacticalAI::ExecuteDestroyEnemyUnits(CvTacticalTarget& kTarget, eAggressionLevel aggLvl)
+// Vox Deorum: retain the posture purpose if the target proceeds to tactical search.
+bool CvTacticalAI::ExecuteDestroyEnemyUnits(CvTacticalTarget& kTarget, eAggressionLevel aggLvl, SearchIntent eSearchIntent)
 {
 	//mark the target no matter if the attack succeeds
 	kTarget.SetLastAggLevel(aggLvl);
@@ -4196,7 +4200,7 @@ bool CvTacticalAI::ExecuteDestroyEnemyUnits(CvTacticalTarget& kTarget, eAggressi
 
 		// Now the real deal
 		if (FindUnitsWithinStrikingDistance(pTargetPlot) && ComputeTotalExpectedDamage(kTarget) > 0)
-			return ExecuteAttackWithUnits(pTargetPlot, aggLvl);
+			return ExecuteAttackWithUnits(pTargetPlot, aggLvl, eSearchIntent);
 	}
 
 	return false;
@@ -5830,7 +5834,7 @@ bool TacticalAIHelpers::PerformRangedOpportunityAttack(CvUnit* pUnit, bool bAllo
 		vector<STacticalAssignment> vAssignments;
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
-			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_OPPORTUNITY,
+			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_OPPORTUNITY, kSearchIntentRangedOpportunity,
 				pUnit->getOwner(), vector<CvUnit*>(1, pUnit), pUnit->plot(), static_cast<int>(AL_LOW),
 				dummy, false, !bAllowMovement, bSaveMovement);
 		}
@@ -12103,7 +12107,8 @@ void CvTacticalPosition::HealFriendlyUnit(int iUnitID, int iChange)
 		it->iSelfDamage -= iChange;
 }
 
-bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl)
+// Vox Deorum: executes one purpose-labeled search engagement without changing retry behavior.
+bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, SearchIntent eSearchIntent)
 {
 	int iCount = 0;
 	bool bSuccess = false;
@@ -12126,7 +12131,7 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 		vector<STacticalAssignment> vAssignments;
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
-			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, ePlayer,
+			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, eSearchIntent, ePlayer,
 				currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, true, false, 0);
 		}
 		else

@@ -2471,7 +2471,7 @@ std::vector<STacticalAssignment> VoxRlCapture::RunNativeSearch(const std::vector
 		bReturnToStartPositions, iSaveMovement);
 }
 
-std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType, PlayerTypes ePlayer,
+std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 	const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 	std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
 	bool bReturnToStartPositions, int iSaveMovement)
@@ -2487,7 +2487,7 @@ std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType,
 		m_engagement != NULL && m_engagement->active && m_engagement->player == ePlayer;
 	if (capture)
 	{
-		RunCapturedSearch(callerType, ePlayer, vUnits, pTarget, eAggression, unuseableUnits,
+		RunCapturedSearch(callerType, eSearchIntent, ePlayer, vUnits, pTarget, eAggression, unuseableUnits,
 			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, results);
 	}
 	else
@@ -2502,7 +2502,7 @@ std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType,
 	return results;
 }
 
-void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
+void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 	const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 	std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
 	bool bReturnToStartPositions, int iSaveMovement,
@@ -2522,6 +2522,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, PlayerTypes ePlayer,
 		return;
 	}
 	data.requestHeader.callerType = static_cast<i32>(callerType);
+	data.requestHeader.searchIntent = static_cast<u8>(eSearchIntent);
 	data.requestHeader.attemptIndex = static_cast<i32>(engagement.attemptIndex);
 	data.requestHeader.retryOutcome = static_cast<i32>(engagement.lastOutcome);
 	InitializeBaselineMilitaryFlavors(
