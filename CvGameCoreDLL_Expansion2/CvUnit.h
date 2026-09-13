@@ -313,11 +313,6 @@ struct SUnitIDValueContainer
 					size_t v = static_cast<size_t>(m_aExtraStorage[i].second / 5); // bin damage
 					h ^= (k << 4) ^ v; // order-independent XOR
 				}
-
-				// mix in main unit/value
-				size_t kMain = static_cast<size_t>(m_iUnitID);
-				size_t vMain = static_cast<size_t>(m_iValue / 5);
-				h ^= (kMain << 4) ^ vMain;
 			}
 		}
 
