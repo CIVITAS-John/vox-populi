@@ -996,13 +996,17 @@ struct DefendKey
 	int iPlotId;
 	int iPrevDamage;
 	size_t iDamageHash;
+	// Retain the damage ledger so hash collisions cannot reuse another state's danger.
+	SUnitIDValueContainer unitDamageDealt;
 
+	// Match the defender state and exact damage entries.
 	bool operator==(const DefendKey& rhs) const
 	{
 		return iDefenderId == rhs.iDefenderId &&
 			iPlotId == rhs.iPlotId &&
 			iPrevDamage == rhs.iPrevDamage &&
-			iDamageHash == rhs.iDamageHash;
+			iDamageHash == rhs.iDamageHash &&
+			unitDamageDealt == rhs.unitDamageDealt;
 	}
 };
 
@@ -1065,7 +1069,7 @@ public:
 	void storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger);
 	bool findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const;
 protected:
-	//key is defender id, plot, previous damage and a hash of unit damage dealt
+	// Key is defender id, plot, previous damage and the exact unit damage ledger.
 	std::tr1::unordered_map<DefendKey, int, DefendKeyHash> dangerStats;
 };
 
