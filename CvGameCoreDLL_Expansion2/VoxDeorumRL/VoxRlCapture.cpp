@@ -42,6 +42,26 @@ namespace
 			std::memcmp(&left[0], &right[0], left.size() * sizeof(Record)) == 0);
 	}
 
+	// Marks every retained unit whose native current-plot healing result changed.
+	void RefreshChangedActualHealRates(std::map<VoxRlEntityKey, int>& previous,
+		std::set<VoxRlEntityKey>& dirtyUnits)
+	{
+		for (std::map<VoxRlEntityKey, int>::iterator baseline = previous.begin();
+			baseline != previous.end(); ++baseline)
+		{
+			const VoxRlEntityKey& key = baseline->first;
+			CvUnit* pUnit = GET_PLAYER(static_cast<PlayerTypes>(key.owner)).getUnit(key.id);
+			if (pUnit == NULL || pUnit->plot() == NULL || pUnit->isDelayedDeath()) continue;
+			// Native current-plot healing is always zero for a healthy unit. A retained
+			// nonzero value still needs recomputation so healing to full clears the row.
+			if (baseline->second == 0 && !pUnit->IsHurt()) continue;
+			const int actualHealRate = pUnit->ActualHealRate(pUnit->plot(), false);
+			if (baseline->second == actualHealRate) continue;
+			dirtyUnits.insert(key);
+			baseline->second = actualHealRate;
+		}
+	}
+
 	// Returns a high-resolution monotonic timestamp in nanoseconds for the
 	// opt-in producer timings.
 	unsigned __int64 TimingNanoseconds()
@@ -182,6 +202,10 @@ struct VoxRlCapture::Segment
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
+	// Latest native healing result for each serialized unit. ActualHealRate depends on
+	// nearby units and mutable plot and city state, so setter hooks cannot identify every
+	// unit whose complete row must be refreshed.
+	std::map<VoxRlEntityKey, int> lastUnitActualHealRates;
 
 	// The zone-id-to-row decode table of the currently accepted zone snapshot;
 	// rebuilt only when a replacement accepts a new table.
@@ -888,6 +912,19 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			PlayerRecord row;
 			std::memcpy(&row, playerBytes + index * sizeof(PlayerRecord), sizeof(row));
 			if (!segment.lastPlayerRows.insert(std::make_pair(static_cast<int>(row.id), row)).second) return false;
+		}
+		const VoxRlSectionDirectoryEntry* units = worldView.FindSection(VOX_RL_SECTION_WORLD_UNITS);
+		const u32 unitCount = units == NULL ? 0U : units->count;
+		const u8* unitBytes = unitCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_UNITS);
+		if (unitCount != 0U && unitBytes == NULL) return false;
+		segment.lastUnitActualHealRates.clear();
+		for (u32 index = 0; index < unitCount; ++index)
+		{
+			UnitWireRecord row;
+			std::memcpy(&row, unitBytes + index * sizeof(UnitWireRecord), sizeof(row));
+			const VoxRlEntityKey key(static_cast<int>(row.owner), row.id);
+			if (!segment.lastUnitActualHealRates.insert(
+				std::make_pair(key, static_cast<int>(row.actualHealRate))).second) return false;
 		}
 		// Keep the baseline's visibility domain even if a team dies later in the segment.
 		segment.capturedTeams.clear();
@@ -1646,6 +1683,9 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestDeltaPlayers.push_back(delta);
 		baseline->second = row;
 	}
+	// Native healing depends on nearby units and mutable plot, city, diplomacy, and player
+	// state. Recompute it at the safe boundary so changes also refresh affected recipients.
+	RefreshChangedActualHealRates(segment.lastUnitActualHealRates, segment.dirtyUnits);
 	// The zone table is recollected only after a native rebuild marked it dirty.
 	// The comparison stays because the native rebuild does not identify changed
 	// plots: it accepts the rebuilt table, carries a replacement when the rows
@@ -1753,6 +1793,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		if (!AppendRequestDeltaUnitRecordMovementCountRange(&delta, &data, requestCounts)) return false;
 		if (!AppendRequestDeltaUnitRecordSparseFieldRange(&delta, &data, requestSparseRows)) return false;
 		data.requestDeltaUnits.push_back(delta);
+		segment.lastUnitActualHealRates[*key] = record.actualHealRate;
 	}
 
 	// Physical plot deltas carry the compact core row plus an optional counter row for
@@ -2687,6 +2728,7 @@ void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
+	m_segment->lastUnitActualHealRates.erase(key);
 	m_segment->dirtyUnits.erase(key);
 	m_segment->removedUnits.insert(key);
 	// Deletion removes the unit's associated sparse rows, so no family
