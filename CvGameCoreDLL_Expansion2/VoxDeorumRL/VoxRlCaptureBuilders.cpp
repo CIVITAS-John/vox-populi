@@ -209,19 +209,30 @@ namespace
 		return true;
 	}
 
-	// Accumulates resource quantities from currently developed owned tiles once.
+	// Returns whether the owning team can ordinarily use this plot's resource.
+	// Force reveal and major-gift bypasses remain in the external residual.
+	bool IsOrdinaryTileResourceConnected(CvPlot& plot, ResourceTypes resource)
+	{
+		if (!plot.isOwned() || resource == NO_RESOURCE) return false;
+		const TeamTypes team = plot.getTeam();
+		if (team == NO_TEAM) return false;
+		CvTeam& ownerTeam = GET_TEAM(team);
+		return ownerTeam.IsResourceRevealed(resource) && plot.IsResourceImprovedForOwner();
+	}
+
+	// Accumulates raw quantities from ordinarily connected owned tiles once. Quantity
+	// bonuses stay in the external residual because the runtime stores raw plot counts.
 	void CollectTileResourceTotals(std::vector<std::vector<int> >& totals)
 	{
 		CvMap& map = GC.getMap();
 		for (int plotIndex = 0; plotIndex < map.numPlots(); ++plotIndex)
 		{
 			CvPlot* plot = map.plotByIndex(plotIndex);
-			if (plot == NULL || plot->getOwner() < 0 || plot->getResourceType() < 0) continue;
-			CvImprovementEntry* improvement = GC.getImprovementInfo(plot->getImprovementType());
-			const bool developed = plot->isCity() || (improvement != NULL &&
-				improvement->IsConnectsResource(plot->getResourceType()) && !plot->IsImprovementPillaged());
-			if (developed)
-				totals[plot->getOwner()][plot->getResourceType()] += plot->getNumResource();
+			if (plot == NULL || plot->getOwner() < 0 || plot->getOwner() >= MAX_PLAYERS) continue;
+			const ResourceTypes resource = plot->getResourceType();
+			if (resource == NO_RESOURCE || plot->getNumResource() <= 0 ||
+				!IsOrdinaryTileResourceConnected(*plot, resource)) continue;
+			totals[plot->getOwner()][resource] += plot->getNumResource();
 		}
 	}
 
@@ -313,23 +324,30 @@ bool VoxRlCollectCityResourceRows(CvCity& city,
 	return CollectCityResources(city, rows, NULL, NULL);
 }
 
-// Collects one player's complete external resource replacement rows.
-bool VoxRlCollectPlayerResourceRows(CvPlayer& player,
+// Collects complete external resource replacement rows for selected players with
+// one shared scan of the map's ordinary connected tile supplies.
+bool VoxRlCollectPlayerResourceRows(const std::set<int>& players,
 	std::vector<RequestPlayerResourceRecord>& rows)
 {
 	const int resourceCount = GC.getNumResourceInfos();
 	std::vector<std::vector<int> > allTileSupply(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
 	CollectTileResourceTotals(allTileSupply);
-	std::vector<int> ordinarySupply(resourceCount, 0);
-	std::vector<int> wonderConsumption(resourceCount, 0);
-	std::vector<RequestCityResourceRecord> ignoredRows;
-	int loop = 0;
-	for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+	for (std::set<int>::const_iterator playerId = players.begin(); playerId != players.end(); ++playerId)
 	{
-		if (!CollectCityResources(*city, ignoredRows, &ordinarySupply, &wonderConsumption)) return false;
+		if (*playerId < 0 || *playerId >= MAX_PLAYERS) return false;
+		CvPlayer& player = GET_PLAYER(static_cast<PlayerTypes>(*playerId));
+		std::vector<int> ordinarySupply(resourceCount, 0);
+		std::vector<int> wonderConsumption(resourceCount, 0);
+		std::vector<RequestCityResourceRecord> ignoredRows;
+		int loop = 0;
+		for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+		{
+			if (!CollectCityResources(*city, ignoredRows, &ordinarySupply, &wonderConsumption)) return false;
+		}
+		if (!CollectPlayerResources(player, allTileSupply[*playerId], ordinarySupply,
+			wonderConsumption, rows)) return false;
 	}
-	return CollectPlayerResources(player, allTileSupply[player.GetID()], ordinarySupply,
-		wonderConsumption, rows);
+	return true;
 }
 
 // Collects one player's current balances and retained maintenance baseline.
@@ -646,15 +664,10 @@ bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecor
 	return true;
 }
 
-// Shares resource-development collection between WORLD and dirty plot deltas.
+// Shares mutable physical plot collection between WORLD and dirty plot deltas.
 bool VoxRlCollectPlotRecord(CvPlot& plot, PlotCaptureRecord& row)
 {
-	if (!CollectPlotCaptureRecord(plot, row)) return false;
-	CvImprovementEntry* improvement = row.improvementType >= 0
-		? GC.getImprovementInfo(static_cast<ImprovementTypes>(row.improvementType)) : NULL;
-	row.improvementDevelopsResource = improvement != NULL && row.resourceType >= 0 &&
-		improvement->IsConnectsResource(row.resourceType) ? 1 : 0;
-	return true;
+	return CollectPlotCaptureRecord(plot, row);
 }
 
 // Collects one unit's mutable fields and movement-count capabilities.
@@ -860,6 +873,24 @@ bool VoxRlCollectTeamPassabilityRows(std::vector<TeamPassabilityRecord>& rows)
 			row.featureImpassable[featureIndex] = prerequisite == NO_TECH ||
 				!team.GetTeamTechs()->HasTech(prerequisite) ? 1 : 0;
 		}
+		rows.push_back(row);
+	}
+	return true;
+}
+
+// Collects complete resource capability bitsets for the checkpoint team roster.
+bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
+	std::vector<TeamResourceRecord>& rows)
+{
+	if (GC.getNumResourceInfos() > VoxRlResourceCapacity) return false;
+	rows.clear();
+	rows.reserve(teams.size());
+	for (std::set<int>::const_iterator team = teams.begin(); team != teams.end(); ++team)
+	{
+		if (*team < 0 || *team >= MAX_TEAMS) return false;
+		TeamResourceRecord row;
+		ZeroRecord(row);
+		if (!CollectTeamResourceRecord(GET_TEAM(static_cast<TeamTypes>(*team)), row)) return false;
 		rows.push_back(row);
 	}
 	return true;
@@ -1161,7 +1192,8 @@ bool VoxRlCollectZones(CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapsh
 // Collects native WORLD state in stable owner and plot order for the generated writer.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
-	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot, VoxRlWorldBuildTimings* timings)
+	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
+	std::vector<TeamResourceRecord>& teamResourceSnapshot, VoxRlWorldBuildTimings* timings)
 {
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
@@ -1173,6 +1205,12 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	VoxRlWorldData data;
 	std::vector<TeamTypes> aliveTeams;
 	CollectAliveTeams(aliveTeams);
+	std::set<int> recordedTeams;
+	for (int team = 0; team < MAX_TEAMS; ++team)
+	{
+		if (GET_TEAM(static_cast<TeamTypes>(team)).isAlive() || team == BARBARIAN_TEAM)
+			recordedTeams.insert(team);
+	}
 	std::vector<PlayerTypes> alivePlayers;
 	CollectAlivePlayers(alivePlayers);
 	if (timings != NULL)
@@ -1428,16 +1466,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	std::vector<std::vector<int> > tileResourceTotals(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
 	std::vector<std::vector<int> > ordinaryBuildingSupply(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
 	std::vector<std::vector<int> > wonderResourceConsumption(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
-	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
-	{
-		const PlotCaptureRecord& plot = plotCaptures[plotIndex];
-		if (plot.owner < 0 || plot.owner >= MAX_PLAYERS || plot.resourceType < 0 ||
-			plot.resourceType >= resourceCount || plot.resourceCount <= 0) continue;
-		CvPlot* nativePlot = map.plotByIndex(plotIndex);
-		if ((nativePlot != NULL && nativePlot->isCity()) ||
-			(plot.improvementDevelopsResource && !plot.improvementPillaged))
-			tileResourceTotals[plot.owner][plot.resourceType] += plot.resourceCount;
-	}
+	CollectTileResourceTotals(tileResourceTotals);
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
@@ -1468,17 +1497,18 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		if (!CollectPlayerEconomics(owner, economics)) return false;
 		data.worldPlayerEconomics.push_back(economics);
 	}
-	for (int team = 0; team < MAX_TEAMS; ++team)
+	for (std::set<int>::const_iterator team = recordedTeams.begin(); team != recordedTeams.end(); ++team)
 	{
 		// Team rows follow the same rule as players: teams with an alive member plus the
 		// barbarian team. The WORLD visibility team domain is the live-team list above.
-		CvTeam& teamRecord = GET_TEAM(static_cast<TeamTypes>(team));
-		if (!teamRecord.isAlive() && team != BARBARIAN_TEAM) continue;
+		CvTeam& teamRecord = GET_TEAM(static_cast<TeamTypes>(*team));
 		TeamRecord row;
 		ZeroRecord(row);
 		if (!CollectTeamRecord(teamRecord, row)) return false;
 		data.worldTeams.push_back(row);
 	}
+	if (!VoxRlCollectTeamResourceRows(recordedTeams, data.worldTeamResources)) return false;
+	teamResourceSnapshot = data.worldTeamResources;
 	for (size_t team = 0; team < aliveTeams.size(); ++team)
 		for (size_t other = 0; other < aliveTeams.size(); ++other)
 		{

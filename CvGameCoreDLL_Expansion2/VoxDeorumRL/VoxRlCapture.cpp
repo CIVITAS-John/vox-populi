@@ -244,6 +244,7 @@ struct VoxRlCapture::Segment
 	std::map<VoxRlEntityKey, std::vector<RequestCityResourceRecord> > lastCityResourceRows;
 	std::map<VoxRlEntityKey, unsigned char> lastCityNeedsGarrison;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
+	std::map<int, TeamResourceRecord> lastTeamResourceRows;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
 	// Latest native healing result for each serialized unit. ActualHealRate depends on
@@ -454,7 +455,7 @@ namespace
 			data.requestDeltaPlotZones.size() + data.requestDeltaPlotZonesWide.size() +
 			data.requestZoneReplacements.size() + data.requestZoneNeighbors.size() +
 			data.requestDeltaCities.size() + data.requestRemovedUnits.size() +
-			data.requestRemovedCities.size() + data.requestTeamPassability.size() +
+			data.requestRemovedCities.size() + data.requestTeamPassability.size() + data.requestTeamResources.size() +
 			data.requestVisibilityWords.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
 			data.requestRemovedRevealedOverrides.size() + data.requestKnownAttackers.size() +
 			data.requestInterceptorReplacements.size() + data.requestInterceptorEntries.size() +
@@ -1480,11 +1481,12 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	VoxRlOwnedBlockStorage storage;
 	unsigned int length = 0;
 	std::vector<TeamPassabilityRecord> teamPassability;
+	std::vector<TeamResourceRecord> teamResources;
 	{
 		ScopedTiming timing(m_config.timings, m_segment->timings.worldBuildNs);
 		VoxRlWorldBuildTimings* phases = m_config.timings ? &segment.timings.worldPhases : NULL;
 		if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot,
-			teamPassability, phases))
+			teamPassability, teamResources, phases))
 		{
 			return false;
 		}
@@ -1548,6 +1550,9 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	segment.lastTeamPassabilityRows.clear();
 	for (size_t index = 0; index < teamPassability.size(); ++index)
 		segment.lastTeamPassabilityRows[static_cast<int>(teamPassability[index].team)] = teamPassability[index];
+	segment.lastTeamResourceRows.clear();
+	for (size_t index = 0; index < teamResources.size(); ++index)
+		segment.lastTeamResourceRows[static_cast<int>(teamResources[index].team)] = teamResources[index];
 	// The WORLD build accepts a fresh zone snapshot and the collected team
 	// passability table, so both dirty markers reset here.
 	m_zoneSnapshotDirty = false;
@@ -2351,14 +2356,45 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestZoneChoices = operationalRows->second.requestZoneChoices;
 		data.requestFocusAreas = operationalRows->second.requestFocusAreas;
 	}
+	// Team resource capabilities can change through technology, policy, or team state.
+	// Compare the complete checkpoint roster on every request because those mutations do
+	// not share one reliable dirty hook. Changed rows also refresh affected external
+	// resource residuals against the same native state.
+	std::set<int> resourceRefreshPlayers;
+	std::set<int> resourceTeams;
+	for (std::map<int, TeamResourceRecord>::const_iterator team = segment.lastTeamResourceRows.begin();
+		team != segment.lastTeamResourceRows.end(); ++team)
+		resourceTeams.insert(team->first);
+	std::vector<TeamResourceRecord> teamResources;
+	if (!VoxRlCollectTeamResourceRows(resourceTeams, teamResources)) return false;
+	for (size_t index = 0; index < teamResources.size(); ++index)
+	{
+		const TeamResourceRecord& record = teamResources[index];
+		std::map<int, TeamResourceRecord>::iterator last =
+			segment.lastTeamResourceRows.find(static_cast<int>(record.team));
+		if (last == segment.lastTeamResourceRows.end()) return false;
+		if (std::memcmp(&last->second, &record, sizeof(record)) == 0) continue;
+		RequestTeamResourceRecord row;
+		std::memcpy(&row, &record, sizeof(row));
+		data.requestTeamResources.push_back(row);
+		last->second = record;
+		for (std::map<int, PlayerRecord>::const_iterator player = segment.lastPlayerRows.begin();
+			player != segment.lastPlayerRows.end(); ++player)
+		{
+			if (GET_PLAYER(static_cast<PlayerTypes>(player->first)).getTeam() == static_cast<TeamTypes>(record.team))
+				resourceRefreshPlayers.insert(player->first);
+		}
+	}
 	if (m_operationState->collectTurnEntryEconomics)
 	{
 		CvPlayerAI& entryPlayer = GET_PLAYER(segment.player);
-		if (!VoxRlCollectPlayerResourceRows(entryPlayer, data.requestPlayerResources)) return false;
+		resourceRefreshPlayers.insert(static_cast<int>(segment.player));
 		RequestPlayerEconomicsRecord economics;
 		if (!VoxRlCollectPlayerEconomicsRecord(entryPlayer, economics)) return false;
 		data.requestPlayerEconomics.push_back(economics);
 	}
+	if (!resourceRefreshPlayers.empty() &&
+		!VoxRlCollectPlayerResourceRows(resourceRefreshPlayers, data.requestPlayerResources)) return false;
 	const int plotCount = map.numPlots();
 	// Compare the captured roster with its last emitted state, including policy
 	// bonuses and empire totals, without requiring setter hooks.

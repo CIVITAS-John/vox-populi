@@ -131,7 +131,6 @@ bool VoxRlEncodePlotCore(const PlotCaptureRecord& source,
 	out.routeType = source.routeType;
 	out.setBeingWorked(source.beingWorked != 0);
 	out.setImprovementPillaged(source.improvementPillaged != 0);
-	out.setImprovementDevelopsResource(source.improvementDevelopsResource != 0);
 	out.setImprovementPassable(source.improvementPassable != 0);
 	out.setRoutePillaged(source.routePillaged != 0);
 	out.setRestoreMoves(source.restoreMoves != 0);
@@ -213,6 +212,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
 	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
+	std::vector<TeamResourceRecord>& teamResourceSnapshot,
 	VoxRlWorldBuildTimings* timings = NULL);
 
 // Builds one complete CAMPAIGN block at the UpdateOperations entry for the
@@ -237,9 +237,9 @@ bool VoxRlAppendEventUnitSnapshot(class CvUnit& unit, TeamTypes observingTeam,
 bool VoxRlCollectCityResourceRows(class CvCity& city,
 	std::vector<RequestCityResourceRecord>& rows);
 
-// Collects one player's complete external resource totals for a turn-entry
-// synchronization request. Zero totals are retained to end earlier grants.
-bool VoxRlCollectPlayerResourceRows(class CvPlayer& player,
+// Collects complete external resource replacement rows for selected players while
+// sharing one map scan for their ordinary connected tile supplies.
+bool VoxRlCollectPlayerResourceRows(const std::set<int>& players,
 	std::vector<RequestPlayerResourceRecord>& rows);
 
 // Collects one player's current balances and retained maintenance baseline for
@@ -270,7 +270,7 @@ void VoxRlCollectPlayerResistanceRows(class CvPlayer* pPlayer, std::vector<Playe
 // Collects the generated city fields and the builder-owned snapshots shared
 // by WORLD builds and sparse city replacements.
 bool VoxRlCollectCityRecord(class CvCity& city, PlayerTypes capturingPlayer, CityRecord& row);
-// Collects a plot's physical fields and current resource-development capability.
+// Collects a plot's mutable physical fields.
 bool VoxRlCollectPlotRecord(class CvPlot& plot, PlotCaptureRecord& row);
 
 // Collects the generated unit fields and their builder-owned reduced values shared by
@@ -283,6 +283,11 @@ bool VoxRlCollectUnitRecord(class CvUnit& unit, TeamTypes capturingTeam, UnitRec
 // Collects terrain and feature impassability for every team, including the
 // barbarian team, from the info tables and each team's researched technology.
 bool VoxRlCollectTeamPassabilityRows(std::vector<TeamPassabilityRecord>& rows);
+
+// Collects ordinary reveal and improvement capabilities for every resource and
+// each team identifier in the supplied checkpoint roster.
+bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
+	std::vector<TeamResourceRecord>& rows);
 
 // Collects a complete sparse family across all live units or cities, used by
 // WORLD builds and complete-family replacement requests.
