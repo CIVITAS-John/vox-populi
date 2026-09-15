@@ -9,6 +9,7 @@
 #define VOX_RL_CAPTURE_H
 
 #include "VoxDeorumRL/schema/VoxRlFrame.h"
+#include "VoxDeorumRL/schema/VoxRlSchema.generated.h"
 #include "VoxDeorumRL/schema/VoxRlBlockStorage.h"
 #include "VoxDeorumRL/schema/SearchIntent.h"
 #include "VoxDeorumRL/VoxRlCaptureFiles.h"
@@ -24,6 +25,7 @@ class CvDangerPlots;
 class CvPlot;
 class CvTeam;
 class CvUnit;
+class CvAIOperation;
 struct VoxRlRequestData;
 struct STacticalAssignment;
 
@@ -159,6 +161,39 @@ public:
 	// Checkpoint hooks.
 	void OnPreDangerCheckpoint(PlayerTypes ePlayer);
 	void OnCampaignSeam(PlayerTypes ePlayer);
+	// Selects the native military phase for later request and event rows.
+	// This accepts every actor so out-of-turn events keep their actual context.
+	void SetMilitaryPhase(PlayerTypes ePlayer, int phase);
+	// Records the selected operation batch after UpdateOperations returns.
+	void OnOperationSelectionComplete(PlayerTypes ePlayer);
+	// Reconciles operation and board changes before tactical work consumes them.
+	void OnPreTacticalReconciliation(PlayerTypes ePlayer);
+	// Records one completed operation invocation before the next operation runs.
+	void OnOperationInvocationComplete(PlayerTypes ePlayer, int operationId, int result);
+	// Emits the completed operation movement batch, including an empty batch.
+	void OnOperationalMovesComplete(PlayerTypes ePlayer);
+	// Binds the observation immediately before native posture selection.
+	void OnStanceAssessmentReady(PlayerTypes ePlayer);
+	// Retains the post-priority stance labels for the bound assessment.
+	void OnStanceChoicesReady(PlayerTypes ePlayer);
+	// Flushes the first zone dispatch and emits its stance batch once.
+	void OnFirstZoneDispatch(PlayerTypes ePlayer);
+	// Emits the completed zone reinforcement batch, including an empty batch.
+	void OnZoneReinforcementComplete(PlayerTypes ePlayer);
+
+	// Nested operation causes restore the enclosing owner-qualified context.
+	void PushOperationChangeCause(PlayerTypes eOwner, PlayerTypes eInitiatingPlayer, int cause,
+		int operationId = -1);
+	void PopOperationChangeCause();
+	// Marks operation state changed under the current owner-qualified cause.
+	void NoteOperationChanged(PlayerTypes eOwner, int operationId);
+	// Records one operation only after native initialization accepts it.
+	void NoteOperationCreated(PlayerTypes eOwner, int operationId);
+	// Saves the final operation state and removal reason before deletion.
+	void NoteOperationRemoved(PlayerTypes eOwner, int operationId, int abortReason);
+	// Retains one accepted focus-area addition or center-based removal.
+	void NoteFocusAreaChanged(PlayerTypes eOwner, int kind, int centerPlotIndex,
+		int radius, int expiryTurn);
 
 	// Engagement and attempt hooks around the native search entry.
 	void BeginEngagement(int callerType, PlayerTypes ePlayer);
@@ -183,7 +218,8 @@ public:
 	// boundaries collect complete records after the mutation finishes.
 	void NoteUnitChanged(PlayerTypes eOwner, int iUnitId);
 	void NoteUnitPromotionsChanged(PlayerTypes eOwner, int iUnitId);
-	void NoteUnitCreated(PlayerTypes eOwner, int iUnitId);
+	void NoteUnitCreated(PlayerTypes eOwner, int iUnitId, int creationReason,
+		const CvUnit* pSourceUnit);
 	void NoteUnitRemoved(PlayerTypes eOwner, int iUnitId);
 	void NoteCityChanged(PlayerTypes eOwner, int iCityId);
 	void NoteCityCreated(PlayerTypes eOwner, int iCityId);
@@ -210,6 +246,8 @@ public:
 
 	// True when a segment is armed for the given observer.
 	bool IsObserving(PlayerTypes ePlayer) const;
+	// True when resolved filters admit buffered military events for a player.
+	bool AdmitsMilitaryEvents(PlayerTypes ePlayer) const;
 
 private:
 	VoxRlCapture();
@@ -220,6 +258,8 @@ private:
 	struct Segment;
 	class PendingRequest;
 	struct Engagement;
+	struct OperationCaptureState;
+	struct OperationCauseContext;
 
 	// Per-attachment turn-scoped campaign reuse: one CAMPAIGN block serves
 	// compatible same-turn WORLD replacements. The built bytes stay in
@@ -230,6 +270,8 @@ private:
 	int m_campaignTurn;
 	unsigned int m_campaignStaticGeneration;
 	unsigned int m_campaignGeneration;
+	unsigned int m_campaignAlignedWorldGeneration;
+	unsigned int m_campaignAlignedNextDeltaSequence;
 	std::string m_campaignRelPath;
 	unsigned int m_campaignFramedLength;
 	VoxRlOwnedBlockStorage m_campaignStorage;
@@ -252,7 +294,7 @@ private:
 	// Segment lifecycle helpers.
 	void CloseSegment(const char* closureReason);
 	void FailSegment(const char* closureReason);
-	void StartSegment(PlayerTypes ePlayer, int iTurn);
+	void StartSegment(PlayerTypes ePlayer, int iTurn, bool worldReplacement = false);
 	bool BuildAndWriteStatic();
 	// Captures the checkpoint WORLD in segment-owned memory so it can be
 	// published only after the compatible CAMPAIGN exists.
@@ -261,7 +303,8 @@ private:
 	bool WriteWorldBaseline();
 	// Builds the CAMPAIGN block into capture-level storage and binds this
 	// segment to it. The file write happens at publication.
-	bool BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn);
+	bool BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn,
+		unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence);
 	// Writes the capture-level CAMPAIGN bytes to their reserved path.
 	bool WriteCampaignBaseline();
 	// Appends one suppressed-segment line to suppressed.jsonl at the
@@ -284,12 +327,29 @@ private:
 	// Collects pending changes; successful publication clears the dirty sets.
 	bool CollectDelta(VoxRlRequestData& data);
 	void ClearDirtyState();
+	// Consumes relation snapshots accepted by the last enqueued request.
+	void CommitBufferedRelations();
+	// Consumes operation, boundary, stance, and focus rows accepted by a request.
+	void CommitOperationalRows();
 	// Appends one finished block to the segment's pending frames or stream
 	// and records its frame index entry.
 	bool EnqueueFrame(const void* bytes, unsigned int length, int blockKind,
 		unsigned int requestSequence, unsigned int decisionId, int attemptIndex);
 	// Emits one staged request block and consumes its sequence.
 	bool EmitStagedRequest();
+	// Emits one synchronization request from all pending producer state.
+	bool EmitSynchronizationRequest();
+	// Initializes common request header context and consumes one actor-turn order.
+	void InitializeRequestHeader(VoxRlRequestData& data);
+	// Finds the nearest active cause for one owner, optionally requiring an operation identity.
+	const OperationCauseContext* FindOperationCause(PlayerTypes eOwner, bool requireOperationId) const;
+	// Advances request order and keeps attachment-scoped event context aligned.
+	void AdvanceRequestOrder();
+	// Compares live operations with the last accepted owner inventory and queues versions.
+	bool ReconcileOperations(PlayerTypes eOwner, int recordKind, int invocationResult,
+		int operationId = -1);
+	// Records an accepted operation mutation, optionally admitting a new identity.
+	void NoteOperationChangedInternal(PlayerTypes eOwner, int operationId, bool allowNew);
 	// Invokes the unmodified native search once for every caller path.
 	std::vector<STacticalAssignment> RunNativeSearch(const std::vector<CvUnit*>& vUnits,
 		class CvPlot* pTarget, int eAggression, std::set<int>& unuseableUnits,
@@ -332,6 +392,11 @@ private:
 	// replacement checkpoint.
 	bool m_worldReplacementPending;
 	unsigned int m_decisionIdCounter;
+	PlayerTypes m_orderPlayer;
+	int m_orderTurn;
+	unsigned int m_nextRequestOrder;
+	PlayerTypes m_phasePlayer;
+	int m_currentPhase;
 	bool m_identityPendingLogged;
 	// Pending STATIC construction time and bytes accrued since the previous
 	// timing summary; folded into the next segment summary.
@@ -346,11 +411,26 @@ private:
 	bool m_teamPassabilityDirty;
 	Segment* m_segment;
 	Engagement* m_engagement;
+	OperationCaptureState* m_operationState;
+	std::vector<OperationCauseContext>* m_operationCauseStack;
 	// Nested danger refreshes belong to the active search request.
 	bool m_searchActive;
 	bool m_shuttingDown;
 	bool m_concluded;
 	bool m_worldReplacementLogged;
+};
+
+// Restores an enclosing operation cause automatically on every return path.
+class VoxRlOperationCaptureScope
+{
+public:
+	VoxRlOperationCaptureScope(bool enabled, PlayerTypes eOwner,
+		PlayerTypes eInitiatingPlayer, int cause, int operationId = -1);
+	~VoxRlOperationCaptureScope();
+private:
+	bool m_enabled;
+	VoxRlOperationCaptureScope(const VoxRlOperationCaptureScope&);
+	VoxRlOperationCaptureScope& operator=(const VoxRlOperationCaptureScope&);
 };
 
 #endif

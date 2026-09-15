@@ -632,8 +632,14 @@ void CvTacticalAnalysisMap::RefreshIfOutdated()
 	{
 		EstablishZoneNeighborhood();
 		CalculateMilitaryStrengths();
+		// Vox Deorum: bind the actor-visible observation before native posture selection.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().OnStanceAssessmentReady(m_ePlayer);
 		UpdatePostures();
 		PrioritizeZones();
+		// Vox Deorum: retain labels only after priority order is final.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().OnStanceChoicesReady(m_ePlayer);
 
 		//only temporary measure, creates a huge amount of logs
 		if (g_bLogZones)

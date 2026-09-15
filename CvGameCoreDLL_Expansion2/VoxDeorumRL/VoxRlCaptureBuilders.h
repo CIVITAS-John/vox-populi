@@ -123,11 +123,15 @@ bool VoxRlEncodePlotCore(const PlotCaptureRecord& source,
 		return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "resourceType", source.resourceType, -1, 127);
 	out.improvementType = static_cast<signed char>(source.improvementType);
 	out.resourceType = static_cast<signed char>(source.resourceType);
+	if (source.resourceCount < 0 || source.resourceCount > 127)
+		return VoxRlFailFieldRange(failure, "range", "PlotCaptureRecord", "resourceCount", source.resourceCount, 0, 127);
+	out.resourceCount = static_cast<signed char>(source.resourceCount);
 	out.owner = source.owner;
 	out.featureType = source.featureType;
 	out.routeType = source.routeType;
 	out.setBeingWorked(source.beingWorked != 0);
 	out.setImprovementPillaged(source.improvementPillaged != 0);
+	out.setImprovementDevelopsResource(source.improvementDevelopsResource != 0);
 	out.setImprovementPassable(source.improvementPassable != 0);
 	out.setRoutePillaged(source.routePillaged != 0);
 	out.setRestoreMoves(source.restoreMoves != 0);
@@ -214,7 +218,34 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 // Builds one complete CAMPAIGN block at the UpdateOperations entry for the
 // capturing player. Zone data is read without triggering a refresh.
 bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
+	unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length);
+
+// Appends one complete operation snapshot and its army and slot versions to a
+// request operation row. Empty version ranges remain available for no-op results.
+bool VoxRlAppendOperationRecord(class CvAIOperation& operation, PlayerTypes initiatingPlayer,
+	unsigned char kind, unsigned char changeCause, unsigned char invocationResult,
+	signed char abortReason, VoxRlRequestData& data);
+
+// Appends one immutable event-time unit snapshot and all of its request-local
+// movement, sparse, modifier, plague, blocked-promotion, and attack-count children.
+bool VoxRlAppendEventUnitSnapshot(class CvUnit& unit, TeamTypes observingTeam,
+	VoxRlRequestData& data, int* eventUnitIndex);
+
+// Collects one city's complete ordinary-building resource contribution rows for
+// a replacement request. Zero contributions are omitted.
+bool VoxRlCollectCityResourceRows(class CvCity& city,
+	std::vector<RequestCityResourceRecord>& rows);
+
+// Collects one player's complete external resource totals for a turn-entry
+// synchronization request. Zero totals are retained to end earlier grants.
+bool VoxRlCollectPlayerResourceRows(class CvPlayer& player,
+	std::vector<RequestPlayerResourceRecord>& rows);
+
+// Collects one player's current balances and retained maintenance baseline for
+// a turn-entry synchronization request.
+bool VoxRlCollectPlayerEconomicsRecord(class CvPlayer& player,
+	RequestPlayerEconomicsRecord& row);
 
 // Builds one complete REQUEST block from staged rows.
 bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData& data,
@@ -239,6 +270,8 @@ void VoxRlCollectPlayerResistanceRows(class CvPlayer* pPlayer, std::vector<Playe
 // Collects the generated city fields and the builder-owned snapshots shared
 // by WORLD builds and sparse city replacements.
 bool VoxRlCollectCityRecord(class CvCity& city, PlayerTypes capturingPlayer, CityRecord& row);
+// Collects a plot's physical fields and current resource-development capability.
+bool VoxRlCollectPlotRecord(class CvPlot& plot, PlotCaptureRecord& row);
 
 // Collects the generated unit fields and their builder-owned reduced values shared by
 // WORLD builds and sparse unit replacements. The movement-count vector receives the

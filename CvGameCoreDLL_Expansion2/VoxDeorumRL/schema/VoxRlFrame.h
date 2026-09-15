@@ -48,15 +48,15 @@ struct VoxRlImageHeader {
     u16 sectionCount;
     u32 imageSize;
     VoxRlGameUuid session;
-    i32 turn;
-    i32 player;
+    i16 turn;
+    i16 player;
     u32 generation;
     u32 staticGeneration;
     u32 worldGeneration;
     u32 campaignGeneration;
     u32 deltaSequence;
 };
-typedef char VoxRlAssert_ImageHeaderSize[(sizeof(VoxRlImageHeader) == 88) ? 1 : -1];
+typedef char VoxRlAssert_ImageHeaderSize[(sizeof(VoxRlImageHeader) == 84) ? 1 : -1];
 typedef char VoxRlAssert_GameUuidSize[(sizeof(VoxRlGameUuid) == 16) ? 1 : -1];
 
 // Stores the self-describing directory entry for one image section.

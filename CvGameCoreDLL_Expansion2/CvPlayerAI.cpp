@@ -8,6 +8,9 @@
 
 #include "CvGameCoreDLLPCH.h"
 #include "CvPlayerAI.h"
+
+// Vox Deorum: military capture phase and operation lifecycle boundaries.
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "CvRandom.h"
 #include "CvGlobals.h"
 #include "CvGameCoreUtils.h"
@@ -160,6 +163,9 @@ void CvPlayerAI::AI_doTurnPost()
 
 void CvPlayerAI::AI_doTurnUnitsPre()
 {
+	// Vox Deorum: cleanup and validation changes are maintenance, including nested aborts.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+		GetID(), GetID(), VOX_RL_OPERATION_CHANGE_MAINTENANCE);
 	int iLoop = 0;
 
 	//order is important. when a unit was killed, an army might become invalid, which might invalidate an operation
@@ -283,6 +289,9 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 		// Now let the tactical AI run.  Putting it after the operations update allows units who have
 		// just been handed off to the tactical AI to get a move in the same turn they switch between
 		GetTacticalAI()->Update();
+		// Vox Deorum: homeland processing follows all tactical phases.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().SetMilitaryPhase(GetID(), VOX_RL_MILITARY_PHASE_HOMELAND);
 		GetHomelandAI()->Update(true);
 		GetTacticalAI()->CleanUp();
 	}

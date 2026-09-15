@@ -7,6 +7,9 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: account for actual treasury effects at their native source.
+#include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvGameCoreUtils.h"
 #include "ICvDLLUserInterface.h"
 
@@ -70,7 +73,13 @@ void CvTreasury::Uninit()
 /// Update treasury for a turn
 void CvTreasury::DoGold()
 {
+	// Vox Deorum: close the previous turn's external interval before this charge.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlBeginMilitaryEconomicTurn(m_pPlayer->GetID());
 	int iGoldChange = CalculateBaseNetGoldTimes100();
+	// Vox Deorum: the net change already includes the native unit maintenance bill.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlNoteMaintenanceCharged(m_pPlayer->GetID(), CalculateUnitCost() * 100);
 	int iGoldAfterThisTurn = iGoldChange + GetGoldTimes100();
 
 	if (iGoldAfterThisTurn < 0 || m_pPlayer->isMinorCiv())
@@ -153,7 +162,11 @@ void CvTreasury::SetGoldTimes100(int iNewValue)
 			ASSERT(false, "GAMEPLAY: Player is being set to a negative Gold value.");
 		}
 
+		// Vox Deorum: measure the clamped balance change, including direct setters.
+		const int captureGoldChange = max(0, iNewValue) - m_iGold;
 		m_iGold = max(0,iNewValue);
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlNoteGoldChanged(m_pPlayer->GetID(), captureGoldChange);
 
 		if(m_pPlayer->GetID() == GC.getGame().getActivePlayer())
 		{

@@ -4,6 +4,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "VoxDeorumRL/VoxRlCapture.h"
 #include "VoxDeorumRL/VoxRlCaptureBuilders.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "schema/VoxRlCollectors.generated.h"
 #include "VoxDeorumRL/VoxRlCaptureFiles.h"
 #include "VoxDeorumRL/schema/VoxRlBlockMetadata.h"
@@ -14,6 +15,8 @@
 
 #include "../commit_id.inc"
 #include "CvConnectionService.h"
+#include "CvAIOperation.h"
+#include "CvArmyAI.h"
 #include "CvDangerPlots.h"
 #include "CvGrandStrategyAI.h"
 #include "CvTacticalAI.h"
@@ -34,12 +37,32 @@ namespace
 		return enabled != NULL && enabled[0] == '1';
 	}
 
-	// Compares zero-initialized portable rows to omit unchanged zone tables.
+	// Compares zero-initialized portable rows before emitting replacements.
 	template <typename Record>
 	bool SameRows(const std::vector<Record>& left, const std::vector<Record>& right)
 	{
 		return left.size() == right.size() && (left.empty() ||
 			std::memcmp(&left[0], &right[0], left.size() * sizeof(Record)) == 0);
+	}
+
+	// Appends a coupled city and resource replacement when either snapshot changed.
+	bool AppendChangedCityReplacement(const VoxRlEntityKey& key,
+		const RequestDeltaCityRecord& city, const std::vector<RequestCityResourceRecord>& resources,
+		std::map<VoxRlEntityKey, RequestDeltaCityRecord>& lastCities,
+		std::map<VoxRlEntityKey, std::vector<RequestCityResourceRecord> >& lastResources,
+		VoxRlRequestData& data)
+	{
+		std::map<VoxRlEntityKey, RequestDeltaCityRecord>::const_iterator lastCity = lastCities.find(key);
+		std::map<VoxRlEntityKey, std::vector<RequestCityResourceRecord> >::const_iterator lastResource =
+			lastResources.find(key);
+		if (lastCity != lastCities.end() &&
+			std::memcmp(&lastCity->second, &city, sizeof(city)) == 0 &&
+			lastResource != lastResources.end() && SameRows(lastResource->second, resources)) return false;
+		lastCities[key] = city;
+		lastResources[key] = resources;
+		data.requestDeltaCities.push_back(city);
+		data.requestCityResources.insert(data.requestCityResources.end(), resources.begin(), resources.end());
+		return true;
 	}
 
 	// Marks every retained unit whose native current-plot healing result changed.
@@ -59,6 +82,23 @@ namespace
 			if (baseline->second == actualHealRate) continue;
 			dirtyUnits.insert(key);
 			baseline->second = actualHealRate;
+		}
+	}
+
+	// Marks retained cities whose derived military garrison need changed.
+	void RefreshChangedNeedsGarrison(std::map<VoxRlEntityKey, unsigned char>& previous,
+		std::set<VoxRlEntityKey>& dirtyCities)
+	{
+		for (std::map<VoxRlEntityKey, unsigned char>::iterator baseline = previous.begin();
+			baseline != previous.end(); ++baseline)
+		{
+			const VoxRlEntityKey& key = baseline->first;
+			CvCity* pCity = GET_PLAYER(static_cast<PlayerTypes>(key.owner)).getCity(key.id);
+			if (pCity == NULL) continue;
+			const unsigned char needsGarrison = pCity->NeedsGarrison() ? 1 : 0;
+			if (baseline->second == needsGarrison) continue;
+			dirtyCities.insert(key);
+			baseline->second = needsGarrison;
 		}
 	}
 
@@ -127,6 +167,8 @@ struct VoxRlCapture::Segment
 	bool published;
 	bool failed;
 	bool closed;
+	bool campaignSeamReached;
+	bool worldReplacement;
 	// True once a decision request frame has been enqueued. Publication
 	// waits for the first decision so segments that never decide leave no
 	// files behind.
@@ -195,10 +237,12 @@ struct VoxRlCapture::Segment
 	std::set<int> dirtyPlayerResistances;
 	std::set<VoxRlEntityKey> dirtyCityAttackCounts;
 
-	// Last emitted plot and city records for the omit-unchanged comparison.
+	// Last emitted plot, city, and city-resource records for omit-unchanged comparison.
 	// Only entities emitted as deltas in this segment are retained.
 	std::map<VoxRlEntityKey, PlotCaptureRecord> lastPlotRows;
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
+	std::map<VoxRlEntityKey, std::vector<RequestCityResourceRecord> > lastCityResourceRows;
+	std::map<VoxRlEntityKey, unsigned char> lastCityNeedsGarrison;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
@@ -268,7 +312,8 @@ struct VoxRlCapture::Segment
 	Segment()
 		: player(NO_PLAYER), turn(-1), staticGeneration(0), worldGeneration(0), campaignGeneration(0),
 		staticFramedLength(0), campaignFramedLength(0), worldFramedLength(0),
-		nextDeltaSequence(0), published(false), failed(false), closed(false), hasDecision(false),
+		nextDeltaSequence(0), published(false), failed(false), closed(false), campaignSeamReached(false),
+		worldReplacement(false), hasDecision(false),
 		pendingCount(0), committedFrameCount(0), committedDecisionCount(0), committedCoverageCount(0),
 		commitId(0), firstRequestSequence(0), lastRequestSequence(0), hasRequests(false),
 		stagingRequest(false)
@@ -292,6 +337,50 @@ struct VoxRlCapture::Engagement
 	Engagement()
 		: active(false), callerType(0), player(NO_PLAYER), decisionId(0), attemptIndex(0),
 		lastOutcome(0), lastAttemptWorldGeneration(0), lastSearchEmpty(false)
+	{
+	}
+};
+
+// One nested operation label and optional request parent.
+struct VoxRlCapture::OperationCauseContext
+{
+	PlayerTypes owner;
+	PlayerTypes initiatingPlayer;
+	int cause;
+	int operationId;
+	OperationCauseContext(PlayerTypes eOwner, PlayerTypes eInitiator, int changeCause, int id)
+		: owner(eOwner), initiatingPlayer(eInitiator), cause(changeCause), operationId(id)
+	{
+	}
+};
+
+// Attachment-scoped operational capture state is filled by the military
+// implementation below and survives segment replacement.
+struct VoxRlCapture::OperationCaptureState
+{
+	std::map<VoxRlEntityKey, std::string> operationFingerprints;
+	std::map<VoxRlEntityKey, int> operationAbortReasons;
+	std::map<VoxRlEntityKey, int> operationCauses;
+	std::map<VoxRlEntityKey, PlayerTypes> operationInitiators;
+	std::map<int, VoxRlRequestData> pendingRowsByOwner;
+	std::vector<RequestZoneChoiceRecord> pendingZoneChoices;
+	bool stanceAssessmentValid;
+	bool stanceChoicesReady;
+	bool stanceBatchPublished;
+	PlayerTypes assessmentPlayer;
+	int assessmentTurn;
+	unsigned int assessmentWorldGeneration;
+	unsigned int assessmentDeltaSequence;
+	bool applyAssessmentContext;
+	bool collectTurnEntryEconomics;
+	std::vector<TeamRelationRecord> bufferedRelations;
+	size_t stagedRelationCount;
+	bool relationsSeeded;
+	OperationCaptureState()
+		: stanceAssessmentValid(false), stanceChoicesReady(false), stanceBatchPublished(false),
+		assessmentPlayer(NO_PLAYER), assessmentTurn(-1), assessmentWorldGeneration(0),
+		assessmentDeltaSequence(0), applyAssessmentContext(false), collectTurnEntryEconomics(false),
+		stagedRelationCount(0), relationsSeeded(false)
 	{
 	}
 };
@@ -378,8 +467,55 @@ namespace
 		data.requestCityAttackCountReplacements.size() + data.requestCityAttackCountRows.size() +
 		data.requestDeltaUnitMovementCounts.size() + data.requestDeltaUnitSparseFields.size() +
 		data.requestDeltaPlotSparseCounters.size() + data.requestCityReferences.size() +
-		data.requestDeltaPlayers.size();
+		data.requestDeltaPlayers.size() + data.requestOperations.size() +
+		data.requestOperationVersions.size() + data.requestArmyVersions.size() +
+		data.requestFormationEntryVersions.size() + data.requestCampaignBoundaries.size() +
+		data.requestZoneChoices.size() + data.requestFocusAreas.size() +
+		data.requestCityResources.size() + data.requestPlayerResources.size() +
+		data.requestPlayerEconomics.size() + data.requestEconomicBatches.size() +
+		data.requestMilitaryGoldTransactions.size() + data.requestEventUnits.size() +
+		data.requestEventUnitMovementCounts.size() + data.requestEventUnitSparseFields.size() +
+		data.requestEventUnitModifiers.size() + data.requestEventUnitPlagues.size() +
+		data.requestEventUnitBlockedPromotions.size() + data.requestEventUnitAttackCounts.size() +
+		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
+		data.requestMilitaryUpgrades.size();
 }
+
+	// Produces a stable native fingerprint for one operation and all child armies.
+	std::string OperationFingerprint(CvAIOperation& operation)
+	{
+		std::ostringstream out;
+		out << static_cast<int>(operation.GetOwner()) << ',' << operation.GetID() << ','
+			<< static_cast<int>(operation.GetOperationType()) << ','
+			<< static_cast<int>(operation.GetArmyType()) << ','
+			<< static_cast<int>(operation.GetOperationState()) << ','
+			<< static_cast<int>(operation.GetEnemy()) << ','
+			<< operation.GetMusterX() << ',' << operation.GetMusterY() << ','
+			<< operation.GetTargetX() << ',' << operation.GetTargetY() << ','
+			<< operation.GetTurnStarted() << ',' << operation.GetDistanceMusterToTarget() << ','
+			<< static_cast<int>(operation.GetAbortReason()) << ',' << operation.GetLastTurnMoved();
+		const std::vector<int>& armyIds = operation.GetArmyIDs();
+		for (size_t armyIndex = 0; armyIndex < armyIds.size(); ++armyIndex)
+		{
+			CvArmyAI* army = GET_PLAYER(operation.GetOwner()).getArmyAI(armyIds[armyIndex]);
+			out << ";a:" << armyIds[armyIndex];
+			if (army == NULL) continue;
+			out << ',' << static_cast<int>(army->GetFormationType()) << ','
+				<< static_cast<int>(army->GetArmyAIState()) << ','
+				<< army->GetGoalX() << ',' << army->GetGoalY() << ','
+				<< army->GetNumSlotsFilled();
+			for (size_t slotIndex = 0; slotIndex < army->GetNumFormationEntries(); ++slotIndex)
+			{
+				CvArmyFormationSlot* slot = army->GetSlotStatus(slotIndex);
+				if (slot == NULL) continue;
+				out << ";s:" << slotIndex << ',' << slot->GetUnitID() << ','
+					<< (slot->IsRequired() ? 1 : 0);
+				for (size_t history = 0; history < 3; ++history)
+					out << ',' << slot->GetTurnsToCheckpoint(history);
+			}
+		}
+		return out.str();
+	}
 }
 
 VoxRlCapture& VoxRlCapture::GetInstance()
@@ -397,6 +533,11 @@ VoxRlCapture::VoxRlCapture()
 	m_topologyInvalidated(false),
 	m_worldReplacementPending(false),
 	m_decisionIdCounter(0),
+	m_orderPlayer(NO_PLAYER),
+	m_orderTurn(-1),
+	m_nextRequestOrder(0),
+	m_phasePlayer(NO_PLAYER),
+	m_currentPhase(VOX_RL_MILITARY_PHASE_UNKNOWN),
 	m_identityPendingLogged(false),
 	m_staticConstructNs(0),
 	m_staticWriteFlushNs(0),
@@ -407,10 +548,14 @@ VoxRlCapture::VoxRlCapture()
 	m_campaignTurn(-1),
 	m_campaignStaticGeneration(0),
 	m_campaignGeneration(0),
+	m_campaignAlignedWorldGeneration(0),
+	m_campaignAlignedNextDeltaSequence(0),
 	m_campaignFramedLength(0),
 	m_segmentStreamBytes(0),
 	m_segment(NULL),
 	m_engagement(NULL),
+	m_operationState(NULL),
+	m_operationCauseStack(NULL),
 	m_searchActive(false),
 	m_shuttingDown(false),
 	m_concluded(false),
@@ -418,6 +563,8 @@ VoxRlCapture::VoxRlCapture()
 {
 	std::memset(&m_gameUuid, 0, sizeof(m_gameUuid));
 	std::memset(m_gameUuidText, 0, sizeof(m_gameUuidText));
+	m_operationState = new OperationCaptureState();
+	m_operationCauseStack = new std::vector<OperationCauseContext>();
 }
 
 VoxRlCapture::~VoxRlCapture()
@@ -426,6 +573,10 @@ VoxRlCapture::~VoxRlCapture()
 	m_segment = NULL;
 	delete m_engagement;
 	m_engagement = NULL;
+	delete m_operationState;
+	m_operationState = NULL;
+	delete m_operationCauseStack;
+	m_operationCauseStack = NULL;
 }
 
 bool VoxRlCapture::IsObserving(PlayerTypes ePlayer) const
@@ -618,12 +769,19 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_campaignTurn = -1;
 	m_campaignStaticGeneration = 0;
 	m_campaignGeneration = 0;
+	m_campaignAlignedWorldGeneration = 0;
+	m_campaignAlignedNextDeltaSequence = 0;
 	m_campaignRelPath.clear();
 	m_campaignFramedLength = 0;
 	m_campaignStorage.Clear();
 	m_topologyInvalidated = false;
 	m_worldReplacementPending = false;
 	m_decisionIdCounter = 0;
+	m_orderPlayer = NO_PLAYER;
+	m_orderTurn = -1;
+	m_nextRequestOrder = 0;
+	m_phasePlayer = NO_PLAYER;
+	m_currentPhase = VOX_RL_MILITARY_PHASE_UNKNOWN;
 	m_identityPendingLogged = false;
 	m_staticConstructNs = 0;
 	m_staticWriteFlushNs = 0;
@@ -637,6 +795,427 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_rootResolved = false;
 	m_captureRoot.clear();
 	m_gameDirectory.clear();
+	delete m_operationState;
+	m_operationState = new OperationCaptureState();
+	m_operationCauseStack->clear();
+	VoxRlResetMilitaryEvents();
+}
+
+bool VoxRlCapture::AdmitsMilitaryEvents(PlayerTypes ePlayer) const
+{
+	const int player = static_cast<int>(ePlayer);
+	if (player < 0 || player >= MAX_PLAYERS) return false;
+	return m_configResolved && m_config.enabled && !m_concluded &&
+		AdmitsPlayer(ePlayer) && GET_PLAYER(ePlayer).isAlive();
+}
+
+void VoxRlCapture::SetMilitaryPhase(PlayerTypes ePlayer, int phase)
+{
+	const int turn = GC.getGame().getGameTurn();
+	if (m_orderPlayer != ePlayer || m_orderTurn != turn)
+	{
+		m_orderPlayer = ePlayer;
+		m_orderTurn = turn;
+		m_nextRequestOrder = 0;
+	}
+	m_phasePlayer = ePlayer;
+	m_currentPhase = phase;
+	// Event buffering is attachment-scoped and therefore receives context
+	// for minors and other actors without an admitted capture segment.
+	VoxRlSetMilitaryEventContext(ePlayer, phase, m_nextRequestOrder);
+}
+
+void VoxRlCapture::PushOperationChangeCause(PlayerTypes eOwner,
+	PlayerTypes eInitiatingPlayer, int cause, int operationId)
+{
+	if (m_operationCauseStack == NULL)
+	{
+		m_operationCauseStack = new std::vector<OperationCauseContext>();
+	}
+	// Owner-local helpers retain the actor who requested work on this owner's behalf.
+	if (eInitiatingPlayer == NO_PLAYER || eInitiatingPlayer == eOwner)
+	{
+		const OperationCauseContext* context = FindOperationCause(eOwner, false);
+		if (context != NULL) eInitiatingPlayer = context->initiatingPlayer;
+	}
+	m_operationCauseStack->push_back(OperationCauseContext(eOwner,
+		eInitiatingPlayer == NO_PLAYER ? eOwner : eInitiatingPlayer, cause, operationId));
+}
+
+// Returns the nearest owner-local operation cause accepted by the caller.
+const VoxRlCapture::OperationCauseContext* VoxRlCapture::FindOperationCause(
+	PlayerTypes eOwner, bool requireOperationId) const
+{
+	if (m_operationCauseStack == NULL) return NULL;
+	for (std::vector<OperationCauseContext>::const_reverse_iterator context =
+		m_operationCauseStack->rbegin(); context != m_operationCauseStack->rend(); ++context)
+	{
+		if (context->owner != eOwner || (requireOperationId && context->operationId < 0)) continue;
+		return &*context;
+	}
+	return NULL;
+}
+
+void VoxRlCapture::PopOperationChangeCause()
+{
+	if (m_operationCauseStack != NULL && !m_operationCauseStack->empty())
+	{
+		const OperationCauseContext context = m_operationCauseStack->back();
+		if (context.operationId >= 0)
+		{
+			NoteOperationChanged(context.owner, context.operationId);
+		}
+		m_operationCauseStack->pop_back();
+	}
+}
+
+void VoxRlCapture::NoteOperationChanged(PlayerTypes eOwner, int operationId)
+{
+	NoteOperationChangedInternal(eOwner, operationId, false);
+}
+
+void VoxRlCapture::NoteOperationCreated(PlayerTypes eOwner, int operationId)
+{
+	NoteOperationChangedInternal(eOwner, operationId, true);
+}
+
+void VoxRlCapture::NoteOperationChangedInternal(PlayerTypes eOwner, int operationId, bool allowNew)
+{
+	if (!AdmitsMilitaryEvents(eOwner) || m_operationState == NULL) return;
+	CvAIOperation* operation = GET_PLAYER(eOwner).getAIOperation(operationId);
+	if (operation == NULL) return;
+	PlayerTypes initiatingPlayer = eOwner;
+	int cause = VOX_RL_OPERATION_CHANGE_UNCLASSIFIED;
+	const OperationCauseContext* context = FindOperationCause(eOwner, false);
+	if (context != NULL)
+	{
+		initiatingPlayer = context->initiatingPlayer;
+		cause = context->cause;
+	}
+	// Invocation reconciliation owns execution records so direct setters and
+	// scope teardown cannot consume the before-state or create duplicate rows.
+	if (cause == VOX_RL_OPERATION_CHANGE_EXECUTION) return;
+	const VoxRlEntityKey key(static_cast<int>(eOwner), operationId);
+	std::map<VoxRlEntityKey, std::string>::const_iterator previous =
+		m_operationState->operationFingerprints.find(key);
+	// Initialization mutates an operation several times before addAIOperation
+	// decides whether to keep it. Only the explicit accepted-creation hook may
+	// admit an identity that is not already in the captured inventory.
+	if (previous == m_operationState->operationFingerprints.end() && !allowNew) return;
+	const std::string fingerprint = OperationFingerprint(*operation);
+	if (previous != m_operationState->operationFingerprints.end() && previous->second == fingerprint)
+		return;
+	const int kind = cause == VOX_RL_OPERATION_CHANGE_CHOICE ||
+		cause == VOX_RL_OPERATION_CHANGE_UNIT_ASSIGNMENT
+		? VOX_RL_OPERATION_RECORD_CHOICE : VOX_RL_OPERATION_RECORD_MAINTENANCE;
+	if (!VoxRlAppendOperationRecord(*operation, initiatingPlayer, static_cast<u8>(kind),
+		static_cast<u8>(cause), static_cast<u8>(VOX_RL_OPERATION_RESULT_NONE),
+		static_cast<i8>(operation->GetAbortReason()),
+		m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)]))
+	{
+		if (IsObserving(eOwner)) FailSegment("operationVersionCollect");
+		return;
+	}
+	m_operationState->operationFingerprints[key] = fingerprint;
+	m_operationState->operationAbortReasons[key] = static_cast<int>(operation->GetAbortReason());
+	m_operationState->operationCauses[key] = cause;
+	m_operationState->operationInitiators[key] = initiatingPlayer;
+}
+
+void VoxRlCapture::NoteOperationRemoved(PlayerTypes eOwner, int operationId, int abortReason)
+{
+	if (!AdmitsMilitaryEvents(eOwner) || m_operationState == NULL) return;
+	const VoxRlEntityKey key(static_cast<int>(eOwner), operationId);
+	if (m_operationState->operationFingerprints.count(key) == 0) return;
+	PlayerTypes initiatingPlayer = eOwner;
+	int cause = VOX_RL_OPERATION_CHANGE_UNCLASSIFIED;
+	std::map<VoxRlEntityKey, PlayerTypes>::const_iterator savedInitiator =
+		m_operationState->operationInitiators.find(key);
+	if (savedInitiator != m_operationState->operationInitiators.end()) initiatingPlayer = savedInitiator->second;
+	std::map<VoxRlEntityKey, int>::const_iterator savedCause = m_operationState->operationCauses.find(key);
+	if (savedCause != m_operationState->operationCauses.end()) cause = savedCause->second;
+	const OperationCauseContext* context = FindOperationCause(eOwner, false);
+	if (context != NULL)
+	{
+		initiatingPlayer = context->initiatingPlayer;
+		cause = context->cause;
+	}
+	RequestOperationRecord row;
+	std::memset(&row, 0, sizeof(row));
+	row.kind = static_cast<u8>(VOX_RL_OPERATION_RECORD_REMOVAL);
+	row.operationOwner = static_cast<i8>(eOwner);
+	row.initiatingPlayer = static_cast<i8>(initiatingPlayer);
+	row.operationId = operationId;
+	row.changeCause = static_cast<u8>(cause);
+	row.invocationResult = static_cast<u8>(VOX_RL_OPERATION_RESULT_NONE);
+	row.abortReason = static_cast<i8>(abortReason);
+	m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)].requestOperations.push_back(row);
+	m_operationState->operationFingerprints.erase(key);
+	m_operationState->operationAbortReasons.erase(key);
+	m_operationState->operationCauses.erase(key);
+	m_operationState->operationInitiators.erase(key);
+}
+
+bool VoxRlCapture::ReconcileOperations(PlayerTypes eOwner, int recordKind,
+	int invocationResult, int operationId)
+{
+	if (!IsObserving(eOwner)) return false;
+	CvPlayerAI& player = GET_PLAYER(eOwner);
+	std::set<int> liveIds;
+	for (size_t index = 0; index < player.getNumAIOperations(); ++index)
+	{
+		CvAIOperation* operation = player.getAIOperationByIndex(index);
+		if (operation == NULL) continue;
+		if (operationId >= 0 && operation->GetID() != operationId) continue;
+		liveIds.insert(operation->GetID());
+		const VoxRlEntityKey key(static_cast<int>(eOwner), operation->GetID());
+		const std::string fingerprint = OperationFingerprint(*operation);
+		const bool changed = m_operationState->operationFingerprints.count(key) == 0 ||
+			m_operationState->operationFingerprints[key] != fingerprint;
+		if (recordKind == VOX_RL_OPERATION_RECORD_INVOCATION_RESULT)
+		{
+			if (changed && invocationResult != VOX_RL_OPERATION_RESULT_ALREADY_MOVED)
+			{
+				if (!VoxRlAppendOperationRecord(*operation, eOwner, static_cast<u8>(recordKind),
+					static_cast<u8>(VOX_RL_OPERATION_CHANGE_EXECUTION), static_cast<u8>(invocationResult),
+					static_cast<i8>(operation->GetAbortReason()),
+					m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)])) return false;
+			}
+			else
+			{
+				RequestOperationRecord row;
+				std::memset(&row, 0, sizeof(row));
+				row.kind = static_cast<u8>(recordKind);
+				row.operationOwner = static_cast<i8>(eOwner);
+				row.initiatingPlayer = static_cast<i8>(eOwner);
+				row.operationId = operation->GetID();
+				row.changeCause = static_cast<u8>(VOX_RL_OPERATION_CHANGE_EXECUTION);
+				row.invocationResult = static_cast<u8>(invocationResult);
+				row.abortReason = static_cast<i8>(operation->GetAbortReason());
+				m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)].requestOperations.push_back(row);
+			}
+			m_operationState->operationCauses[key] = VOX_RL_OPERATION_CHANGE_EXECUTION;
+			m_operationState->operationInitiators[key] = eOwner;
+		}
+		else if (changed)
+		{
+			const int cause = recordKind == VOX_RL_OPERATION_RECORD_MAINTENANCE
+				? VOX_RL_OPERATION_CHANGE_MAINTENANCE : VOX_RL_OPERATION_CHANGE_CHOICE;
+			if (!VoxRlAppendOperationRecord(*operation, eOwner, static_cast<u8>(recordKind),
+				static_cast<u8>(cause), static_cast<u8>(VOX_RL_OPERATION_RESULT_NONE),
+				static_cast<i8>(operation->GetAbortReason()),
+				m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)])) return false;
+			m_operationState->operationCauses[key] = cause;
+			m_operationState->operationInitiators[key] = eOwner;
+		}
+		m_operationState->operationFingerprints[key] = fingerprint;
+		m_operationState->operationAbortReasons[key] = static_cast<int>(operation->GetAbortReason());
+	}
+	if (operationId < 0)
+	{
+		std::vector<VoxRlEntityKey> removed;
+		for (std::map<VoxRlEntityKey, std::string>::const_iterator known =
+			m_operationState->operationFingerprints.begin(); known != m_operationState->operationFingerprints.end(); ++known)
+		{
+			if (known->first.owner == static_cast<int>(eOwner) && liveIds.count(known->first.id) == 0)
+				removed.push_back(known->first);
+		}
+		for (size_t index = 0; index < removed.size(); ++index)
+		{
+			const VoxRlEntityKey key = removed[index];
+			const int reason = m_operationState->operationAbortReasons.count(key) != 0
+				? m_operationState->operationAbortReasons[key] : NO_ABORT_REASON;
+			NoteOperationRemoved(eOwner, key.id, reason);
+		}
+	}
+	return true;
+}
+
+void VoxRlCapture::OnOperationSelectionComplete(PlayerTypes ePlayer)
+{
+	if (!IsObserving(ePlayer)) return;
+	if (!ReconcileOperations(ePlayer, VOX_RL_OPERATION_RECORD_CHOICE,
+		VOX_RL_OPERATION_RESULT_NONE))
+	{
+		FailSegment("operationSelectionCollect");
+		return;
+	}
+	RequestCampaignBoundaryRecord boundary;
+	std::memset(&boundary, 0, sizeof(boundary));
+	boundary.kind = static_cast<u8>(VOX_RL_CAMPAIGN_BOUNDARY_OPERATION_SELECTION);
+	boundary.operationOwner = static_cast<i8>(NO_PLAYER);
+	boundary.operationId = -1;
+	boundary.zoneId = -1;
+	boundary.observationWorldGeneration = m_segment->worldGeneration;
+	boundary.observationDeltaSequence = m_segment->nextDeltaSequence;
+	m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)].requestCampaignBoundaries.push_back(boundary);
+	EmitSynchronizationRequest();
+}
+
+void VoxRlCapture::OnPreTacticalReconciliation(PlayerTypes ePlayer)
+{
+	if (!IsObserving(ePlayer)) return;
+	if (!ReconcileOperations(ePlayer, VOX_RL_OPERATION_RECORD_MAINTENANCE,
+		VOX_RL_OPERATION_RESULT_NONE))
+	{
+		FailSegment("preTacticalOperationCollect");
+		return;
+	}
+	EmitSynchronizationRequest();
+}
+
+void VoxRlCapture::OnOperationInvocationComplete(PlayerTypes ePlayer, int operationId, int result)
+{
+	if (!IsObserving(ePlayer)) return;
+	VoxRlOperationCaptureScope captureScope(true, ePlayer, ePlayer,
+		VOX_RL_OPERATION_CHANGE_EXECUTION, operationId);
+	if (!ReconcileOperations(ePlayer, VOX_RL_OPERATION_RECORD_INVOCATION_RESULT,
+		result, operationId))
+	{
+		FailSegment("operationInvocationCollect");
+		return;
+	}
+	EmitSynchronizationRequest();
+}
+
+void VoxRlCapture::OnOperationalMovesComplete(PlayerTypes ePlayer)
+{
+	if (!IsObserving(ePlayer)) return;
+	if (!ReconcileOperations(ePlayer, VOX_RL_OPERATION_RECORD_MAINTENANCE,
+		VOX_RL_OPERATION_RESULT_NONE))
+	{
+		FailSegment("operationCleanupCollect");
+		return;
+	}
+	RequestCampaignBoundaryRecord boundary;
+	std::memset(&boundary, 0, sizeof(boundary));
+	boundary.kind = static_cast<u8>(VOX_RL_CAMPAIGN_BOUNDARY_OPERATIONAL_ARMY_MOVES);
+	boundary.operationOwner = static_cast<i8>(NO_PLAYER);
+	boundary.operationId = -1;
+	boundary.zoneId = -1;
+	boundary.observationWorldGeneration = m_segment->worldGeneration;
+	boundary.observationDeltaSequence = m_segment->nextDeltaSequence;
+	m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)].requestCampaignBoundaries.push_back(boundary);
+	EmitSynchronizationRequest();
+}
+
+void VoxRlCapture::OnStanceAssessmentReady(PlayerTypes ePlayer)
+{
+	if (m_searchActive || !IsObserving(ePlayer)) return;
+	m_operationState->pendingZoneChoices.clear();
+	m_operationState->stanceAssessmentValid = false;
+	m_operationState->stanceChoicesReady = false;
+	m_operationState->stanceBatchPublished = false;
+	m_operationState->applyAssessmentContext = false;
+	if (!EmitSynchronizationRequest()) return;
+	m_operationState->assessmentPlayer = ePlayer;
+	m_operationState->assessmentTurn = m_segment->turn;
+	m_operationState->assessmentWorldGeneration = m_segment->worldGeneration;
+	m_operationState->assessmentDeltaSequence = m_segment->lastRequestSequence;
+	m_operationState->stanceAssessmentValid = true;
+}
+
+void VoxRlCapture::OnStanceChoicesReady(PlayerTypes ePlayer)
+{
+	if (m_searchActive || !IsObserving(ePlayer) || !m_operationState->stanceAssessmentValid ||
+		m_operationState->assessmentPlayer != ePlayer ||
+		m_operationState->assessmentTurn != m_segment->turn) return;
+	VoxRlZoneSnapshot zones;
+	if (!VoxRlCollectZones(GET_PLAYER(ePlayer).GetTacticalAI()->GetTacticalAnalysisMap(), zones))
+	{
+		FailSegment("stanceChoiceCollect");
+		return;
+	}
+	m_operationState->pendingZoneChoices.clear();
+	for (size_t index = 0; index < zones.zones.size(); ++index)
+	{
+		RequestZoneChoiceRecord row;
+		std::memset(&row, 0, sizeof(row));
+		row.zoneId = zones.zones[index].zoneId;
+		row.posture = zones.zones[index].posture;
+		row.priorityRank = static_cast<u16>((std::min)(index, static_cast<size_t>(65535)));
+		row.assessmentWorldGeneration = m_operationState->assessmentWorldGeneration;
+		row.assessmentDeltaSequence = m_operationState->assessmentDeltaSequence;
+		m_operationState->pendingZoneChoices.push_back(row);
+	}
+	m_operationState->stanceChoicesReady = true;
+}
+
+void VoxRlCapture::OnFirstZoneDispatch(PlayerTypes ePlayer)
+{
+	if (!IsObserving(ePlayer) || m_operationState->stanceBatchPublished) return;
+	// Flush work completed after assessment before publishing any label rows.
+	if (!EmitSynchronizationRequest()) return;
+	if (m_operationState->stanceAssessmentValid && m_operationState->stanceChoicesReady &&
+		m_operationState->assessmentPlayer == ePlayer &&
+		m_operationState->assessmentTurn == m_segment->turn)
+	{
+		VoxRlRequestData& pending = m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)];
+		pending.requestZoneChoices = m_operationState->pendingZoneChoices;
+		RequestCampaignBoundaryRecord boundary;
+		std::memset(&boundary, 0, sizeof(boundary));
+		boundary.kind = static_cast<u8>(VOX_RL_CAMPAIGN_BOUNDARY_ZONE_WORK);
+		boundary.operationOwner = static_cast<i8>(NO_PLAYER);
+		boundary.operationId = -1;
+		boundary.zoneId = -1;
+		boundary.observationWorldGeneration = m_operationState->assessmentWorldGeneration;
+		boundary.observationDeltaSequence = m_operationState->assessmentDeltaSequence;
+		pending.requestCampaignBoundaries.push_back(boundary);
+		m_operationState->applyAssessmentContext = true;
+		if (!EmitSynchronizationRequest()) return;
+	}
+	m_operationState->stanceBatchPublished = true;
+	m_operationState->applyAssessmentContext = false;
+}
+
+void VoxRlCapture::OnZoneReinforcementComplete(PlayerTypes ePlayer)
+{
+	if (!IsObserving(ePlayer)) return;
+	RequestCampaignBoundaryRecord boundary;
+	std::memset(&boundary, 0, sizeof(boundary));
+	boundary.kind = static_cast<u8>(VOX_RL_CAMPAIGN_BOUNDARY_ZONE_REINFORCEMENT);
+	boundary.operationOwner = static_cast<i8>(NO_PLAYER);
+	boundary.operationId = -1;
+	boundary.zoneId = -1;
+	boundary.observationWorldGeneration = m_segment->worldGeneration;
+	boundary.observationDeltaSequence = m_segment->nextDeltaSequence;
+	m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)].requestCampaignBoundaries.push_back(boundary);
+	EmitSynchronizationRequest();
+}
+
+void VoxRlCapture::NoteFocusAreaChanged(PlayerTypes eOwner, int kind,
+	int centerPlotIndex, int radius, int expiryTurn)
+{
+	if (!AdmitsMilitaryEvents(eOwner) || m_operationState == NULL) return;
+	if (centerPlotIndex < 0 || centerPlotIndex > 32767) return;
+	if (radius < 0 || radius > 255) return;
+	if (kind != VOX_RL_FOCUS_AREA_REMOVE && (expiryTurn < -32768 || expiryTurn > 32767)) return;
+	RequestFocusAreaRecord row;
+	std::memset(&row, 0, sizeof(row));
+	row.kind = static_cast<u8>(kind);
+	row.centerPlotIndex = static_cast<i16>(centerPlotIndex);
+	row.radius = static_cast<u8>(radius);
+	row.expiryTurn = static_cast<i16>(kind == VOX_RL_FOCUS_AREA_REMOVE ? -1 : expiryTurn);
+	m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)].requestFocusAreas.push_back(row);
+}
+
+VoxRlOperationCaptureScope::VoxRlOperationCaptureScope(bool enabled, PlayerTypes eOwner,
+	PlayerTypes eInitiatingPlayer, int cause, int operationId)
+	: m_enabled(enabled)
+{
+	if (m_enabled)
+	{
+		VoxRlCapture::GetInstance().PushOperationChangeCause(eOwner,
+			eInitiatingPlayer, cause, operationId);
+	}
+}
+
+VoxRlOperationCaptureScope::~VoxRlOperationCaptureScope()
+{
+	if (m_enabled)
+	{
+		VoxRlCapture::GetInstance().PopOperationChangeCause();
+	}
 }
 
 void VoxRlCapture::Shutdown()
@@ -646,6 +1225,8 @@ void VoxRlCapture::Shutdown()
 	CloseSegment("gameTeardown");
 	// The retained CAMPAIGN bytes belong to the finished attachment.
 	m_campaignStorage.Clear();
+	m_operationCauseStack->clear();
+	VoxRlResetMilitaryEvents();
 }
 
 void VoxRlCapture::OnGameConcluded()
@@ -674,6 +1255,17 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 		// and record the gap.
 		m_segment->stagingRequest = false;
 		AddCoverageOmission("interruptedRefresh");
+	}
+	// A segment that reached the campaign seam is a complete operational
+	// example even when no tactical search ran. Publish its empty or
+	// synchronization-only batches before closing it.
+	if (!m_segment->failed && !m_segment->published && m_segment->campaignSeamReached)
+	{
+		PublishPendingFrames(true);
+		if (m_segment == NULL || m_segment->failed)
+		{
+			return;
+		}
 	}
 	if (!m_segment->failed && m_segment->published)
 	{
@@ -720,8 +1312,9 @@ void VoxRlCapture::CloseSegment(const char* closureReason)
 	}
 	else if (!m_segment->failed && !m_segment->published)
 	{
-		// A segment that never decided leaves no files behind. Its coverage
-		// omissions travel to suppressed.jsonl so they still reach disk.
+		// A segment that never reached the operational entry point leaves no
+		// files behind. Its true lifecycle flags and coverage omissions travel
+		// to suppressed.jsonl so they still reach disk.
 		AppendSuppressedLine(closureReason);
 	}
 	WriteTimingSummary(closureReason);
@@ -926,6 +1519,19 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			if (!segment.lastUnitActualHealRates.insert(
 				std::make_pair(key, static_cast<int>(row.actualHealRate))).second) return false;
 		}
+		const VoxRlSectionDirectoryEntry* cities = worldView.FindSection(VOX_RL_SECTION_WORLD_CITIES);
+		const u32 cityCount = cities == NULL ? 0U : cities->count;
+		const u8* cityBytes = cityCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_CITIES);
+		if (cityCount != 0U && cityBytes == NULL) return false;
+		segment.lastCityNeedsGarrison.clear();
+		for (u32 index = 0; index < cityCount; ++index)
+		{
+			CityRecord row;
+			std::memcpy(&row, cityBytes + index * sizeof(CityRecord), sizeof(row));
+			const VoxRlEntityKey key(static_cast<int>(row.owner), row.id);
+			if (!segment.lastCityNeedsGarrison.insert(
+				std::make_pair(key, static_cast<unsigned char>(row.needsGarrison))).second) return false;
+		}
 		// Keep the baseline's visibility domain even if a team dies later in the segment.
 		segment.capturedTeams.clear();
 		const VoxRlSectionDirectoryEntry* teams = worldView.FindSection(VOX_RL_SECTION_WORLD_PLOT_TEAMS);
@@ -957,6 +1563,8 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	// allocation without copying the bytes.
 	segment.worldStorage.Swap(&storage);
 	SeedWorldIterationIndices();
+	// Later relation hooks may occur while no admitted player segment is open.
+	m_operationState->relationsSeeded = true;
 	return true;
 }
 
@@ -987,7 +1595,8 @@ bool VoxRlCapture::WriteWorldBaseline()
 // to it. The file write happens at publication, so a segment that closes
 // without a decision leaves no CAMPAIGN file behind and the next same-turn
 // segment can still publish the retained bytes.
-bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn)
+bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn,
+	unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence)
 {
 	Segment& segment = *m_segment;
 	char folder[80];
@@ -1011,7 +1620,8 @@ bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn)
 	char fileName[36];
 	{
 		ScopedTiming timing(m_config.timings, segment.timings.campaignConstructNs);
-		if (!VoxRlBuildCampaignBlock(identity, ePlayer, storage, length))
+		if (!VoxRlBuildCampaignBlock(identity, ePlayer, alignedWorldGeneration,
+			alignedNextDeltaSequence, storage, length))
 		{
 			return false;
 		}
@@ -1023,11 +1633,29 @@ bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn)
 	m_campaignTurn = iTurn;
 	m_campaignStaticGeneration = segment.staticGeneration;
 	m_campaignGeneration = campaignGeneration;
+	m_campaignAlignedWorldGeneration = alignedWorldGeneration;
+	m_campaignAlignedNextDeltaSequence = alignedNextDeltaSequence;
 	m_campaignRelPath = folder + std::string("/") + fileName;
 	m_campaignFramedLength = length;
 	segment.campaignGeneration = campaignGeneration;
 	segment.campaignRelPath = m_campaignRelPath;
 	segment.campaignFramedLength = length;
+	// Seed change detection from the exact operation inventory represented by
+	// CAMPAIGN while preserving any earlier mutation row already buffered.
+	CvPlayerAI& player = GET_PLAYER(ePlayer);
+	for (size_t index = 0; index < player.getNumAIOperations(); ++index)
+	{
+		CvAIOperation* operation = player.getAIOperationByIndex(index);
+		if (operation == NULL) continue;
+		const VoxRlEntityKey key(static_cast<int>(ePlayer), operation->GetID());
+		if (m_operationState->operationFingerprints.count(key) == 0)
+		{
+			m_operationState->operationFingerprints[key] = OperationFingerprint(*operation);
+			m_operationState->operationAbortReasons[key] = static_cast<int>(operation->GetAbortReason());
+			m_operationState->operationCauses[key] = VOX_RL_OPERATION_CHANGE_UNCLASSIFIED;
+			m_operationState->operationInitiators[key] = ePlayer;
+		}
+	}
 	return true;
 }
 
@@ -1059,12 +1687,13 @@ bool VoxRlCapture::WriteCampaignBaseline()
 	return true;
 }
 
-void VoxRlCapture::StartSegment(PlayerTypes ePlayer, int iTurn)
+void VoxRlCapture::StartSegment(PlayerTypes ePlayer, int iTurn, bool worldReplacement)
 {
 	m_segment = new Segment();
 	Segment& segment = *m_segment;
 	segment.player = ePlayer;
 	segment.turn = iTurn;
+	segment.worldReplacement = worldReplacement;
 	segment.staticGeneration = m_staticGeneration;
 	if (!BuildWorldBaseline(ePlayer, iTurn))
 	{
@@ -1087,6 +1716,7 @@ void VoxRlCapture::StartSegment(PlayerTypes ePlayer, int iTurn)
 		segment.campaignGeneration = m_campaignGeneration;
 		segment.campaignRelPath = m_campaignRelPath;
 		segment.campaignFramedLength = m_campaignFramedLength;
+		segment.campaignSeamReached = true;
 	}
 	m_segmentStreamBytes = 0;
 }
@@ -1182,16 +1812,28 @@ void VoxRlCapture::OnCampaignSeam(PlayerTypes ePlayer)
 	Segment& segment = *m_segment;
 	if (segment.campaignGeneration == 0)
 	{
-		if (!BuildAndBindCampaign(ePlayer, segment.turn))
+		// The entry synchronization request is always emitted, so the campaign
+		// reference can bind its exclusive prefix before either block is built.
+		if (!BuildAndBindCampaign(ePlayer, segment.turn, segment.worldGeneration,
+			segment.nextDeltaSequence + 1))
 		{
 			FailSegment("campaignBuild");
 			return;
 		}
 	}
-	// Publication still waits for the segment's first decision request.
+	segment.campaignSeamReached = true;
+	m_operationState->collectTurnEntryEconomics = true;
+	if (!EmitSynchronizationRequest())
+	{
+		if (m_segment != NULL && !m_segment->failed)
+		{
+			FailSegment("campaignEntryRequest");
+		}
+		return;
+	}
 	if (!segment.published)
 	{
-		PublishPendingFrames();
+		PublishPendingFrames(true);
 	}
 }
 
@@ -1208,6 +1850,13 @@ void VoxRlCapture::AppendSuppressedLine(const char* closureReason)
 	AppendInt(line, segment.turn);
 	line += ",\"requestCount\":";
 	AppendNumber(line, segment.nextDeltaSequence);
+	line += ",\"campaignBound\":";
+	line += segment.campaignGeneration != 0 ? "true" : "false";
+	line += ",\"operationalEntryReached\":";
+	line += segment.campaignSeamReached ? "true" : "false";
+	line += ",\"worldReplacement\":";
+	line += segment.worldReplacement ? "true" : "false";
+	line += ",\"suppressionReason\":\"noAdmittedBinding\"";
 	line += ",\"closureReason\":";
 	AppendJsonString(line, closureReason != NULL ? closureReason : "unknown");
 	line += ",\"omissions\":[";
@@ -1342,7 +1991,9 @@ void VoxRlCapture::PublishPendingFrames(bool allowWithoutDecision)
 	line += ",\"turns\":";
 	line += m_config.filterTurns ? "\"filtered\"" : "\"all\"";
 	line += "}";
-	line += ",\"checkpoint\":{\"kind\":\"postDiplomacy\",\"warReplacement\":false}}\n";
+	line += ",\"checkpoint\":{\"kind\":\"postDiplomacy\",\"warReplacement\":";
+	line += segment.worldReplacement ? "true" : "false";
+	line += "}}\n";
 	if (!AppendIndexLine(line.c_str()))
 	{
 		FailSegment("segmentIndexWrite");
@@ -1592,6 +2243,26 @@ void VoxRlCapture::ClearDirtyState()
 	segment.dirtyCityAttackCounts.clear();
 }
 
+void VoxRlCapture::CommitBufferedRelations()
+{
+	if (m_operationState == NULL || m_operationState->stagedRelationCount == 0)
+	{
+		return;
+	}
+	std::vector<TeamRelationRecord>& rows = m_operationState->bufferedRelations;
+	const size_t count = (std::min)(m_operationState->stagedRelationCount, rows.size());
+	rows.erase(rows.begin(), rows.begin() + count);
+	m_operationState->stagedRelationCount = 0;
+}
+
+void VoxRlCapture::CommitOperationalRows()
+{
+	if (m_operationState == NULL || m_segment == NULL) return;
+	m_operationState->pendingRowsByOwner.erase(static_cast<int>(m_segment->player));
+	m_operationState->applyAssessmentContext = false;
+	m_operationState->collectTurnEntryEconomics = false;
+}
+
 unsigned int VoxRlCapture::UnitIterationIndex(PlayerTypes eOwner, int iUnitId)
 {
 	Segment& segment = *m_segment;
@@ -1666,6 +2337,28 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	const TeamTypes capturingTeam = capturing.getTeam();
 	CvTacticalAnalysisMap* zoneMap = capturing.GetTacticalAI()->GetTacticalAnalysisMap();
 	CvMap& map = GC.getMap();
+	// Operational rows are built at their native mutation or batch boundary.
+	// Their range offsets remain valid because these destination sections are empty.
+	std::map<int, VoxRlRequestData>::const_iterator operationalRows =
+		m_operationState->pendingRowsByOwner.find(static_cast<int>(segment.player));
+	if (operationalRows != m_operationState->pendingRowsByOwner.end())
+	{
+		data.requestOperations = operationalRows->second.requestOperations;
+		data.requestOperationVersions = operationalRows->second.requestOperationVersions;
+		data.requestArmyVersions = operationalRows->second.requestArmyVersions;
+		data.requestFormationEntryVersions = operationalRows->second.requestFormationEntryVersions;
+		data.requestCampaignBoundaries = operationalRows->second.requestCampaignBoundaries;
+		data.requestZoneChoices = operationalRows->second.requestZoneChoices;
+		data.requestFocusAreas = operationalRows->second.requestFocusAreas;
+	}
+	if (m_operationState->collectTurnEntryEconomics)
+	{
+		CvPlayerAI& entryPlayer = GET_PLAYER(segment.player);
+		if (!VoxRlCollectPlayerResourceRows(entryPlayer, data.requestPlayerResources)) return false;
+		RequestPlayerEconomicsRecord economics;
+		if (!VoxRlCollectPlayerEconomicsRecord(entryPlayer, economics)) return false;
+		data.requestPlayerEconomics.push_back(economics);
+	}
 	const int plotCount = map.numPlots();
 	// Compare the captured roster with its last emitted state, including policy
 	// bonuses and empire totals, without requiring setter hooks.
@@ -1686,6 +2379,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	// Native healing depends on nearby units and mutable plot, city, diplomacy, and player
 	// state. Recompute it at the safe boundary so changes also refresh affected recipients.
 	RefreshChangedActualHealRates(segment.lastUnitActualHealRates, segment.dirtyUnits);
+	RefreshChangedNeedsGarrison(segment.lastCityNeedsGarrison, segment.dirtyCities);
 	// The zone table is recollected only after a native rebuild marked it dirty.
 	// The comparison stays because the native rebuild does not identify changed
 	// plots: it accepts the rebuilt table, carries a replacement when the rows
@@ -1810,7 +2504,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		if (plot == NULL) continue;
 		PlotCaptureRecord record;
 		std::memset(&record, 0, sizeof(record));
-		if (!CollectPlotCaptureRecord(*plot, record))
+		if (!VoxRlCollectPlotRecord(*plot, record))
 		{
 			return false;
 		}
@@ -1905,14 +2599,13 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		record.iterationIndex = CityIterationIndex(static_cast<PlayerTypes>((*key).owner), (*key).id);
 		RequestDeltaCityRecord delta;
 		std::memcpy(&delta, &record, sizeof(record));
-		std::map<VoxRlEntityKey, RequestDeltaCityRecord>::const_iterator last =
-			segment.lastCityRows.find(*key);
-		if (last != segment.lastCityRows.end() && std::memcmp(&last->second, &delta, sizeof(delta)) == 0)
-		{
-			continue;
-		}
-		segment.lastCityRows[*key] = delta;
-		data.requestDeltaCities.push_back(delta);
+		// A dirty city is the replacement marker for its complete nonzero
+		// building-resource contribution, including resource-only changes.
+		std::vector<RequestCityResourceRecord> resourceRows;
+		if (!VoxRlCollectCityResourceRows(*pCity, resourceRows)) return false;
+		if (!AppendChangedCityReplacement(*key, delta, resourceRows, segment.lastCityRows,
+			segment.lastCityResourceRows, data)) continue;
+		segment.lastCityNeedsGarrison[*key] = record.needsGarrison ? 1 : 0;
 	}
 
 	// The small team passability table is recollected only after a technology
@@ -2027,6 +2720,19 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		}
 		entryCursor += static_cast<unsigned int>(interceptors.size());
 	}
+
+	// Gap-buffered relation snapshots preserve occurrence order. The one
+	// observer-dependent field is evaluated when the carrying segment flushes.
+	for (size_t index = 0; index < m_operationState->bufferedRelations.size(); ++index)
+	{
+		TeamRelationRecord record = m_operationState->bufferedRelations[index];
+		record.canDeclareWar = GET_TEAM(static_cast<TeamTypes>(record.team)).canDeclareWar(
+			static_cast<TeamTypes>(record.otherTeam), capturingPlayer) ? 1 : 0;
+		RequestTeamRelationRecord row;
+		std::memcpy(&row, &record, sizeof(row));
+		data.requestTeamRelations.push_back(row);
+	}
+	m_operationState->stagedRelationCount = m_operationState->bufferedRelations.size();
 
 	// Directed relation replacements from the complete captured matrix.
 	for (std::map<VoxRlEntityKey, unsigned char>::const_iterator relation = segment.dirtyRelations.begin();
@@ -2191,6 +2897,9 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 
 	// Pending danger events carry their event-time board in this request.
 	data.requestDangerEvents = segment.pendingDangerEvents;
+	// Military events may have occurred outside the observer's segment.
+	// Collection stages a prefix that is consumed only after enqueue succeeds.
+	if (!VoxRlCollectMilitaryEvents(segment.player, data)) return false;
 	if (m_config.timings)
 	{
 		segment.timings.deltaCollectCount += 1;
@@ -2207,6 +2916,7 @@ bool VoxRlCapture::EmitStagedRequest()
 		return false;
 	}
 	VoxRlRequestData& data = segment.staged;
+	InitializeRequestHeader(data);
 	VoxRlBlockIdentity identity;
 	identity.session = m_gameUuid;
 	identity.turn = segment.turn;
@@ -2246,14 +2956,116 @@ bool VoxRlCapture::EmitStagedRequest()
 	}
 	segment.lastRequestSequence = segment.nextDeltaSequence;
 	segment.nextDeltaSequence += 1;
+	AdvanceRequestOrder();
+	VoxRlCommitMilitaryEvents(segment.player);
+	CommitBufferedRelations();
+	CommitOperationalRows();
 	ClearDirtyState();
 	segment.staged = VoxRlRequestData();
 	segment.stagingRequest = false;
-	if (segment.published)
+	if (!segment.published && segment.campaignSeamReached)
+	{
+		PublishPendingFrames(true);
+	}
+	else if (segment.published)
 	{
 		CommitBatch(false, NULL);
 	}
 	return true;
+}
+
+void VoxRlCapture::InitializeRequestHeader(VoxRlRequestData& data)
+{
+	Segment& segment = *m_segment;
+	data.requestHeader.phase = static_cast<u8>(m_phasePlayer == segment.player
+		? m_currentPhase : VOX_RL_MILITARY_PHASE_UNKNOWN);
+	data.requestHeader.order = m_nextRequestOrder;
+	data.requestHeader.operationOwner = static_cast<i8>(NO_PLAYER);
+	data.requestHeader.operationId = -1;
+	data.requestHeader.zoneId = -1;
+	data.requestHeader.assessmentWorldGeneration = kVoxRlAbsentGeneration;
+	data.requestHeader.assessmentDeltaSequence = 0;
+	if (m_operationState->stanceAssessmentValid &&
+		m_operationState->assessmentPlayer == segment.player &&
+		m_operationState->assessmentTurn == segment.turn &&
+		m_operationState->assessmentWorldGeneration == segment.worldGeneration)
+	{
+		data.requestHeader.assessmentWorldGeneration = m_operationState->assessmentWorldGeneration;
+		data.requestHeader.assessmentDeltaSequence = m_operationState->assessmentDeltaSequence;
+	}
+	const OperationCauseContext* context = FindOperationCause(segment.player, true);
+	if (context != NULL)
+	{
+		data.requestHeader.operationOwner = static_cast<i8>(context->owner);
+		data.requestHeader.operationId = context->operationId;
+	}
+}
+
+void VoxRlCapture::AdvanceRequestOrder()
+{
+	m_nextRequestOrder += 1;
+	if (m_phasePlayer != NO_PLAYER)
+	{
+		VoxRlSetMilitaryEventContext(m_phasePlayer, m_currentPhase, m_nextRequestOrder);
+	}
+}
+
+bool VoxRlCapture::EmitSynchronizationRequest()
+{
+	if (m_segment == NULL || m_segment->failed || m_segment->stagingRequest)
+	{
+		return false;
+	}
+	Segment& segment = *m_segment;
+	VoxRlRequestData data;
+	if (!CollectDelta(data))
+	{
+		FailSegment("synchronizationDeltaCollect");
+		return false;
+	}
+	InitializeRequestHeader(data);
+	VoxRlBlockIdentity identity;
+	identity.session = m_gameUuid;
+	identity.turn = segment.turn;
+	identity.player = static_cast<int>(segment.player);
+	identity.staticGeneration = segment.staticGeneration;
+	identity.worldGeneration = segment.worldGeneration;
+	identity.campaignGeneration = segment.campaignGeneration;
+	identity.deltaSequence = segment.nextDeltaSequence;
+	identity.decisionId = kVoxRlSyncOnlyDecisionId;
+	VoxRlOwnedBlockStorage storage;
+	unsigned int length = 0;
+	if (!VoxRlBuildRequestBlock(identity, data, storage, length))
+	{
+		FailSegment("synchronizationRequestBuild");
+		return false;
+	}
+	if (!EnqueueFrame(storage.Bytes(), length, VOX_RL_BLOCK_REQUEST,
+		segment.nextDeltaSequence, kVoxRlSyncOnlyDecisionId, -1))
+	{
+		return false;
+	}
+	if (!segment.hasRequests)
+	{
+		segment.hasRequests = true;
+		segment.firstRequestSequence = segment.nextDeltaSequence;
+	}
+	segment.lastRequestSequence = segment.nextDeltaSequence;
+	segment.nextDeltaSequence += 1;
+	AdvanceRequestOrder();
+	VoxRlCommitMilitaryEvents(segment.player);
+	CommitBufferedRelations();
+	CommitOperationalRows();
+	ClearDirtyState();
+	if (!segment.published && segment.campaignSeamReached)
+	{
+		PublishPendingFrames(true);
+	}
+	else if (segment.published)
+	{
+		CommitBatch(false, NULL);
+	}
+	return m_segment != NULL && !m_segment->failed;
 }
 
 // Stages the board before the complete native danger refresh.
@@ -2295,7 +3107,7 @@ void VoxRlCapture::OnDangerRefreshBegin(const CvDangerPlots& danger)
 		const PlayerTypes player = m_segment->player;
 		const int turn = m_segment->turn;
 		CloseSegment("worldReplacement");
-		StartSegment(player, turn);
+		StartSegment(player, turn, true);
 		if (m_segment == NULL || m_segment->failed)
 		{
 			return;
@@ -2521,6 +3333,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
 		return;
 	}
+	InitializeRequestHeader(data);
 	data.requestHeader.callerType = static_cast<i32>(callerType);
 	data.requestHeader.searchIntent = static_cast<u8>(eSearchIntent);
 	data.requestHeader.attemptIndex = static_cast<i32>(engagement.attemptIndex);
@@ -2536,6 +3349,14 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	data.requestHeader.aggressionLevel = static_cast<u8>(eAggression);
 	data.requestHeader.targetDistanceRelevant = bTargetDistanceRelevant ? 1 : 0;
 	data.requestHeader.returnToStartPositions = bReturnToStartPositions ? 1 : 0;
+	if (pTarget != NULL && m_operationState->stanceAssessmentValid &&
+		m_operationState->assessmentPlayer == ePlayer &&
+		m_operationState->assessmentTurn == segment.turn &&
+		m_operationState->assessmentWorldGeneration == segment.worldGeneration)
+	{
+		data.requestHeader.zoneId = GET_PLAYER(ePlayer).GetTacticalAI()->
+			GetTacticalAnalysisMap()->GetDominanceZoneID(pTarget->GetPlotIndex());
+	}
 	for (size_t index = 0; index < vUnits.size(); ++index)
 	{
 		RequestParticipantRecord row;
@@ -2621,6 +3442,10 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	}
 	segment.lastRequestSequence = segment.nextDeltaSequence;
 	segment.nextDeltaSequence += 1;
+	AdvanceRequestOrder();
+	VoxRlCommitMilitaryEvents(segment.player);
+	CommitBufferedRelations();
+	CommitOperationalRows();
 	ClearDirtyState();
 
 	// 2. Invoke native search exactly once, keeping nested refreshes in this decision.
@@ -2714,8 +3539,16 @@ void VoxRlCapture::NoteUnitPromotionsChanged(PlayerTypes eOwner, int iUnitId)
 	m_segment->dirtyUnitBlockedPromotions.insert(key);
 }
 
-void VoxRlCapture::NoteUnitCreated(PlayerTypes eOwner, int iUnitId)
+void VoxRlCapture::NoteUnitCreated(PlayerTypes eOwner, int iUnitId, int creationReason,
+	const CvUnit* pSourceUnit)
 {
+	CvUnit* pUnit = GET_PLAYER(eOwner).getUnit(iUnitId);
+	if (pUnit != NULL)
+	{
+		// Arrival evidence is retained before the segment gate because gifts
+		// and other creations can occur during another actor's turn.
+		VoxRlNoteMilitaryUnitCreated(*pUnit, creationReason, pSourceUnit);
+	}
 	if (m_segment == NULL || m_segment->failed) return;
 	NoteUnitChanged(eOwner, iUnitId);
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
@@ -2761,6 +3594,8 @@ void VoxRlCapture::NoteCityRemoved(PlayerTypes eOwner, int iCityId)
 	m_segment->dirtyCities.erase(key);
 	m_segment->removedCities.insert(key);
 	m_segment->lastCityRows.erase(key);
+	m_segment->lastCityResourceRows.erase(key);
+	m_segment->lastCityNeedsGarrison.erase(key);
 	// Deletion removes the city's associated sparse rows, so no family
 	// tombstone or collection work remains for it.
 	m_segment->dirtyCityAttackCounts.erase(key);
@@ -2843,9 +3678,29 @@ void VoxRlCapture::NoteInterceptorCacheChanged(PlayerTypes ePlayer)
 
 void VoxRlCapture::NoteTeamRelationChanged(TeamTypes eTeam, TeamTypes eOtherTeam)
 {
-	if (m_segment == NULL || m_segment->failed) return;
 	if (eTeam == NO_TEAM || eOtherTeam == NO_TEAM) return;
-	m_segment->dirtyRelations[VoxRlEntityKey(static_cast<int>(eTeam), static_cast<int>(eOtherTeam))] = 1;
+	// The first admitted WORLD already seeds relations. After recording starts,
+	// keep skipped-player changes while any configured major can still receive them.
+	if (m_operationState == NULL || !m_operationState->relationsSeeded || m_concluded) return;
+	bool hasReceiver = false;
+	for (int player = 0; player < MAX_MAJOR_CIVS; ++player)
+	{
+		if (!AdmitsMilitaryEvents(static_cast<PlayerTypes>(player))) continue;
+		hasReceiver = true;
+		break;
+	}
+	if (!hasReceiver) return;
+	TeamRelationRecord row;
+	std::memset(&row, 0, sizeof(row));
+	row.team = static_cast<i8>(eTeam);
+	row.otherTeam = static_cast<i8>(eOtherTeam);
+	CvTeam& team = GET_TEAM(eTeam);
+	row.atWar = team.isAtWar(eOtherTeam) ? 1 : 0;
+	row.allowsOpenBorders = team.IsAllowsOpenBordersToTeam(eOtherTeam) ? 1 : 0;
+	row.hasMet = team.isHasMet(eOtherTeam) ? 1 : 0;
+	row.forcePeace = team.isForcePeace(eOtherTeam) ? 1 : 0;
+	row.canDeclareWar = 0;
+	m_operationState->bufferedRelations.push_back(row);
 }
 
 void VoxRlCapture::NoteWarStateChanged(TeamTypes eTeam, TeamTypes eOtherTeam)

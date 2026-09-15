@@ -142,6 +142,7 @@ CPP = [
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlBlockWriter.cpp',
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\schema\\VoxRlCollectors.generated.cpp',
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\VoxRlCapture.cpp',
+    'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\VoxRlCaptureMilitaryEvents.cpp',
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\VoxRlCaptureBuilders.cpp',
     'CvGameCoreDLL_Expansion2\\VoxDeorumRL\\VoxRlCaptureFiles.cpp',
     'CvGameCoreDLL_Expansion2\\CvCorporationClasses.cpp',

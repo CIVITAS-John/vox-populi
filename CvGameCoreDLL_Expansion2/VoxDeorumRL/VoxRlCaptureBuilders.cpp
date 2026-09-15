@@ -7,9 +7,11 @@
 #include "schema/MilitaryFlavors.h"
 
 #include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvDangerPlots.h"
 #include "CvDiplomacyAI.h"
 #include "CvGrandStrategyAI.h"
+#include "CvInternalGameCoreUtils.h"
 #include "CvMilitaryAI.h"
 #include "CvTacticalAnalysisMap.h"
 
@@ -137,6 +139,149 @@ namespace
 		return prerequisite == NO_TECH || GET_TEAM(unit.getTeam()).GetTeamTechs()->HasTech(prerequisite);
 	}
 
+	// Checks and assigns one signed sixteen-bit field without hiding an invalid
+	// native value through saturation.
+	bool AssignCheckedI16(i16& destination, int value, const char* record,
+		const char* field, int minimum = -32768)
+	{
+		if (value < minimum || value > 32767)
+		{
+			VoxRlNoteCaptureRangeFailure("range", record, field, value, minimum, 32767);
+			return false;
+		}
+		destination = static_cast<i16>(value);
+		return true;
+	}
+
+	// Returns whether a building class belongs to any wonder family. Wonder
+	// supplies and costs are part of the player's external resource total.
+	bool IsWonderBuilding(const CvBuildingEntry& building)
+	{
+		CvBuildingClassInfo* buildingClass = GC.getBuildingClassInfo(
+			static_cast<BuildingClassTypes>(building.GetBuildingClassType()));
+		return buildingClass != NULL && (isWorldWonderClass(*buildingClass) ||
+			isTeamWonderClass(*buildingClass) || isNationalWonderClass(*buildingClass));
+	}
+
+	// Collects one city's ordinary-building net rows and optionally accumulates
+	// ordinary supply and wonder consumption for the player's external total.
+	template <typename ResourceRow>
+	bool CollectCityResources(CvCity& city, std::vector<ResourceRow>& rows,
+		std::vector<int>* ordinarySupply, std::vector<int>* wonderConsumption)
+	{
+		const int resourceCount = GC.getNumResourceInfos();
+		std::vector<int> contribution(resourceCount, 0);
+		if (ordinarySupply != NULL && ordinarySupply->size() != static_cast<size_t>(resourceCount)) return false;
+		if (wonderConsumption != NULL && wonderConsumption->size() != static_cast<size_t>(resourceCount)) return false;
+		for (int buildingType = 0; buildingType < GC.getNumBuildingInfos(); ++buildingType)
+		{
+			CvBuildingEntry* building = GC.getBuildingInfo(static_cast<BuildingTypes>(buildingType));
+			if (building == NULL) continue;
+			const int active = city.GetCityBuildings()->GetNumActiveBuilding(static_cast<BuildingTypes>(buildingType));
+			if (active == 0) continue;
+			const bool wonder = IsWonderBuilding(*building);
+			for (int resourceType = 0; resourceType < resourceCount; ++resourceType)
+			{
+				const int supply = active * building->GetResourceQuantity(resourceType);
+				const int consumption = active * building->GetResourceQuantityRequirement(resourceType);
+				if (wonder)
+				{
+					if (wonderConsumption != NULL) (*wonderConsumption)[resourceType] += consumption;
+				}
+				else
+				{
+					contribution[resourceType] += supply - consumption;
+					if (ordinarySupply != NULL) (*ordinarySupply)[resourceType] += supply;
+				}
+			}
+		}
+		for (int resourceType = 0; resourceType < resourceCount; ++resourceType)
+		{
+			if (contribution[resourceType] == 0) continue;
+			ResourceRow row;
+			ZeroRecord(row);
+			row.cityOwner = static_cast<i8>(city.getOwner());
+			row.cityId = city.GetID();
+			if (!AssignCheckedI16(row.resourceType, resourceType, "CityResourceRecord", "resourceType", 0) ||
+				!AssignCheckedI16(row.contribution, contribution[resourceType], "CityResourceRecord", "contribution")) return false;
+			rows.push_back(row);
+		}
+		return true;
+	}
+
+	// Accumulates resource quantities from currently developed owned tiles once.
+	void CollectTileResourceTotals(std::vector<std::vector<int> >& totals)
+	{
+		CvMap& map = GC.getMap();
+		for (int plotIndex = 0; plotIndex < map.numPlots(); ++plotIndex)
+		{
+			CvPlot* plot = map.plotByIndex(plotIndex);
+			if (plot == NULL || plot->getOwner() < 0 || plot->getResourceType() < 0) continue;
+			CvImprovementEntry* improvement = GC.getImprovementInfo(plot->getImprovementType());
+			const bool developed = plot->isCity() || (improvement != NULL &&
+				improvement->IsConnectsResource(plot->getResourceType()) && !plot->IsImprovementPillaged());
+			if (developed)
+				totals[plot->getOwner()][plot->getResourceType()] += plot->getNumResource();
+		}
+	}
+
+	// Collects one player's external resource rows from already separated tile,
+	// ordinary-building, and wonder-consumption totals.
+	template <typename ResourceRow>
+	bool CollectPlayerResources(CvPlayer& player, const std::vector<int>& tileSupply,
+		const std::vector<int>& ordinarySupply, const std::vector<int>& wonderConsumption,
+		std::vector<ResourceRow>& rows)
+	{
+		const int resourceCount = GC.getNumResourceInfos();
+		if (tileSupply.size() != static_cast<size_t>(resourceCount) ||
+			ordinarySupply.size() != static_cast<size_t>(resourceCount) ||
+			wonderConsumption.size() != static_cast<size_t>(resourceCount)) return false;
+		for (int resourceType = 0; resourceType < resourceCount; ++resourceType)
+		{
+			const int external = player.getNumResourceTotal(static_cast<ResourceTypes>(resourceType), true) -
+				tileSupply[resourceType] - ordinarySupply[resourceType] - wonderConsumption[resourceType];
+			ResourceRow row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(player.GetID());
+			if (!AssignCheckedI16(row.resourceType, resourceType, "PlayerResourceRecord", "resourceType", 0) ||
+				!AssignCheckedI16(row.externalContribution, external, "PlayerResourceRecord", "externalContribution")) return false;
+			rows.push_back(row);
+		}
+		return true;
+	}
+
+	// Collects the shared balance and maintenance fields into a WORLD or REQUEST row.
+	template <typename EconomicsRow>
+	bool CollectPlayerEconomics(CvPlayer& player, EconomicsRow& row)
+	{
+		ZeroRecord(row);
+		row.player = static_cast<i8>(player.GetID());
+		row.goldTimes100 = player.GetTreasury()->GetGoldTimes100();
+		row.faithTimes100 = player.GetFaithTimes100();
+		row.faithPerTurnTimes100 = player.GetTotalFaithPerTurnTimes100();
+		int maintenance = 0;
+		int rate = 0;
+		int weight = 0;
+		if (!VoxRlGetMilitaryMaintenanceBaseline(player.GetID(), maintenance, rate, weight))
+		{
+			maintenance = player.GetTreasury()->CalculateUnitCost() * 100;
+			rate = player.getGoldPerUnitTimes100();
+			int loop = 0;
+			for (CvUnit* unit = player.firstUnit(&loop); unit != NULL; unit = player.nextUnit(&loop))
+				weight += rate + unit->getUnitInfo().GetExtraMaintenanceCost() * 100;
+		}
+		row.unitMaintenanceTimes100 = maintenance;
+		row.baseGoldPerUnitTimes100 = rate;
+		row.maintenanceWeight = weight;
+		int intervalTurn = -1;
+		int accruedGold = 0;
+		VoxRlGetMilitaryEconomicInterval(player.GetID(), intervalTurn, accruedGold);
+		if (!AssignCheckedI16(row.economicIntervalTurn, intervalTurn,
+			"PlayerEconomicsRecord", "economicIntervalTurn", -1)) return false;
+		row.externalGoldAccruedTimes100 = accruedGold;
+		return true;
+	}
+
 }
 
 // Reports one capture conversion or row the wire contract rejected. The generated
@@ -159,6 +304,39 @@ void VoxRlNoteSplitFailure(const VoxRlFieldRangeFailure& failure)
 {
 	VoxRlNoteCaptureRangeFailure(failure.reason, failure.record, failure.field,
 		failure.value, failure.minValue, failure.maxValue);
+}
+
+// Collects one city's complete ordinary-building resource replacement rows.
+bool VoxRlCollectCityResourceRows(CvCity& city,
+	std::vector<RequestCityResourceRecord>& rows)
+{
+	return CollectCityResources(city, rows, NULL, NULL);
+}
+
+// Collects one player's complete external resource replacement rows.
+bool VoxRlCollectPlayerResourceRows(CvPlayer& player,
+	std::vector<RequestPlayerResourceRecord>& rows)
+{
+	const int resourceCount = GC.getNumResourceInfos();
+	std::vector<std::vector<int> > allTileSupply(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
+	CollectTileResourceTotals(allTileSupply);
+	std::vector<int> ordinarySupply(resourceCount, 0);
+	std::vector<int> wonderConsumption(resourceCount, 0);
+	std::vector<RequestCityResourceRecord> ignoredRows;
+	int loop = 0;
+	for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+	{
+		if (!CollectCityResources(*city, ignoredRows, &ordinarySupply, &wonderConsumption)) return false;
+	}
+	return CollectPlayerResources(player, allTileSupply[player.GetID()], ordinarySupply,
+		wonderConsumption, rows);
+}
+
+// Collects one player's current balances and retained maintenance baseline.
+bool VoxRlCollectPlayerEconomicsRecord(CvPlayer& player,
+	RequestPlayerEconomicsRecord& row)
+{
+	return CollectPlayerEconomics(player, row);
 }
 
 // Resolves the owner of a bare damage-ledger unit id following the item 7
@@ -453,18 +631,52 @@ void VoxRlCollectPlayerResistanceRows(CvPlayer* pPlayer, std::vector<PlayerResis
 	}
 }
 
+// Collects city combat state, basing capacity, and its operation production promise.
 bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& row)
 {
 	if (!CollectCityRecord(city, capturingPlayer, row)) return false;
 	VoxRlAssignClamped(row.strengthValueRanged, city.getStrengthValueRanged());
 	VoxRlAssignClamped(row.cityBeliefRangeStrikeModifier, city.GetCityBeliefRangeStrikeModifier());
+	VoxRlAssignClamped(row.airCapacity, city.GetMaxAirUnits());
+	const OperationSlot& promise = city.GetUnitBeingBuiltForOperation();
+	row.promisedOperationId = promise.m_iOperationID;
+	row.promisedArmyId = promise.m_iArmyID;
+	VoxRlAssignClamped(row.promisedSlotIndex, promise.m_iSlotID);
+	row.promisedUnitType = city.IsBuildingUnitForOperation() ? city.GetUnitForOperation() : NO_UNIT;
 	return true;
 }
 
+// Shares resource-development collection between WORLD and dirty plot deltas.
+bool VoxRlCollectPlotRecord(CvPlot& plot, PlotCaptureRecord& row)
+{
+	if (!CollectPlotCaptureRecord(plot, row)) return false;
+	CvImprovementEntry* improvement = row.improvementType >= 0
+		? GC.getImprovementInfo(static_cast<ImprovementTypes>(row.improvementType)) : NULL;
+	row.improvementDevelopsResource = improvement != NULL && row.resourceType >= 0 &&
+		improvement->IsConnectsResource(row.resourceType) ? 1 : 0;
+	return true;
+}
+
+// Collects one unit's mutable fields and movement-count capabilities.
 bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row,
 	std::vector<UnitMovementCountRecord>& movementCounts)
 {
 	if (!CollectUnitRecord(unit, capturingTeam, row)) return false;
+	int lineageOwner = -1;
+	int lineageUnitId = -1;
+	VoxRlGetUnitLineage(unit, lineageOwner, lineageUnitId);
+	row.lineageOwner = static_cast<i8>(lineageOwner);
+	row.lineageUnitId = lineageUnitId;
+	if (!AssignCheckedI16(row.deployFromOperationTurn, unit.GetDeployFromOperationTurn(),
+		"UnitRecord", "deployFromOperationTurn", -1)) return false;
+#if defined(MOD_BALANCE_CORE_JFD)
+	row.setResourceConsumptionExempt(MOD_BALANCE_CORE_JFD && unit.isContractUnit());
+#else
+	row.setResourceConsumptionExempt(false);
+#endif
+	CvUnit* transport = unit.getTransportUnit();
+	row.transportOwner = transport != NULL ? static_cast<i8>(transport->getOwner()) : static_cast<i8>(NO_PLAYER);
+	row.transportUnitId = transport != NULL ? transport->GetID() : -1;
 	// The passability arrays are builder-owned fixed-capacity fields, so the
 	// builder guards the live table sizes itself instead of relying on the
 	// generated collector's guards for other unit fields.
@@ -518,6 +730,97 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 				row.allowFeaturePassable[feature / 8] = static_cast<u8>(row.allowFeaturePassable[feature / 8] | (1 << (feature % 8)));
 		}
 	}
+	return true;
+}
+
+// Captures one immutable event unit before later native changes can overwrite its
+// initialized capabilities. Child rows omit the owner and unit keys because their
+// parent event supplies the identity.
+bool VoxRlAppendEventUnitSnapshot(CvUnit& unit, TeamTypes observingTeam,
+	VoxRlRequestData& data, int* eventUnitIndex)
+{
+	if (eventUnitIndex == NULL) return false;
+	UnitRecord full;
+	ZeroRecord(full);
+	std::vector<UnitMovementCountRecord> movement;
+	if (!VoxRlCollectUnitRecord(unit, observingTeam, full, movement)) return false;
+	UnitWireRecord wire;
+	std::vector<UnitSparseFieldRecord> sparse;
+	VoxRlFieldRangeFailure failure;
+	if (!VoxRlSplitUnitRecord(full, wire, sparse, &failure))
+	{
+		VoxRlNoteSplitFailure(failure);
+		return false;
+	}
+	RequestEventUnitRecord row;
+	std::memcpy(&row, &wire, sizeof(row));
+	std::vector<RequestEventUnitMovementCountRecord> eventMovement;
+	for (size_t index = 0; index < movement.size(); ++index)
+	{
+		RequestEventUnitMovementCountRecord child;
+		ZeroRecord(child);
+		child.kind = movement[index].kind;
+		child.typeIndex = movement[index].typeIndex;
+		child.count = movement[index].count;
+		eventMovement.push_back(child);
+	}
+	std::vector<RequestEventUnitSparseFieldRecord> eventSparse;
+	for (size_t index = 0; index < sparse.size(); ++index)
+	{
+		RequestEventUnitSparseFieldRecord child;
+		ZeroRecord(child);
+		child.fieldId = sparse[index].fieldId;
+		child.wordIndex = sparse[index].wordIndex;
+		child.value = sparse[index].value;
+		eventSparse.push_back(child);
+	}
+	if (!AppendRequestEventUnitRecordMovementCountRange(&row, &data, eventMovement) ||
+		!AppendRequestEventUnitRecordSparseFieldRange(&row, &data, eventSparse)) return false;
+
+	std::vector<UnitModifierRecord> modifiers;
+	if (!VoxRlCollectUnitModifierRows(unit.getOwner(), unit.GetID(), &unit, modifiers)) return false;
+	for (size_t index = 0; index < modifiers.size(); ++index)
+	{
+		RequestEventUnitModifierRecord child;
+		ZeroRecord(child);
+		child.family = modifiers[index].family;
+		child.index = modifiers[index].index;
+		child.value = modifiers[index].value;
+		data.requestEventUnitModifiers.push_back(child);
+	}
+	std::vector<UnitPlagueRecord> plagues;
+	std::vector<UnitBlockedPromotionRecord> blocked;
+	VoxRlCollectUnitPlagueRows(unit.getOwner(), unit.GetID(), &unit, plagues, blocked);
+	for (size_t index = 0; index < plagues.size(); ++index)
+	{
+		RequestEventUnitPlagueRecord child;
+		ZeroRecord(child);
+		child.plague = plagues[index].plague;
+		child.domain = plagues[index].domain;
+		child.applyOnAttack = plagues[index].applyOnAttack;
+		child.applyOnDefense = plagues[index].applyOnDefense;
+		child.applyChance = plagues[index].applyChance;
+		data.requestEventUnitPlagues.push_back(child);
+	}
+	for (size_t index = 0; index < blocked.size(); ++index)
+	{
+		RequestEventUnitBlockedPromotionRecord child;
+		ZeroRecord(child);
+		child.promotion = blocked[index].promotion;
+		data.requestEventUnitBlockedPromotions.push_back(child);
+	}
+	std::vector<UnitAttackCountRecord> attacks;
+	VoxRlCollectUnitAttackCountRows(unit.getOwner(), unit.GetID(), &unit, attacks);
+	for (size_t index = 0; index < attacks.size(); ++index)
+	{
+		RequestEventUnitAttackCountRecord child;
+		ZeroRecord(child);
+		child.attackingPlayer = attacks[index].attackingPlayer;
+		child.count = attacks[index].count;
+		data.requestEventUnitAttackCounts.push_back(child);
+	}
+	*eventUnitIndex = static_cast<int>(data.requestEventUnits.size());
+	data.requestEventUnits.push_back(row);
 	return true;
 }
 
@@ -755,6 +1058,64 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		if (!CollectStaticUnitClassInfoRecord(index, row)) return false;
 		data.staticUnitClassInfos.push_back(row);
 	}
+	for (int formationIndex = 0; formationIndex < GC.getNumMultiUnitFormationInfos(); ++formationIndex)
+	{
+		CvMultiUnitFormationInfo* formation = GC.getMultiUnitFormationInfo(formationIndex);
+		if (formation == NULL) continue;
+		FormationInfoRecord row;
+		ZeroRecord(row);
+		row.formationType = formationIndex;
+		std::vector<FormationSlotInfoRecord> slots;
+		for (size_t slotIndex = 0; slotIndex < formation->getNumFormationSlotEntries(); ++slotIndex)
+		{
+			if (slotIndex > 32767U) return false;
+			const CvFormationSlotEntry& native = formation->getFormationSlotEntry(slotIndex);
+			FormationSlotInfoRecord slot;
+			ZeroRecord(slot);
+			slot.formationType = formationIndex;
+			slot.slotIndex = static_cast<i16>(slotIndex);
+			slot.primaryUnitAi = static_cast<i8>(native.m_primaryUnitType);
+			slot.secondaryUnitAi = static_cast<i8>(native.m_secondaryUnitType);
+			slot.required = native.m_requiredSlot ? 1 : 0;
+			slots.push_back(slot);
+		}
+		if (!AppendFormationInfoRecordSlotRange(&row, &data, slots)) return false;
+		data.staticFormationInfos.push_back(row);
+	}
+	for (int unitType = 0; unitType < GC.getNumUnitInfos(); ++unitType)
+	{
+		CvUnitEntry* unit = GC.getUnitInfo(static_cast<UnitTypes>(unitType));
+		if (unit == NULL) continue;
+		for (int resourceType = 0; resourceType < GC.getNumResourceInfos(); ++resourceType)
+		{
+			const int quantity = unit->GetResourceQuantityRequirement(resourceType);
+			if (quantity == 0) continue;
+			UnitResourceRequirementRecord row;
+			ZeroRecord(row);
+			row.unitType = unitType;
+			if (!AssignCheckedI16(row.resourceType, resourceType,
+				"UnitResourceRequirementRecord", "resourceType", 0) ||
+				!AssignCheckedI16(row.quantity, quantity,
+				"UnitResourceRequirementRecord", "quantity", 0)) return false;
+			data.staticUnitResourceRequirements.push_back(row);
+		}
+	}
+	for (int improvementType = 0; improvementType < GC.getNumImprovementInfos(); ++improvementType)
+	{
+		CvImprovementEntry* improvement = GC.getImprovementInfo(static_cast<ImprovementTypes>(improvementType));
+		if (improvement == NULL) continue;
+		for (int resourceType = 0; resourceType < GC.getNumResourceInfos(); ++resourceType)
+		{
+			if (!improvement->IsConnectsResource(resourceType)) continue;
+			ImprovementResourceCompatibilityRecord row;
+			ZeroRecord(row);
+			if (!AssignCheckedI16(row.improvementType, improvementType,
+				"ImprovementResourceCompatibilityRecord", "improvementType", 0) ||
+				!AssignCheckedI16(row.resourceType, resourceType,
+				"ImprovementResourceCompatibilityRecord", "resourceType", 0)) return false;
+			data.staticImprovementResourceCompatibilities.push_back(row);
+		}
+	}
 	return data.Write(identity, storage, length);
 }
 
@@ -842,7 +1203,8 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	DangerPlayerRecord dangerRow;
 	ZeroRecord(dangerRow);
 	if (!CollectDangerPlayerRecord(capturingPlayer, dangerRow)) return false;
-	VoxRlAssignClamped(dangerRow.turnBuilt, danger->GetTurnBuilt());
+	if (!AssignCheckedI16(dangerRow.turnBuilt, danger->GetTurnBuilt(),
+		"DangerPlayerRecord", "turnBuilt", -1)) return false;
 	dangerRow.dirty = danger->IsDirty() ? 1 : 0;
 	std::vector<KnownAttackerRecord> known;
 	for (UnitSet::const_iterator entry = danger->GetKnownUnits().begin(); entry != danger->GetKnownUnits().end(); ++entry)
@@ -913,7 +1275,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		// rows, and the city tokens are encoded from it after every plot is collected.
 		PlotCaptureRecord row;
 		ZeroRecord(row);
-		if (!CollectPlotCaptureRecord(*plot, row)) return false;
+		if (!VoxRlCollectPlotRecord(*plot, row)) return false;
 		plotCaptures.push_back(row);
 		const i32 plotZone = zones.plotZones[plotIndex];
 		unsigned int zoneTableIndex = 0;
@@ -1062,6 +1424,20 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	visibilityTiming.Stop();
 
 	ScopedWorldTiming entityRelationTiming(timings != NULL ? &timings->entityRelationNs : NULL);
+	const int resourceCount = GC.getNumResourceInfos();
+	std::vector<std::vector<int> > tileResourceTotals(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
+	std::vector<std::vector<int> > ordinaryBuildingSupply(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
+	std::vector<std::vector<int> > wonderResourceConsumption(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
+	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
+	{
+		const PlotCaptureRecord& plot = plotCaptures[plotIndex];
+		if (plot.owner < 0 || plot.owner >= MAX_PLAYERS || plot.resourceType < 0 ||
+			plot.resourceType >= resourceCount || plot.resourceCount <= 0) continue;
+		CvPlot* nativePlot = map.plotByIndex(plotIndex);
+		if ((nativePlot != NULL && nativePlot->isCity()) ||
+			(plot.improvementDevelopsResource && !plot.improvementPillaged))
+			tileResourceTotals[plot.owner][plot.resourceType] += plot.resourceCount;
+	}
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
@@ -1078,12 +1454,19 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			if (!VoxRlCollectCityRecord(*city, capturingPlayer, row)) return false;
 			row.iterationIndex = iteration++;
 			data.worldCities.push_back(row);
+			if (!CollectCityResources(*city, data.worldCityResources,
+				&ordinaryBuildingSupply[player], &wonderResourceConsumption[player])) return false;
 		}
 		PlayerRecord row;
 		ZeroRecord(row);
 		if (!CollectPlayerRecord(owner, capturingPlayer, row)) return false;
 		row.id = static_cast<i8>(player);
 		data.worldPlayers.push_back(row);
+		if (!CollectPlayerResources(owner, tileResourceTotals[player], ordinaryBuildingSupply[player],
+			wonderResourceConsumption[player], data.worldPlayerResources)) return false;
+		PlayerEconomicsRecord economics;
+		if (!CollectPlayerEconomics(owner, economics)) return false;
+		data.worldPlayerEconomics.push_back(economics);
 	}
 	for (int team = 0; team < MAX_TEAMS; ++team)
 	{
@@ -1135,6 +1518,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 
 // Collects the operational entry snapshot without refreshing native zones.
 bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
+	unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
 	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
@@ -1144,6 +1528,8 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	CampaignHeaderRecord& header = data.campaignHeader;
 	ZeroRecord(header);
 	if (!CollectCampaignHeaderRecord(*military, capturing, header)) return false;
+	header.alignedWorldGeneration = alignedWorldGeneration;
+	header.alignedNextDeltaSequence = alignedNextDeltaSequence;
 	InitializeBaselineMilitaryFlavors(
 		capturing.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
 			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
@@ -1155,7 +1541,6 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	VoxRlAssignClamped(header.recommendedLandUnits, military->GetRecommendedLandUnits());
 	VoxRlAssignClamped(header.recommendedNavalUnits, military->GetRecommendedNavalUnits());
 	VoxRlAssignClamped(header.recommendedExplorerUnits, military->GetRecommendedExplorerUnits());
-	header.treasury = static_cast<i32>(capturing.GetTreasury()->GetGold());
 	data.campaignMilitaryFlavorOverrides.clear();
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
@@ -1233,6 +1618,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		if (operation == NULL) continue;
 		CampaignOperationRecord row;
 		ZeroRecord(row);
+		row.owner = static_cast<i8>(operation->GetOwner());
 		row.id = static_cast<i32>(operation->GetID());
 		row.type = static_cast<i8>(operation->GetOperationType());
 		row.armyType = static_cast<i8>(operation->GetArmyType());
@@ -1242,8 +1628,12 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.musterY = static_cast<i32>(operation->GetMusterY());
 		row.targetX = static_cast<i32>(operation->GetTargetX());
 		row.targetY = static_cast<i32>(operation->GetTargetY());
-		row.turnStarted = static_cast<i32>(operation->GetTurnStarted());
+		if (!AssignCheckedI16(row.turnStarted, operation->GetTurnStarted(),
+			"CampaignOperationRecord", "turnStarted", -1)) return false;
 		row.distanceMusterToTarget = static_cast<i32>(operation->GetDistanceMusterToTarget());
+		row.abortReason = static_cast<i8>(operation->GetAbortReason());
+		if (!AssignCheckedI16(row.lastTurnMoved, operation->GetLastTurnMoved(),
+			"CampaignOperationRecord", "lastTurnMoved", -1)) return false;
 		std::vector<CampaignOperationArmyIdRecord> armyIds;
 		const std::vector<int>& ids = operation->GetArmyIDs();
 		for (size_t army = 0; army < ids.size(); ++army)
@@ -1273,9 +1663,13 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 			{
 				CampaignFormationEntryRecord entry;
 				ZeroRecord(entry);
+				VoxRlAssignClamped(entry.slotIndex, static_cast<i32>(slot));
 				entry.unitId = static_cast<i32>(nativeSlots[slot].GetUnitID());
 				entry.unitOwner = entry.unitId >= 0 ? static_cast<i8>(capturingPlayer) : static_cast<i8>(-1);
 				entry.required = nativeSlots[slot].IsRequired() ? 1 : 0;
+				for (size_t history = 0; history < VoxRlCheckpointhistoryCapacity; ++history)
+					if (!AssignCheckedI16(entry.checkpointTurns[history], nativeSlots[slot].GetTurnsToCheckpoint(history),
+						"CampaignFormationEntryRecord", "checkpointTurns", -1)) return false;
 				slots.push_back(entry);
 			}
 			if (!AppendCampaignArmyRecordFormationRange(&armyRow, &data, slots)) return false;
@@ -1308,7 +1702,112 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		if (!AppendCampaignZoneRecordNeighborRange(&row, &data, neighbors)) return false;
 		data.campaignZones.push_back(row);
 	}
+	const std::vector<CvFocusArea>& focusAreas = capturing.GetTacticalAI()->GetFocusAreas();
+	for (size_t index = 0; index < focusAreas.size(); ++index)
+	{
+		CvPlot* center = GC.getMap().plot(focusAreas[index].m_iX, focusAreas[index].m_iY);
+		if (center == NULL || focusAreas[index].m_iRadius < 0 || focusAreas[index].m_iRadius > 255 ||
+			focusAreas[index].m_iLastTurn < -1 || focusAreas[index].m_iLastTurn > 32767) return false;
+		CampaignFocusAreaRecord row;
+		ZeroRecord(row);
+		row.centerPlotIndex = static_cast<i16>(center->GetPlotIndex());
+		row.radius = static_cast<u8>(focusAreas[index].m_iRadius);
+		row.expiryTurn = static_cast<i16>(focusAreas[index].m_iLastTurn);
+		data.campaignFocusAreas.push_back(row);
+	}
+	VoxRlCollectPendingMilitaryTransfers(capturingPlayer, data);
 	return data.Write(identity, storage, length);
+}
+
+// Appends one operation record and the complete request-local state versions that
+// explain its effective change. An already-moved invocation intentionally carries
+// empty ranges because no state changed.
+bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiatingPlayer,
+	unsigned char kind, unsigned char changeCause, unsigned char invocationResult,
+	signed char abortReason, VoxRlRequestData& data)
+{
+	RequestOperationRecord record;
+	ZeroRecord(record);
+	record.kind = kind;
+	record.operationOwner = static_cast<i8>(operation.GetOwner());
+	record.initiatingPlayer = static_cast<i8>(initiatingPlayer);
+	record.operationId = operation.GetID();
+	record.changeCause = changeCause;
+	record.invocationResult = invocationResult;
+	record.abortReason = abortReason;
+	if (kind == VOX_RL_OPERATION_RECORD_INVOCATION_RESULT &&
+		invocationResult == VOX_RL_OPERATION_RESULT_ALREADY_MOVED)
+	{
+		data.requestOperations.push_back(record);
+		return true;
+	}
+	const int turnStarted = operation.GetTurnStarted();
+	const int lastTurnMoved = operation.GetLastTurnMoved();
+	if (turnStarted < -1 || turnStarted > 32767 || lastTurnMoved < -1 || lastTurnMoved > 32767) return false;
+	RequestOperationVersionRecord version;
+	ZeroRecord(version);
+	version.owner = static_cast<i8>(operation.GetOwner());
+	version.id = operation.GetID();
+	version.type = static_cast<i8>(operation.GetOperationType());
+	version.armyType = static_cast<i8>(operation.GetArmyType());
+	version.currentState = static_cast<i8>(operation.GetOperationState());
+	version.enemy = static_cast<i8>(operation.GetEnemy());
+	version.musterX = operation.GetMusterX();
+	version.musterY = operation.GetMusterY();
+	version.targetX = operation.GetTargetX();
+	version.targetY = operation.GetTargetY();
+	version.turnStarted = static_cast<i16>(turnStarted);
+	version.distanceMusterToTarget = operation.GetDistanceMusterToTarget();
+	version.abortReason = static_cast<i8>(operation.GetAbortReason());
+	version.lastTurnMoved = static_cast<i16>(lastTurnMoved);
+	std::vector<RequestOperationVersionRecord> versions(1, version);
+	if (!AppendRequestOperationRecordOperationVersionRange(&record, &data, versions)) return false;
+
+	std::vector<RequestArmyVersionRecord> armies;
+	std::vector<RequestFormationEntryVersionRecord> slots;
+	CvPlayerAI& owner = GET_PLAYER(operation.GetOwner());
+	const std::vector<int>& armyIds = operation.GetArmyIDs();
+	for (size_t armyIndex = 0; armyIndex < armyIds.size(); ++armyIndex)
+	{
+		CvArmyAI* army = owner.getArmyAI(armyIds[armyIndex]);
+		if (army == NULL) continue;
+		RequestArmyVersionRecord armyRow;
+		ZeroRecord(armyRow);
+		armyRow.operationOwner = static_cast<i8>(operation.GetOwner());
+		armyRow.operationId = operation.GetID();
+		armyRow.id = army->GetID();
+		armyRow.formation = army->GetFormationType();
+		armyRow.aiState = static_cast<i8>(army->GetArmyAIState());
+		armyRow.goalX = army->GetGoalX();
+		armyRow.goalY = army->GetGoalY();
+		armyRow.slotsFilled = static_cast<i32>(army->GetNumSlotsFilled());
+		armies.push_back(armyRow);
+		const std::vector<CvArmyFormationSlot>& nativeSlots = army->GetSlotStatus();
+		if (nativeSlots.size() > 32768U) return false;
+		for (size_t slotIndex = 0; slotIndex < nativeSlots.size(); ++slotIndex)
+		{
+			RequestFormationEntryVersionRecord slot;
+			ZeroRecord(slot);
+			slot.operationOwner = static_cast<i8>(operation.GetOwner());
+			slot.operationId = operation.GetID();
+			slot.armyId = army->GetID();
+			slot.slotIndex = static_cast<i16>(slotIndex);
+			slot.unitId = nativeSlots[slotIndex].GetUnitID();
+			slot.unitOwner = slot.unitId >= 0 ? static_cast<i8>(operation.GetOwner()) : static_cast<i8>(NO_PLAYER);
+			slot.required = nativeSlots[slotIndex].IsRequired() ? 1 : 0;
+			for (size_t history = 0; history < VoxRlCheckpointhistoryCapacity; ++history)
+			{
+				const int estimate = nativeSlots[slotIndex].GetTurnsToCheckpoint(history);
+				if (estimate < -1 || estimate > 32767) return false;
+				slot.checkpointTurns[history] = static_cast<i16>(estimate);
+			}
+			slots.push_back(slot);
+		}
+	}
+	if (!AppendRequestOperationRecordArmyVersionRange(&record, &data, armies) ||
+		!AppendRequestOperationRecordFormationEntryVersionRange(&record, &data, slots)) return false;
+	data.requestOperations.push_back(record);
+	return true;
 }
 
 // Binds staged request children through their declared generated range helpers.

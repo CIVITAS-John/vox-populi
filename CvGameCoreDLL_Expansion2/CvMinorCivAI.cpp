@@ -6,6 +6,9 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: distance-gift arrivals retain their source lineage across minor turns.
+#include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvMinorCivAI.h"
 #include "ICvDLLUserInterface.h"
 #include "CvGameCoreUtils.h"
@@ -2678,7 +2681,12 @@ void CvMinorCivQuest::DoStartQuest(int iStartTurn, PlayerTypes pCallingPlayer)
 
 		//Let's issue an attack request.
 		if (!pAssignedPlayer->isHuman(ISHUMAN_AI_UNITS) && GET_TEAM(pAssignedPlayer->getTeam()).canDeclareWar(GET_PLAYER(eMostRecentBully).getTeam(), pAssignedPlayer->GetID()))
+		{
+			// Vox Deorum: the minor's quest initiated the major's commitment.
+			VoxRlOperationCaptureScope captureRequest(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+				pAssignedPlayer->GetID(), pMinor->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 			pAssignedPlayer->GetMilitaryAI()->RequestCityAttack(eMostRecentBully,2);
+		}
 
 		break;
 	}
@@ -2796,7 +2804,12 @@ void CvMinorCivQuest::DoStartQuest(int iStartTurn, PlayerTypes pCallingPlayer)
 		//Let's issue an attack request.
 		PlayerTypes eCityOwner = pPlot->getOwner();
 		if (!pAssignedPlayer->isHuman(ISHUMAN_AI_UNITS))
+		{
+			// Vox Deorum: the minor's liberation quest initiated this commitment.
+			VoxRlOperationCaptureScope captureRequest(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+				pAssignedPlayer->GetID(), pMinor->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 			pAssignedPlayer->GetMilitaryAI()->RequestCityAttack(eCityOwner,2);
+		}
 
 		break;
 	}
@@ -14836,6 +14849,9 @@ CvUnit* CvMinorCivAI::DoSpawnUnit(PlayerTypes eMajor, bool bLocal, bool bExplore
 		return NULL;
 	}
 
+	// Vox Deorum: outside gifts retain final placement and all granted promotions.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlNoteMilitaryGiftArrival(*pNewUnit, GetPlayer()->GetID());
 	return pNewUnit;
 }
 
@@ -17804,6 +17820,9 @@ void CvMinorCivAI::doIncomingUnitGifts()
 									pNewUnit = NULL;
 								}
 							}
+							// Vox Deorum: arrival evidence follows final placement.
+							if (pNewUnit && MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+								VoxRlCompleteMilitaryTransfer(*pNewUnit, eLoopPlayer, GetPlayer()->GetID());
 						}
 					}
 				}
@@ -17884,6 +17903,9 @@ void CvMinorCivAI::returnIncomingUnitGift(PlayerTypes eMajor)
 				}
 				else
 				{
+					// Vox Deorum: a returned gift is the original lineage arriving again.
+					if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+						VoxRlCompleteMilitaryTransfer(*pNewUnit, eMajor, GetPlayer()->GetID());
 					CvNotifications* pNotify = GET_PLAYER(eMajor).GetNotifications();
 					if (pNotify)
 					{

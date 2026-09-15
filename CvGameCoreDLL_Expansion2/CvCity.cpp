@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: retain completed military purchases and their actual charges.
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvGlobals.h"
 #include "CvCity.h"
 #include "CvArea.h"
@@ -15751,6 +15753,9 @@ void CvCity::CheckForOperationUnits()
 								{
 									kPlayer.CityFinishedBuildingUnitForOperationSlot(m_unitBeingBuiltForOperation, pUnit);
 									m_unitBeingBuiltForOperation.Invalidate();
+									// Vox Deorum: completed production releases its promised army slot.
+									if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+										VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
 								}
 								else
 								{
@@ -15798,6 +15803,9 @@ void CvCity::CheckForOperationUnits()
 						{
 							kPlayer.CityCommitToBuildUnitForOperationSlot(thisOperationSlot);
 							m_unitBeingBuiltForOperation = thisOperationSlot;
+							// Vox Deorum: production promises are military checkpoint inputs.
+							if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+								VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
 							kPlayer.GetMilitaryAI()->ResetNumberOfTimesOpsBuildSkippedOver();
 						}
 						//Log it
@@ -29253,6 +29261,9 @@ void CvCity::popOrder(int iNum, bool bFinish, bool bChoose)
 	{
 		kOwner.CityUncommitToBuildUnitForOperationSlot(m_unitBeingBuiltForOperation);
 		m_unitBeingBuiltForOperation.Invalidate();
+		// Vox Deorum: cancelled production releases its promised army slot.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
 	}
 
 	if (pOrderNode == headOrderQueueNode())
@@ -29916,6 +29927,9 @@ CvUnit* CvCity::CreateUnit(UnitTypes eUnitType, UnitAITypes eAIType, UnitCreatio
 
 	doUnitCompletionYields(pUnit, eReason);
 
+	// Vox Deorum: retain placement, promotions, and completion effects for arrivals.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlNoteMilitaryCityArrival(*pUnit, getOwner(), GetID());
 	return pUnit;
 }
 
@@ -30649,6 +30663,8 @@ CvUnit* CvCity::PurchaseUnit(UnitTypes eUnitType, YieldTypes ePurchaseYield)
 	CvPlayer& kPlayer = GET_PLAYER(getOwner());
 	CvUnit* pNewUnit = NULL;
 	bool bInvest = (ePurchaseYield == YIELD_GOLD) && (MOD_BALANCE_UNIT_INVESTMENTS || (MOD_BALANCE_VP && pGameUnit->GetSpaceshipProject() != NO_PROJECT));
+	// Vox Deorum: completed unit purchases own their costs and rewards.
+	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && !bInvest, VOX_RL_EVENT_PURCHASE);
 
 	switch (ePurchaseYield)
 	{
@@ -30718,7 +30734,11 @@ CvUnit* CvCity::PurchaseUnit(UnitTypes eUnitType, YieldTypes ePurchaseYield)
 		bool bCivilian = (pGameUnit->GetCombat() <= 0 && pGameUnit->GetRangedCombat() <= 0);
 		SetUnitPurchaseCooldown(bCivilian, pGameUnit->GetCooldown() - GetUnitPurchaseCooldownMod(bCivilian));
 
+		// Vox Deorum: record the charge before purchase rewards change the balance.
+		const int captureGoldBefore = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? kPlayer.GetTreasury()->GetGoldTimes100() : 0;
 		GET_PLAYER(getOwner()).GetTreasury()->ChangeGold(-iGoldCost);
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && pNewUnit != NULL)
+			VoxRlNoteMilitaryPurchase(*pNewUnit, getOwner(), GetID(), 1, captureGoldBefore - kPlayer.GetTreasury()->GetGoldTimes100());
 		if (iGoldCost > 0)
 		{
 			GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_PURCHASE, false, NO_GREATPERSON, NO_BUILDING, iGoldCost, false, NO_PLAYER, NULL, false, this);
@@ -30776,7 +30796,11 @@ CvUnit* CvCity::PurchaseUnit(UnitTypes eUnitType, YieldTypes ePurchaseYield)
 		ReligionTypes eReligion = pUnit->getUnitInfo().IsFoundReligion() ? kPlayer.GetReligions()->GetOwnedReligion() : GetCityReligions()->GetReligiousMajority();
 		pUnit->GetReligionDataMutable()->SetFullStrength(pUnit->getOwner(), pUnit->getUnitInfo(), eReligion);
 
+		// Vox Deorum: faith uses the same hundredths-based event cost contract.
+		const int captureFaithBefore = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? kPlayer.GetFaithTimes100() : 0;
 		kPlayer.ChangeFaith(-iFaithCost);
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlNoteMilitaryPurchase(*pUnit, getOwner(), GetID(), 2, captureFaithBefore - kPlayer.GetFaithTimes100());
 		if (iFaithCost > 0)
 		{
 			GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_FAITH_PURCHASE, true, NO_GREATPERSON, NO_BUILDING, iFaithCost, false, NO_PLAYER, NULL, false, this);
@@ -30904,6 +30928,9 @@ CvUnit* CvCity::PurchaseUnit(UnitTypes eUnitType, YieldTypes ePurchaseYield)
 		}
 	}
 
+	// Vox Deorum: purchase completion owns the initialized movement and placement state.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && pNewUnit != NULL)
+		VoxRlCompleteMilitaryUnit(*pNewUnit);
 	return pNewUnit;
 }
 

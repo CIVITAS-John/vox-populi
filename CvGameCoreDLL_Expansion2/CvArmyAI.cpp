@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: army slots and checkpoint maintenance retain their operation cause.
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -150,6 +152,9 @@ ArmyAIState CvArmyAI::GetArmyAIState() const
 void CvArmyAI::SetArmyAIState(ArmyAIState eNewArmyAIState)
 {
 	m_eAIState = eNewArmyAIState;
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 }
 
 /// Find average speed of units in army
@@ -341,6 +346,9 @@ void CvArmyAI::SetFormation(MultiunitFormationTypes eFormation)
 		for (size_t i=0; i<thisFormation->getNumFormationSlotEntries(); i++)
 			m_FormationEntries.push_back( CvArmyFormationSlot(-1,thisFormation->getFormationSlotEntry(i).m_requiredSlot) );
 	}
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 }
 
 /// How many slots are there in this formation if filled
@@ -367,6 +375,8 @@ size_t CvArmyAI::GetNumSlotsFilled() const
 /// Recalculate when each unit will arrive at the current army position, whatever that is
 void CvArmyAI::UpdateCheckpointTurnsAndRemoveBadUnits()
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_MAINTENANCE, GetOperationID());
 	CvAIOperation* pOperation = GET_PLAYER(GetOwner()).getAIOperation(GetOperationID());
 	if (!pOperation)
 		return;
@@ -532,6 +542,9 @@ DomainTypes CvArmyAI::GetDomainType() const
 void CvArmyAI::SetType(ArmyType eType)
 {
 	m_eType = eType;
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 }
 
 ArmyType CvArmyAI::GetType() const
@@ -562,6 +575,9 @@ void CvArmyAI::SetGoalPlot(CvPlot* pGoalPlot)
 		m_iGoalX = INVALID_PLOT_COORD;
 		m_iGoalY = INVALID_PLOT_COORD;
 	}
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 }
 
 // UNIT HANDLING
@@ -626,6 +642,9 @@ void CvArmyAI::AddUnit(int iUnitID, int iSlotNum, bool bIsRequired)
 			}
 		}
 	}
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 }
 
 /// Remove a unit from the army
@@ -662,11 +681,17 @@ int CvArmyAI::RemoveUnit(int iUnitToRemoveID, bool bTempOnly)
 				if (!pThisUnit->isDelayedDeath())
 					GET_PLAYER(GetOwner()).GetTacticalAI()->AddCurrentTurnUnit(pThisUnit);
 
+				// Vox Deorum: capture release after restoring tactical eligibility.
+				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+					VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 				return iI;
 			}
 		}
 	}
 
+	// Vox Deorum: a missing unit can still clear an occupied slot.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetOperationID());
 	return -1;
 }
 

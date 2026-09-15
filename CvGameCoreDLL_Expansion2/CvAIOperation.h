@@ -155,6 +155,7 @@ public:
 	//accessors
 	AIOperationState GetOperationState() { return m_eCurrentState; }
 	int GetLastTurnMoved() const { return m_iLastTurnMoved; }
+	AIOperationAbortReason GetAbortReason() const { return m_eAbortReason; }
 	void SetLastTurnMoved(int iValue) { m_iLastTurnMoved = iValue; }
 	int GetTurnStarted() const { return m_iTurnStarted; }
 	void SetTurnStarted(int iValue) { m_iTurnStarted = iValue; }

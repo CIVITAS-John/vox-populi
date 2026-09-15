@@ -352,6 +352,8 @@ public:
 	void DeleteFocusArea(CvPlot* pPlot);
 	void DropOldFocusAreas();
 	bool IsInFocusArea(const CvPlot* pPlot) const;
+	// Vox Deorum: exposes active focus areas to campaign recording capture.
+	const std::vector<CvFocusArea>& GetFocusAreas() const { return m_focusAreas; }
 
 	// Knowledge of other civs' vision
 	void UpdateVisibility();

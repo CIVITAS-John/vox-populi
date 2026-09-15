@@ -1629,6 +1629,8 @@ public:
 	{
 		return m_unitBeingBuiltForOperation.IsValid();
 	}
+	// Vox Deorum: exposes the active operation production promise to recording capture.
+	const OperationSlot& GetUnitBeingBuiltForOperation() const { return m_unitBeingBuiltForOperation; }
 
 	const char* GetCityBombardEffectTag() const;
 	uint GetCityBombardEffectTagHash() const;

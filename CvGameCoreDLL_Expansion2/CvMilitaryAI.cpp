@@ -515,6 +515,9 @@ void CvMilitaryAI::SetTurnStrategyAdopted(MilitaryAIStrategyTypes eStrategy, int
 /// Process through all the military activities for a player's turn
 void CvMilitaryAI::DoTurn()
 {
+	// Vox Deorum: label military precomputation for capture requests and buffered events.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_MILITARY_PREPARATION);
 	ScanForBarbarians();
 	UpdateBaseData();
 	UpdateDefenseState();
@@ -526,7 +529,20 @@ void CvMilitaryAI::DoTurn()
 
 	if(!m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 	{
-		UpdateOperations();
+		// Vox Deorum: operation selection is an owner-qualified choice context.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_OPERATION_SELECTION);
+		{
+			VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+				m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
+			UpdateOperations();
+		}
+		// Vox Deorum: retain the completed selection batch, including an empty batch.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().OnOperationSelectionComplete(m_pPlayer->GetID());
+		// Vox Deorum: purchases and disbanding share the military purchase phase.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_MILITARY_PURCHASES);
 		if (!m_pPlayer->isHuman(ISHUMAN_AI_ECONOMY))
 		{
 			MakeEmergencyPurchases();
@@ -563,6 +579,9 @@ bool CvMilitaryAI::RequestPillageAttack(PlayerTypes eEnemy)
 /// Send an army to force concessions
 bool CvMilitaryAI::RequestBullyingOperation(PlayerTypes eEnemy)
 {
+	// Vox Deorum: accepted bullying requests are operation choices by this owner.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+		m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 	if (GET_PLAYER(eEnemy).isBarbarian())
 		return false;
 
@@ -1020,6 +1039,9 @@ map<int, SPath> CvMilitaryAI::GetArmyPathsFromCity(CvCity* pMusterCity, bool bWa
 
 bool CvMilitaryAI::RequestCityAttack(PlayerTypes eIntendedTarget, int iNumUnitsWillingToBuild, bool bCareful)
 {
+	// Vox Deorum: accepted city attack requests retain their owner-qualified choice cause.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+		m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 	//note that a given target might be repeated with different muster points / army types
 	for (size_t i = 0; i < m_potentialAttackTargets.size(); i++)
 	{
@@ -2432,6 +2454,9 @@ void CvMilitaryAI::UpdateOperations()
 			// If we've made peace, abort all operations
 			if(GET_TEAM(m_pPlayer->getTeam()).isForcePeace(GET_PLAYER(eLoopPlayer).getTeam()))
 			{
+				// Vox Deorum: forced peace overrides the enclosing selection cause.
+				VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+					m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_FORCED);
 				m_pPlayer->StopAllLandOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_WAR_STATE_CHANGE);
 				m_pPlayer->StopAllSeaOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_WAR_STATE_CHANGE);
 				m_pPlayer->StopAllLandDefensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_WAR_STATE_CHANGE);
@@ -2441,6 +2466,9 @@ void CvMilitaryAI::UpdateOperations()
 			// If we cannot declare war on this player, abort all offensive operations related to him
 			if(!m_pPlayer->IsAtWarWith(eLoopPlayer) && !GET_TEAM(m_pPlayer->getTeam()).canDeclareWar(GET_PLAYER(eLoopPlayer).getTeam()))
 			{
+				// Vox Deorum: legality cancellation overrides the enclosing selection cause.
+				VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+					m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_FORCED);
 				m_pPlayer->StopAllLandOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_TARGET_NOT_VALID);
 				m_pPlayer->StopAllSeaOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_TARGET_NOT_VALID);
 			}

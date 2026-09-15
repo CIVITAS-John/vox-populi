@@ -9557,6 +9557,9 @@ void CvDiplomacyAI::DoStartCoopWar(PlayerTypes eAllyPlayer, PlayerTypes eTargetP
 		{
 			if (!GET_PLAYER(eAllyPlayer).isHuman(ISHUMAN_AI_UNITS))
 			{
+				// Vox Deorum: retain the partner who requested this ally's commitment.
+				VoxRlOperationCaptureScope captureRequest(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+					eAllyPlayer, GetPlayer()->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 				GET_PLAYER(eAllyPlayer).GetMilitaryAI()->RequestCityAttack(eTargetPlayer, 3, false);
 			}
 

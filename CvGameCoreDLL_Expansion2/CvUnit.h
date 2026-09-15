@@ -1318,10 +1318,7 @@ public:
 	void SetCycleOrder(int iNewValue);
 
 	bool IsRecentlyDeployedFromOperation() const;
-	void SetDeployFromOperationTurn(int iTurn)
-	{
-		m_iDeployFromOperationTurn = iTurn;
-	};
+	void SetDeployFromOperationTurn(int iTurn);
 	int GetDeployFromOperationTurn()
 	{
 		return m_iDeployFromOperationTurn;

@@ -6,6 +6,9 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: retain military gold rewards generated during combat resolution.
+#include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvUnit.h"
 #include "CvUnitCombat.h"
 #include "CvUnitMission.h"
@@ -3096,6 +3099,8 @@ int CvUnitCombat::DoDamageMath(int iAttackerStrength100, int iDefenderStrength10
 //	---------------------------------------------------------------------------
 void CvUnitCombat::ResolveCombat(const CvCombatInfo& kInfo, uint uiParentEventID /* = 0 */)
 {
+	// Vox Deorum: nested damage, capture, and instant yields share this classification.
+	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_COMBAT);
 	PlayerTypes eAttackingPlayer = NO_PLAYER;
 	// Restore visibility
 	CvUnit* pAttacker = kInfo.getUnit(BATTLE_UNIT_ATTACKER);

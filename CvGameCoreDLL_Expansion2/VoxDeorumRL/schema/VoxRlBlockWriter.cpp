@@ -69,6 +69,14 @@ bool VoxRlBlockWriter::Begin(
     {
         return Fail(VOX_RL_BLOCK_BAD_KIND);
     }
+    if (turn < -1 || turn > 32767)
+    {
+        return Fail(VOX_RL_BLOCK_BAD_TURN);
+    }
+    if (player < -1 || player > 32767)
+    {
+        return Fail(VOX_RL_BLOCK_BAD_PLAYER);
+    }
     const u16 maximumSectionCount = VoxRlBlockSectionCount(blockKind);
     if (sectionCount < VoxRlRequiredBlockSectionCount(blockKind) || sectionCount > maximumSectionCount)
     {
@@ -106,8 +114,8 @@ bool VoxRlBlockWriter::Begin(
     image->sectionCount = sectionCount;
     image->imageSize = 0;
     image->session = session;
-    image->turn = turn;
-    image->player = player;
+    image->turn = static_cast<i16>(turn);
+    image->player = static_cast<i16>(player);
     image->generation = generation;
     image->staticGeneration = staticGeneration;
     image->worldGeneration = worldGeneration;

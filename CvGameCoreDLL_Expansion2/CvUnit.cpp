@@ -55,6 +55,7 @@
 #endif
 
 #include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 
 // Come back to this
 #include "LintFree.h"
@@ -1259,7 +1260,7 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 	// the creation may have consumed the plot, so the plot is marked too.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 	{
-		VoxRlCapture::GetInstance().NoteUnitCreated(getOwner(), GetID());
+		VoxRlCapture::GetInstance().NoteUnitCreated(getOwner(), GetID(), eReason, pPassUnit);
 		CvPlot* pStartPlot = plot();
 		if (pStartPlot != NULL)
 		{
@@ -2132,6 +2133,13 @@ void CvUnit::convert(CvUnit* pUnit, bool bIsUpgrade)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_UnitConverted, pUnit->getOwner(),getOwner(), pUnit->GetID(), GetID(), bIsUpgrade);
 	}
 
+	// Vox Deorum: retain conversion lineage and initialized transport before removal.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCompleteMilitaryUnit(*this, pUnit);
+		if (!bIsUpgrade && pUnit->getOwner() != getOwner())
+			VoxRlNoteMilitaryDeparture(*pUnit, getOwner(), true);
+	}
 	pUnit->kill(true, NO_PLAYER);
 }
 
@@ -3111,6 +3119,9 @@ bool CvUnit::getCaptureDefinition(CvUnitCaptureDefinition* pkCaptureDef, PlayerT
 		}
 	}
 
+	// Vox Deorum: retain capture lineage after placement and capture-specific promotions.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && pkCapturedUnit != NULL)
+		VoxRlCompleteMilitaryCapture(*pkCapturedUnit, kCaptureDef.eOldPlayer, kCaptureDef.iUnitID);
 	return pkCapturedUnit;
 }
 
@@ -6033,6 +6044,8 @@ bool CvUnit::canScrap(bool bTestVisible, CvString* toolTipSink) const
 //	--------------------------------------------------------------------------------
 void CvUnit::scrap(bool bDelay)
 {
+	// Vox Deorum: classify the actual refund and retain departure capabilities.
+	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_DISBAND);
 	VALIDATE_OBJECT();
 	if(!canScrap())
 	{
@@ -6040,6 +6053,8 @@ void CvUnit::scrap(bool bDelay)
 	}
 
 	CvPlayer& kOwner = GET_PLAYER(getOwner());
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlNoteMilitaryDeparture(*this, NO_PLAYER, false);
 
 	if(plot()->getOwner() == getOwner())
 	{
@@ -6275,6 +6290,9 @@ void CvUnit::gift(bool bTestTransport)
 
 		// Set gifted by player
 		pGiftUnit->SetGiftedByPlayer(eCurrentOwner);
+		// Vox Deorum: final gift metadata follows conversion and transport setup.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCompleteMilitaryUnit(*pGiftUnit);
 
 		CvPlayer* pMinorCiv = &GET_PLAYER(pGiftUnit->getOwner());
 
@@ -10298,6 +10316,8 @@ bool CvUnit::shouldPillage(const CvPlot* pPlot, bool bConservative, bool bIgnore
 //	--------------------------------------------------------------------------------
 bool CvUnit::pillage()
 {
+	// Vox Deorum: include direct and instant military pillage rewards.
+	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_PILLAGE);
 	VALIDATE_OBJECT();
 	CvString strBuffer;
 
@@ -14192,6 +14212,9 @@ CvUnit* CvUnit::DoUpgrade(bool bFree)
 
 CvUnit* CvUnit::DoUpgradeTo(UnitTypes eUnitType, bool bFree)
 {
+	// Vox Deorum: retain the actual charge, including free upgrade outcomes.
+	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_UPGRADE);
+	const int captureGoldBefore = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? GET_PLAYER(getOwner()).GetTreasury()->GetGoldTimes100() : 0;
 	// Gold Cost
 	int iUpgradeCost = upgradePrice(eUnitType);
 	CvPlayerAI& thisPlayer = GET_PLAYER(getOwner());
@@ -14202,6 +14225,8 @@ CvUnit* CvUnit::DoUpgradeTo(UnitTypes eUnitType, bool bFree)
 		thisPlayer.GetTreasury()->LogExpenditure(getUnitInfo().GetText(), iUpgradeCost, 3);
 		thisPlayer.GetTreasury()->ChangeGold(-iUpgradeCost);
 	}
+	// Vox Deorum: subsequent upgrade yields do not alter the recorded purchase charge.
+	const int captureUpgradeCost = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? captureGoldBefore - thisPlayer.GetTreasury()->GetGoldTimes100() : 0;
 
 	// Add newly upgraded Unit & kill the old one
 	CvUnit* pNewUnit = thisPlayer.initUnit(eUnitType, getX(), getY(), NO_UNITAI, REASON_UPGRADE, false, false, 0, 0, NO_CONTRACT, true, this);
@@ -14289,6 +14314,9 @@ CvUnit* CvUnit::DoUpgradeTo(UnitTypes eUnitType, bool bFree)
 			pNewUnit->finishMoves();
 		}
 
+		// Vox Deorum: snapshot the final replacement after movement restrictions.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlNoteMilitaryUpgrade(*this, *pNewUnit, captureUpgradeCost);
 		kill(true);
 	}
 
@@ -25869,6 +25897,15 @@ bool CvUnit::isCargo() const
 
 
 //	--------------------------------------------------------------------------------
+// Vox Deorum: deployment cooldown changes are part of the next captured unit delta.
+void CvUnit::SetDeployFromOperationTurn(int iTurn)
+{
+	if (m_iDeployFromOperationTurn == iTurn) return;
+	m_iDeployFromOperationTurn = iTurn;
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+}
+
 void CvUnit::setTransportUnit(CvUnit* pTransportUnit)
 {
 	VALIDATE_OBJECT();
@@ -25906,6 +25943,15 @@ void CvUnit::setTransportUnit(CvUnit* pTransportUnit)
 			m_transportUnit.reset();
 
 			SetActivityType(ACTIVITY_AWAKE);
+		}
+		// Vox Deorum: capture the cargo link and both carriers after transfer completes.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+			if (pOldTransportUnit != NULL)
+				VoxRlCapture::GetInstance().NoteUnitChanged(pOldTransportUnit->getOwner(), pOldTransportUnit->GetID());
+			if (pTransportUnit != NULL)
+				VoxRlCapture::GetInstance().NoteUnitChanged(pTransportUnit->getOwner(), pTransportUnit->GetID());
 		}
 	}
 }

@@ -16,6 +16,8 @@
 #include "CvDiplomacyRequests.h"
 #include "CvCitySpecializationAI.h"
 #include "CvConnectionService.h"
+// Vox Deorum: retain the broker behind another player's military commitment.
+#include "VoxDeorumRL/VoxRlCapture.h"
 
 // must be included after all other headers
 #include "LintFree.h"
@@ -5164,6 +5166,9 @@ void CvGameDeals::ActivateDeal(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, C
 							continue;
 
 						bool bCareful = GET_PLAYER(vAttackingTeam[i]).CountNumDangerousMajorsAtWarWith(true, false) > 0 && GET_PLAYER(vAttackingTeam[i]).GetDiplomacyAI()->GetGlobalCoopWarAgainstState(vTargetTeam[j]) < COOP_WAR_STATE_PREPARING;
+						// Vox Deorum: the receiving player paid for this owner's attack.
+						VoxRlOperationCaptureScope captureRequest(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+							vAttackingTeam[i], eReceivingPlayer, VOX_RL_OPERATION_CHANGE_CHOICE);
 						GET_PLAYER(vAttackingTeam[i]).GetMilitaryAI()->RequestCityAttack(vTargetTeam[j], 2, bCareful);
 					}
 				}

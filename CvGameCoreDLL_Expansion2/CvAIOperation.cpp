@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: operation choices and lifecycle changes share one capture contract.
+#include "VoxDeorumRL/VoxRlCapture.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -193,6 +195,9 @@ void CvAIOperation::SetTargetPlot(CvPlot* pTarget)
 	//update the distance
 	m_iDistanceMusterToTarget = GetStepDistanceBetweenPlots(GetMusterPlot(),GetTargetPlot());
 	m_progressToTarget.clear();
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetID());
 }
 
 /// Retrieve plot where this operation assembles
@@ -226,6 +231,9 @@ void CvAIOperation::SetMusterPlot(CvPlot* pMuster)
 	CvArmyAI* pArmy = GetArmy(0);
 	for(size_t iI = 0; pArmy && iI < pArmy->GetNumFormationEntries(); iI++)
 		pArmy->GetSlotStatus(iI)->ResetTurnsToCheckpoint();
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetID());
 }
 
 int CvAIOperation::GetGatherTolerance(CvArmyAI* pArmy, CvPlot* pPlot) const
@@ -372,6 +380,8 @@ bool CvAIOperation::FinishedBuildingUnit(OperationSlot thisOperationSlot)
 /// Assigns available units to our operation. Returns true if all needed units assigned.
 bool CvAIOperation::RecruitUnit(CvUnit* pUnit)
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_UNIT_ASSIGNMENT, GetID());
 	if(!pUnit)
 		return false;
 
@@ -445,6 +455,8 @@ bool CvAIOperation::RecruitUnit(CvUnit* pUnit)
 //negative return: error; otherwise number of additionally recruited units
 int CvAIOperation::GrabUnitsFromTheReserves(CvPlot* pMusterPlot, CvPlot* pTargetPlot, CvArmyAI* pArmy)
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_UNIT_ASSIGNMENT, GetID());
 	if (!pMusterPlot || !pTargetPlot || pArmy == NULL)
 		return -1;
 
@@ -649,6 +661,8 @@ int CvAIOperation::PercentFromMusterPointToTarget() const
 /// Returns true when we should abort the operation totally (besides when we have lost all units in it)
 bool CvAIOperation::ShouldAbort()
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_MAINTENANCE, GetID());
 	//failsafe in case we're stuck somehow
 	int iTurns = GC.getGame().getGameTurn() - GetTurnStarted();
 	if (iTurns > 42 && !IsNeverEnding())
@@ -697,6 +711,9 @@ void CvAIOperation::SetToAbort(AIOperationAbortReason eReason)
 		m_eCurrentState = AI_OPERATION_STATE_ABORTED;
 		m_eAbortReason = eReason;
 	}
+	// Vox Deorum: retain the completed commitment change for the next consumer.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetID());
 }
 
 /// Perform the deletion of this operation
@@ -715,6 +732,9 @@ void CvAIOperation::Kill()
 		m_eAbortReason = AI_ABORT_KILLED;
 	}
 
+	// Vox Deorum: removal retains the final reason before Reset clears native state.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationRemoved(eOwner, iID, m_eAbortReason);
 	LogOperationEnd();
 	Reset();
 
@@ -724,6 +744,8 @@ void CvAIOperation::Kill()
 
 bool CvAIOperation::Move()
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_EXECUTION, GetID());
 	//single army only for now
 	CvArmyAI* pThisArmy = GetArmy(0);
 	if (!pThisArmy)
@@ -792,6 +814,8 @@ bool CvAIOperation::Move()
 /// Update operation for the next turn
 bool CvAIOperation::DoTurn()
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_EXECUTION, GetID());
 	if (GetLastTurnMoved()==GC.getGame().getGameTurn())
 		return true;
 
@@ -934,6 +958,8 @@ CvPlot* CvAIOperation::ComputeTargetPlotForThisTurn(CvArmyAI* pArmy) const
 
 bool CvAIOperation::BuyFinalUnit()
 {
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_UNIT_ASSIGNMENT, GetID());
 	if(m_viListOfUnitsWeStillNeedToBuild.size() != 1 || m_eCurrentState != AI_OPERATION_STATE_RECRUITING_UNITS)
 		return false;
 

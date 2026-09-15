@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+// Vox Deorum: retain cross-player military transfers before their source disappears.
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvGlobals.h"
 #include "CvArea.h"
 #include "CvMap.h"
@@ -10637,6 +10639,9 @@ void CvPlayer::doTurnPostDiplomacy()
 
 void CvPlayer::doTurnUnits()
 {
+	// Vox Deorum: unit cleanup and domain-ordered unit turns share one maintenance phase.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().SetMilitaryPhase(GetID(), VOX_RL_MILITARY_PHASE_UNIT_MAINTENANCE);
 	AI_doTurnUnitsPre();
 
 	// Start: old unit AI processing
@@ -33192,6 +33197,9 @@ void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default
 
 		if(isTurnActive())
 		{
+			// Vox Deorum: label the actor's preparation before its normal turn work begins.
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+				VoxRlCapture::GetInstance().SetMilitaryPhase(GetID(), VOX_RL_MILITARY_PHASE_TURN_PREPARATION);
 			PRECONDITION(isAlive(), "isAlive is expected to be true");
 
 			setEndTurn(false);
@@ -33341,6 +33349,9 @@ void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default
 
 		else
 		{
+			// Vox Deorum: unit reset and supported relocation define the captured turn end.
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+				VoxRlCapture::GetInstance().SetMilitaryPhase(GetID(), VOX_RL_MILITARY_PHASE_TURN_END);
 			if (MOD_CORE_DELAYED_VISIBILITY)
 			{
 				// Visibility expires now!
@@ -36988,6 +36999,9 @@ void CvPlayer::AddIncomingUnit(PlayerTypes eFromPlayer, CvUnit* pUnit)
 			ASSERT(!unitGift.hasIncomingUnit(), "Adding incoming unit when one is already on its way.");
 			if (!unitGift.hasIncomingUnit())
 			{
+				// Vox Deorum: the outgoing identity survives the native travel interval.
+				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+					VoxRlNoteMilitaryTransferStarted(*pUnit, GetID(), GC.getGame().getGameTurn() + GD_INT_GET(MINOR_UNIT_GIFT_TRAVEL_TURNS));
 				unitGift.init(*pUnit, /*3*/ GD_INT_GET(MINOR_UNIT_GIFT_TRAVEL_TURNS), eFromPlayer);
 			}
 		}
@@ -37020,6 +37034,9 @@ void CvPlayer::AddIncomingUnit(PlayerTypes eFromPlayer, CvUnit* pUnit)
 				{
 					pNewUnit->setOriginCity(getCapitalCity()->GetID());
 				}
+				// Vox Deorum: retain the original lineage and completed gift placement.
+				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+					VoxRlCompleteMilitaryUnit(*pNewUnit, pUnit);
 			}
 		}
 	}
@@ -41346,6 +41363,10 @@ CvAIOperation* CvPlayer::addAIOperation(AIOperationTypes eOperationType, size_t 
 		return NULL;
 	}
 
+	// Vox Deorum: record only accepted creations, so failed temporary operations never become labels.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationCreated(GetID(), pNewOperation->GetID());
+
 	return pNewOperation;
 }
 
@@ -41355,6 +41376,10 @@ void CvPlayer::deleteAIOperation(int iID)
 	{
 		if (m_AIOperations[i].first == iID)
 		{
+			// Vox Deorum: direct deletion retains the last accepted cause and final reason.
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+				VoxRlCapture::GetInstance().NoteOperationRemoved(GetID(), iID,
+					static_cast<int>(m_AIOperations[i].second->GetAbortReason()));
 			delete(m_AIOperations[i].second);
 			m_AIOperations.erase(m_AIOperations.begin() + i);
 			return;

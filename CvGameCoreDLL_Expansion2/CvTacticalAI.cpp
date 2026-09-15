@@ -266,6 +266,12 @@ void CvTacticalAI::RecruitUnits()
 /// Update the AI for units
 void CvTacticalAI::Update()
 {
+	// Vox Deorum: reconcile military purchases, maintenance, and out-of-band operations before tactical consumers run.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_TACTICAL_PREPARATION);
+		VoxRlCapture::GetInstance().OnPreTacticalReconciliation(m_pPlayer->GetID());
+	}
 	UpdateVisibility();
 	DropOldFocusAreas();
 	FindTacticalTargets();
@@ -297,11 +303,17 @@ void CvTacticalAI::AddFocusArea(CvPlot* pPlot, int iRadius, int iDuration)
 	zone.m_iLastTurn = GC.getGame().getGameTurn() + iDuration;
 
 	m_focusAreas.push_back(zone);
+	// Vox Deorum: retain the accepted focus area with its absolute expiry turn.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteFocusAreaChanged(m_pPlayer->GetID(), VOX_RL_FOCUS_AREA_ADD,
+			pPlot->GetPlotIndex(), iRadius, zone.m_iLastTurn);
 }
 
 /// Remove a temporary focus of attention we no longer need to track
 void CvTacticalAI::DeleteFocusArea(CvPlot* pPlot)
 {
+	if (!pPlot)
+		return;
 	std::vector<CvFocusArea> zonesCopy(m_focusAreas);
 	m_focusAreas.clear();
 
@@ -309,6 +321,11 @@ void CvTacticalAI::DeleteFocusArea(CvPlot* pPlot)
 	for(unsigned int iI = 0; iI < zonesCopy.size(); iI++)
 		if(zonesCopy[iI].m_iX != pPlot->getX() || zonesCopy[iI].m_iY != pPlot->getY())
 			m_focusAreas.push_back(zonesCopy[iI]);
+
+	// Vox Deorum: one center-based removal matches the native deletion semantics.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_focusAreas.size() != zonesCopy.size())
+		VoxRlCapture::GetInstance().NoteFocusAreaChanged(m_pPlayer->GetID(), VOX_RL_FOCUS_AREA_REMOVE,
+			pPlot->GetPlotIndex(), 0, -1);
 }
 
 /// Remove focus zones that have expired
@@ -720,6 +737,13 @@ void CvTacticalAI::ProcessDominanceZones()
 		//high prio goes first
 		AssignGlobalHighPrioMoves();
 
+		// Vox Deorum: the first zone dispatch flushes high-priority changes and publishes stance labels once.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_ZONE_WORK);
+			VoxRlCapture::GetInstance().OnFirstZoneDispatch(m_pPlayer->GetID());
+		}
+
 		//then confront the enemy in each tactical zone
 		for(int iI = 0; iI < GetTacticalAnalysisMap()->GetNumZones(); iI++)
 		{
@@ -771,17 +795,32 @@ void CvTacticalAI::ProcessDominanceZones()
 		}
 
 		//second pass: bring in reinforcements
+		// Vox Deorum: label the second zone loop independently from posture work.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_ZONE_REINFORCEMENT);
 		for (int iI = 0; iI < GetTacticalAnalysisMap()->GetNumZones(); iI++)
 			PlotReinforcementMoves(GetTacticalAnalysisMap()->GetZoneByIndex(iI));
+		// Vox Deorum: retain completion even when no zone needed reinforcements.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().OnZoneReinforcementComplete(m_pPlayer->GetID());
 
 		//now mid prio moves like capturing barb camps, pillaging
+		// Vox Deorum: retain the global mid-priority boundary for event scheduling.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_GLOBAL_MID);
 		AssignGlobalMidPrioMoves();
 
 		//finally arrange our remaining idle units for defense
+		// Vox Deorum: retain the global low-priority boundary for event scheduling.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_GLOBAL_LOW);
 		AssignGlobalLowPrioMoves();
 	}
 
 	//failsafe
+	// Vox Deorum: identify the final tactical review as its own phase.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_UNASSIGNED_REVIEW);
 	ReviewUnassignedUnits();
 }
 
@@ -791,11 +830,20 @@ void CvTacticalAI::AssignGlobalHighPrioMoves()
 	ExtractTargetsForZone(NULL);
 
 	//make some space near the frontline
+	// Vox Deorum: label the global healing pass.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_HEAL_MOVES);
 	PlotHealMoves(true);
 	//move armies first
+	// Vox Deorum: label operation execution and its per-operation results.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_OPERATIONAL_ARMY_MOVES);
 	PlotOperationalArmyMoves();
 
 	//garrisons sometimes make a sortie so we have to get them back
+	// Vox Deorum: label garrison work after operations complete.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_GARRISON);
 	PlotGarrisonMoves(2);
 }
 
@@ -1191,13 +1239,37 @@ void CvTacticalAI::PlotOperationalArmyMoves()
 	for (size_t i=0; i<m_pPlayer->getNumAIOperations(); i++)
 	{
 		CvAIOperation* pOp = m_pPlayer->getAIOperationByIndex(i);
-		if (!pOp->DoTurn())
+		const int operationId = pOp->GetID();
+		const bool alreadyMoved = pOp->GetLastTurnMoved() == GC.getGame().getGameTurn();
+		bool progressed = false;
+		{
+			// Vox Deorum: operation execution supplies request parent context and restores any enclosing label.
+			VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+				m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_EXECUTION, operationId);
+			progressed = pOp->DoTurn();
+		}
+		// Vox Deorum: flush the invocation before another operation can overwrite its state.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			int result = VOX_RL_OPERATION_RESULT_PROGRESSED;
+			if (alreadyMoved)
+				result = VOX_RL_OPERATION_RESULT_ALREADY_MOVED;
+			else if (!progressed)
+				result = pOp->GetOperationState() == AI_OPERATION_STATE_SUCCESSFUL_FINISH
+					? VOX_RL_OPERATION_RESULT_COMPLETED : VOX_RL_OPERATION_RESULT_ABORTED;
+			VoxRlCapture::GetInstance().OnOperationInvocationComplete(m_pPlayer->GetID(), operationId, result);
+		}
+		if (!progressed)
 			opsToKill.push_back(pOp->GetID());
 	}
 
 	//clean up - have to do this in two steps so the iterator does not get invalidated
 	for (size_t i=0; i<opsToKill.size(); i++)
 		m_pPlayer->getAIOperation(opsToKill[i])->Kill();
+
+	// Vox Deorum: close the operation execution batch, including zero invocations.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().OnOperationalMovesComplete(m_pPlayer->GetID());
 }
 
 /// Assigns units to pillage enemy improvements
