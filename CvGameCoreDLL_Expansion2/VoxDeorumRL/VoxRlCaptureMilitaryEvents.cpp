@@ -66,6 +66,16 @@ namespace
         // Initializes a free maintenance baseline.
         MaintenanceBaseline() : charge(0), rate(0), weight(0) {}
     };
+    // Retains one actor's order within its current game turn.
+    struct ActorTurnSchedule
+    {
+        int turn;
+        int phase;
+        unsigned int nextOrder;
+        bool initialized;
+        // Starts without a captured actor-turn context.
+        ActorTurnSchedule() : turn(-1), phase(0), nextOrder(0), initialized(false) {}
+    };
     std::map<UnitKey, UnitKey> lineage;
     std::vector<MilitaryEvent> events;
     std::vector<RequestBarbarianCampCreationRecord> campCreations;
@@ -82,12 +92,35 @@ namespace
     int eventActor = -1;
     int eventPhase = 0;
     int eventTurn = -1;
-    unsigned int nextEventOrder = 0;
+    ActorTurnSchedule actorTurnSchedules[MAX_PLAYERS];
     unsigned int nextTransfer = 1;
     unsigned int nextCreatedCamp = 0x80000001u;
     unsigned int goldDepth = 0;
     int goldCause = 0;
     bool captureFailed = false;
+
+    // Starts a new bounded schedule only when this actor enters a different turn.
+    ActorTurnSchedule* GetActorTurnSchedule(int actor, int turn)
+    {
+        if (actor < 0 || actor >= MAX_PLAYERS) return NULL;
+        ActorTurnSchedule& schedule = actorTurnSchedules[actor];
+        if (!schedule.initialized || schedule.turn != turn)
+        {
+            schedule.turn = turn;
+            schedule.phase = 0;
+            schedule.nextOrder = 0;
+            schedule.initialized = true;
+        }
+        return &schedule;
+    }
+
+    // Reads an actor-turn schedule without changing the active event context.
+    const ActorTurnSchedule* FindActorTurnSchedule(int actor, int turn)
+    {
+        if (actor < 0 || actor >= MAX_PLAYERS) return NULL;
+        const ActorTurnSchedule& schedule = actorTurnSchedules[actor];
+        return schedule.initialized && schedule.turn == turn ? &schedule : NULL;
+    }
 
     // Checks whether any configured major can carry shared barbarian evidence.
     bool HasMajorCarrier()
@@ -229,7 +262,8 @@ void VoxRlResetMilitaryEvents()
 {
     lineage.clear(); events.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
     collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
-    eventActor = -1; eventPhase = 0; eventTurn = -1; nextEventOrder = 0; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; captureFailed = false;
+    for (int actor = 0; actor < MAX_PLAYERS; ++actor) actorTurnSchedules[actor] = ActorTurnSchedule();
+    eventActor = -1; eventPhase = 0; eventTurn = -1; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; captureFailed = false;
 }
 
 // Uses the first observed owner-qualified unit identity within the source game.
@@ -244,14 +278,30 @@ void VoxRlGetUnitLineage(const CvUnit& unit, int& owner, int& unitId)
 // Retains native scheduling context even for actors without capture segments.
 void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, int turn)
 {
-    if (eventActor != actor || eventTurn != turn) nextEventOrder = 0;
+    ActorTurnSchedule* schedule = GetActorTurnSchedule(static_cast<int>(actor), turn);
+    if (schedule != NULL) schedule->phase = phase;
     eventActor = actor; eventPhase = phase; eventTurn = turn;
 }
 
-// Returns a unique occurrence position within the current actor and turn.
+// Returns the stored phase for an actor-turn without switching event ownership.
+int VoxRlGetMilitaryEventPhase(PlayerTypes actor, int turn)
+{
+    const ActorTurnSchedule* schedule = FindActorTurnSchedule(static_cast<int>(actor), turn);
+    return schedule == NULL ? 0 : schedule->phase;
+}
+
+// Allocates an order for a request without changing active event ownership.
+unsigned int VoxRlTakeMilitaryEventOrderFor(PlayerTypes actor, int turn)
+{
+    ActorTurnSchedule* schedule = GetActorTurnSchedule(static_cast<int>(actor), turn);
+    return schedule == NULL ? 0 : schedule->nextOrder++;
+}
+
+// Returns a unique occurrence position within the active actor and turn.
 unsigned int VoxRlTakeMilitaryEventOrder()
 {
-    return nextEventOrder++;
+    ActorTurnSchedule* schedule = GetActorTurnSchedule(eventActor, eventTurn);
+    return schedule == NULL ? 0 : schedule->nextOrder++;
 }
 
 // Buffers creation evidence and propagates the original identity before collection.

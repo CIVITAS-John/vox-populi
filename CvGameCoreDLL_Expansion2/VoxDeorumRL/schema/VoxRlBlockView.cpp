@@ -169,7 +169,7 @@ static bool VoxRlValidateRanges(
         }
         u32 firstEnd = 0;
         u32 countEnd = 0;
-        if (child == 0 || parentDefinition == 0 || parentDefinition->recordSize == 0 ||
+        if (parentDefinition == 0 || parentDefinition->recordSize == 0 ||
             !VoxRlAddU32(definition.firstOffset, 4U, firstEnd) || firstEnd > parentDefinition->recordSize ||
             !VoxRlAddU32(definition.countOffset, 4U, countEnd) || countEnd > parentDefinition->recordSize)
         {
@@ -186,7 +186,8 @@ static bool VoxRlValidateRanges(
             const u32 first = VoxRlReadU32(record + definition.firstOffset);
             const u32 count = VoxRlReadU32(record + definition.countOffset);
             u32 rangeEnd = 0;
-            if (!VoxRlAddU32(first, count, rangeEnd) || rangeEnd > child->count)
+            // Writers omit empty optional lists, so an absent child has zero rows.
+            if (!VoxRlAddU32(first, count, rangeEnd) || rangeEnd > (child == 0 ? 0U : child->count))
             {
                 return false;
             }

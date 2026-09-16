@@ -19,6 +19,10 @@ void VoxRlGetUnitLineage(const CvUnit& unit, int& owner, int& unitId);
 void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, int turn);
 // Allocates the next occurrence order shared by requests and native events.
 unsigned int VoxRlTakeMilitaryEventOrder();
+// Reads an actor's phase for the given turn without changing active event ownership.
+int VoxRlGetMilitaryEventPhase(PlayerTypes actor, int turn);
+// Allocates an actor's request order without changing active event ownership.
+unsigned int VoxRlTakeMilitaryEventOrderFor(PlayerTypes actor, int turn);
 // Retains initialized creation capabilities and optional replacement lineage.
 void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source);
 // Buffers one successful camp placement before its defenders are created.

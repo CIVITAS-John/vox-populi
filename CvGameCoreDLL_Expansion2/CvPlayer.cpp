@@ -33455,6 +33455,9 @@ void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default
 				}
 			}
 
+			// Vox Deorum: close capture after turn-end effects, before off-turn danger updates.
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+				VoxRlCapture::GetInstance().OnTurnComplete(GetID());
 			DLLUI->PublishPlayerTurnStatus(DLLUIClass::TURN_END, GetID());
 		}
 	}

@@ -9848,6 +9848,9 @@ CvCity* CvPlot::getPlotCity() const
 
 void CvPlot::setOwningCity(PlayerTypes ePlayer, int iCityID)
 {
+	// Vox Deorum: capture changed owning and effective city references.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
 
 	CvCity* pOldCityOverride = getOwningCityOverride();
 	CvCity*	pOldCity = getOwningCity();
@@ -9998,6 +10001,10 @@ void CvPlot::setOwningCityOverride(CvCity* pNewValue)
 	CvCity* pCurrentCity = getOwningCityOverride();
 	if ( pNewValue != pCurrentCity )
 	{
+		// Vox Deorum: capture effective city changes even when plot ownership stays the same.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NotePlotChanged(GetPlotIndex());
+
 		if(pNewValue != NULL && pNewValue != getOwningCity())
 		{
 			m_owningCityOverride = pNewValue->GetIDInfo();

@@ -160,6 +160,8 @@ public:
 
 	// Checkpoint hooks.
 	void OnPreDangerCheckpoint(PlayerTypes ePlayer);
+	// Closes the actor's recording after unit reset and turn-end cleanup.
+	void OnTurnComplete(PlayerTypes ePlayer);
 	void OnCampaignSeam(PlayerTypes ePlayer);
 	// Selects the native military phase for later request and event rows.
 	// This accepts every actor so out-of-turn events keep their actual context.
@@ -390,8 +392,6 @@ private:
 	// replacement checkpoint.
 	bool m_worldReplacementPending;
 	unsigned int m_decisionIdCounter;
-	PlayerTypes m_phasePlayer;
-	int m_currentPhase;
 	bool m_identityPendingLogged;
 	// Pending STATIC construction time and bytes accrued since the previous
 	// timing summary; folded into the next segment summary.

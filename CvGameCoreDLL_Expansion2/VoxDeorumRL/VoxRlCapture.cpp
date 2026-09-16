@@ -548,8 +548,6 @@ VoxRlCapture::VoxRlCapture()
 	m_topologyInvalidated(false),
 	m_worldReplacementPending(false),
 	m_decisionIdCounter(0),
-	m_phasePlayer(NO_PLAYER),
-	m_currentPhase(VOX_RL_MILITARY_PHASE_UNKNOWN),
 	m_identityPendingLogged(false),
 	m_staticConstructNs(0),
 	m_staticWriteFlushNs(0),
@@ -789,8 +787,6 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_topologyInvalidated = false;
 	m_worldReplacementPending = false;
 	m_decisionIdCounter = 0;
-	m_phasePlayer = NO_PLAYER;
-	m_currentPhase = VOX_RL_MILITARY_PHASE_UNKNOWN;
 	m_identityPendingLogged = false;
 	m_staticConstructNs = 0;
 	m_staticWriteFlushNs = 0;
@@ -820,8 +816,6 @@ bool VoxRlCapture::AdmitsMilitaryEvents(PlayerTypes ePlayer) const
 
 void VoxRlCapture::SetMilitaryPhase(PlayerTypes ePlayer, int phase)
 {
-	m_phasePlayer = ePlayer;
-	m_currentPhase = phase;
 	// Event buffering is attachment-scoped and therefore receives context
 	// for minors and other actors without an admitted capture segment.
 	VoxRlSetMilitaryEventContext(ePlayer, phase, GC.getGame().getGameTurn());
@@ -1704,6 +1698,8 @@ bool VoxRlCapture::WriteCampaignBaseline()
 
 void VoxRlCapture::StartSegment(PlayerTypes ePlayer, int iTurn, bool worldReplacement)
 {
+	// The new WORLD already includes diplomacy changes before this checkpoint.
+	m_worldReplacementPending = false;
 	m_segment = new Segment();
 	Segment& segment = *m_segment;
 	segment.player = ePlayer;
@@ -1812,6 +1808,17 @@ void VoxRlCapture::OnPreDangerCheckpoint(PlayerTypes ePlayer)
 		}
 	}
 	StartSegment(ePlayer, iTurn);
+}
+
+// Ends board and danger capture while retaining attachment-scoped military evidence.
+void VoxRlCapture::OnTurnComplete(PlayerTypes ePlayer)
+{
+	if (m_segment == NULL || m_segment->player != ePlayer)
+	{
+		return;
+	}
+	CloseSegment("turnComplete");
+	m_worldReplacementPending = false;
 }
 
 void VoxRlCapture::OnCampaignSeam(PlayerTypes ePlayer)
@@ -3037,9 +3044,8 @@ bool VoxRlCapture::EmitStagedRequest()
 void VoxRlCapture::InitializeRequestHeader(VoxRlRequestData& data)
 {
 	Segment& segment = *m_segment;
-	data.requestHeader.phase = static_cast<u8>(m_phasePlayer == segment.player
-		? m_currentPhase : VOX_RL_MILITARY_PHASE_UNKNOWN);
-	data.requestHeader.order = VoxRlTakeMilitaryEventOrder();
+	data.requestHeader.phase = static_cast<u8>(VoxRlGetMilitaryEventPhase(segment.player, segment.turn));
+	data.requestHeader.order = VoxRlTakeMilitaryEventOrderFor(segment.player, segment.turn);
 	data.requestHeader.operationOwner = static_cast<i8>(NO_PLAYER);
 	data.requestHeader.operationId = -1;
 	data.requestHeader.zoneId = -1;
@@ -3638,6 +3644,16 @@ void VoxRlCapture::NoteCityRemoved(PlayerTypes eOwner, int iCityId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iCityId);
+	// Removing a city also invalidates plot references whose native getters now
+	// resolve to another city or NULL, even without a plot ownership change.
+	for (std::map<VoxRlEntityKey, PlotCaptureRecord>::const_iterator plot = m_segment->lastPlotRows.begin();
+		plot != m_segment->lastPlotRows.end(); ++plot)
+	{
+		const PlotCaptureRecord& row = plot->second;
+		if ((row.owningCityOwner == eOwner && row.owningCityId == iCityId) ||
+			(row.effectiveOwningCityOwner == eOwner && row.effectiveOwningCityId == iCityId))
+			m_segment->dirtyPlots.insert(plot->first.id);
+	}
 	m_segment->dirtyCities.erase(key);
 	m_segment->removedCities.insert(key);
 	m_segment->lastCityRows.erase(key);
