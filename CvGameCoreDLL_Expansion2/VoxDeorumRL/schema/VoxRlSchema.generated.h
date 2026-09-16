@@ -1232,7 +1232,7 @@ typedef char VoxRlAssert_UnitWireRecord[(sizeof(UnitWireRecord) == 132) ? 1 : -1
 // Checks the manifest value rules of one UnitWireRecord.
 inline bool VoxRlIsValidUnitWireRecord(const UnitWireRecord& row)
 {
-    if (row.deployFromOperationTurn < -1) return false;
+    if (row.deployFromOperationTurn < -100) return false;
     if (row.plotIndex < 0) return false;
     if (row.maxHitPoints < 1) return false;
     if (row.unitClassType < -1) return false;
@@ -2282,7 +2282,7 @@ typedef char VoxRlAssert_RequestDeltaUnitRecord[(sizeof(RequestDeltaUnitRecord) 
 // Checks the manifest value rules of one RequestDeltaUnitRecord.
 inline bool VoxRlIsValidRequestDeltaUnitRecord(const RequestDeltaUnitRecord& row)
 {
-    if (row.deployFromOperationTurn < -1) return false;
+    if (row.deployFromOperationTurn < -100) return false;
     if (row.plotIndex < 0) return false;
     if (row.maxHitPoints < 1) return false;
     if (row.unitClassType < -1) return false;
@@ -4562,7 +4562,7 @@ typedef char VoxRlAssert_RequestEventUnitRecord[(sizeof(RequestEventUnitRecord) 
 // Checks the manifest value rules of one RequestEventUnitRecord.
 inline bool VoxRlIsValidRequestEventUnitRecord(const RequestEventUnitRecord& row)
 {
-    if (row.deployFromOperationTurn < -1) return false;
+    if (row.deployFromOperationTurn < -100) return false;
     if (row.plotIndex < 0) return false;
     if (row.maxHitPoints < 1) return false;
     if (row.unitClassType < -1) return false;
@@ -5559,7 +5559,7 @@ enum VoxRlUnitSparseField {
 // Checks the manifest value rules of one UnitRecord.
 inline bool VoxRlIsValidUnitRecord(const UnitRecord& row)
 {
-    if (row.deployFromOperationTurn < -1) return false;
+    if (row.deployFromOperationTurn < -100) return false;
     if (row.unitType < 0 || row.unitType > 65535) return false;
     if (row.plotIndex < 0 || row.plotIndex > 32767) return false;
     if (row.damage < 0 || row.damage > 65535) return false;

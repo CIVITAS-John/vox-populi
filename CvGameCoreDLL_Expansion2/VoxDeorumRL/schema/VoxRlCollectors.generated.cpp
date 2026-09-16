@@ -2185,7 +2185,7 @@ bool CollectRequestDeltaUnitRecord(RequestDeltaUnitRecord& out)
     // movementCountRange has no generated assignment because its capture mode is builder.
     // Request-local sparse field rows in delta order. The range exactly tiles the section and never refers to the baseline WORLD section.
     // sparseFieldRange has no generated assignment because its capture mode is builder.
-    // Turn before which the unit cannot redeploy into another operation.
+    // Last operation deployment turn, or -100 before any deployment. The recent-deployment check adds AI_TACTICAL_MAP_TEMP_ZONE_TURNS to this turn.
     // deployFromOperationTurn has no generated assignment because its capture mode is builder.
     // Unit type.
     // unitType has no generated assignment because its capture mode is builder.
@@ -3801,7 +3801,7 @@ bool CollectRequestEventUnitRecord(RequestEventUnitRecord& out)
     // movementCountRange has no generated assignment because its capture mode is builder.
     // Complete sparse-field snapshot.
     // sparseFieldRange has no generated assignment because its capture mode is builder.
-    // Turn before which the unit cannot redeploy into another operation.
+    // Last operation deployment turn, or -100 before any deployment. The recent-deployment check adds AI_TACTICAL_MAP_TEMP_ZONE_TURNS to this turn.
     // deployFromOperationTurn has no generated assignment because its capture mode is builder.
     // Unit type.
     // unitType has no generated assignment because its capture mode is builder.
@@ -4700,7 +4700,7 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         }
         out.openDefenseModifier = static_cast<i32>(checkedOpenDefenseModifier);
     }
-    // Turn before which the unit cannot redeploy into another operation.
+    // Last operation deployment turn, or -100 before any deployment. The recent-deployment check adds AI_TACTICAL_MAP_TEMP_ZONE_TURNS to this turn.
     // deployFromOperationTurn has no generated assignment because its capture mode is builder.
     // Native air-sweep strength modifier.
     {

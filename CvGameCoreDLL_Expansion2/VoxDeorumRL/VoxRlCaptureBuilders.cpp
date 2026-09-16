@@ -680,8 +680,9 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 	VoxRlGetUnitLineage(unit, lineageOwner, lineageUnitId);
 	row.lineageOwner = static_cast<i8>(lineageOwner);
 	row.lineageUnitId = lineageUnitId;
+	// CvUnit::reset initializes the deployment turn to -100 before any operation.
 	if (!AssignCheckedI16(row.deployFromOperationTurn, unit.GetDeployFromOperationTurn(),
-		"UnitRecord", "deployFromOperationTurn", -1)) return false;
+		"UnitRecord", "deployFromOperationTurn", -100)) return false;
 #if defined(MOD_BALANCE_CORE_JFD)
 	row.setResourceConsumptionExempt(MOD_BALANCE_CORE_JFD && unit.isContractUnit());
 #else
