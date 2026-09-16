@@ -1930,7 +1930,8 @@ void CvUnit::grantExperienceFromLostPromotions(int iNumLost)
 }
 
 //	--------------------------------------------------------------------------------
-void CvUnit::convert(CvUnit* pUnit, bool bIsUpgrade)
+// Vox Deorum: distinguishes actual gifts from other cross-owner conversions.
+void CvUnit::convert(CvUnit* pUnit, bool bIsUpgrade, bool bIsGift)
 {
 	VALIDATE_OBJECT();
 	IDInfo* pUnitNode = NULL;
@@ -2138,7 +2139,7 @@ void CvUnit::convert(CvUnit* pUnit, bool bIsUpgrade)
 	{
 		VoxRlCompleteMilitaryUnit(*this, pUnit);
 		if (!bIsUpgrade && pUnit->getOwner() != getOwner())
-			VoxRlNoteMilitaryDeparture(*pUnit, getOwner(), true);
+			VoxRlNoteMilitaryDeparture(*pUnit, getOwner(), bIsGift ? VOX_RL_EVENT_GIFT : VOX_RL_EVENT_CONVERSION);
 	}
 	pUnit->kill(true, NO_PLAYER);
 }
@@ -6054,7 +6055,7 @@ void CvUnit::scrap(bool bDelay)
 
 	CvPlayer& kOwner = GET_PLAYER(getOwner());
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-		VoxRlNoteMilitaryDeparture(*this, NO_PLAYER, false);
+		VoxRlNoteMilitaryDeparture(*this, NO_PLAYER, VOX_RL_EVENT_DISBAND);
 
 	if(plot()->getOwner() == getOwner())
 	{
@@ -6275,7 +6276,8 @@ void CvUnit::gift(bool bTestTransport)
 
 	if (pGiftUnit != NULL)
 	{
-		pGiftUnit->convert(this, false);
+		// Vox Deorum: mark this cross-owner conversion as an actual gift.
+		pGiftUnit->convert(this, false, true);
 		pGiftUnit->setupGraphical();
 
 		pGiftUnit->GetReligionDataMutable()->SetReligion(GetReligionData()->GetReligion());

@@ -226,7 +226,6 @@ struct VoxRlCapture::Segment
 	std::map<VoxRlEntityKey, unsigned char> revealedOverrideUpserts;  // team-major key, 1 = present
 	std::set<VoxRlEntityKey> removedRevealedOverrides;                // (team, plot)
 	std::set<int> dirtyInterceptors;
-	std::map<VoxRlEntityKey, unsigned char> dirtyRelations;           // (team, otherTeam)
 	std::vector<RequestDangerEventRecord> pendingDangerEvents;
 	// Sparse family dirty entity sets: creation, promotion, and counter hooks mark
 	// only the affected entities, and removals drop their keys from collection work.
@@ -372,7 +371,6 @@ struct VoxRlCapture::OperationCaptureState
 	int assessmentTurn;
 	unsigned int assessmentWorldGeneration;
 	unsigned int assessmentDeltaSequence;
-	bool applyAssessmentContext;
 	bool collectTurnEntryEconomics;
 	std::vector<TeamRelationRecord> bufferedRelations;
 	size_t stagedRelationCount;
@@ -380,7 +378,7 @@ struct VoxRlCapture::OperationCaptureState
 	OperationCaptureState()
 		: stanceAssessmentValid(false), stanceChoicesReady(false), stanceBatchPublished(false),
 		assessmentPlayer(NO_PLAYER), assessmentTurn(-1), assessmentWorldGeneration(0),
-		assessmentDeltaSequence(0), applyAssessmentContext(false), collectTurnEntryEconomics(false),
+		assessmentDeltaSequence(0), collectTurnEntryEconomics(false),
 		stagedRelationCount(0), relationsSeeded(false)
 	{
 	}
@@ -534,9 +532,6 @@ VoxRlCapture::VoxRlCapture()
 	m_topologyInvalidated(false),
 	m_worldReplacementPending(false),
 	m_decisionIdCounter(0),
-	m_orderPlayer(NO_PLAYER),
-	m_orderTurn(-1),
-	m_nextRequestOrder(0),
 	m_phasePlayer(NO_PLAYER),
 	m_currentPhase(VOX_RL_MILITARY_PHASE_UNKNOWN),
 	m_identityPendingLogged(false),
@@ -778,9 +773,6 @@ void VoxRlCapture::OnGameStartOrLoad()
 	m_topologyInvalidated = false;
 	m_worldReplacementPending = false;
 	m_decisionIdCounter = 0;
-	m_orderPlayer = NO_PLAYER;
-	m_orderTurn = -1;
-	m_nextRequestOrder = 0;
 	m_phasePlayer = NO_PLAYER;
 	m_currentPhase = VOX_RL_MILITARY_PHASE_UNKNOWN;
 	m_identityPendingLogged = false;
@@ -812,18 +804,11 @@ bool VoxRlCapture::AdmitsMilitaryEvents(PlayerTypes ePlayer) const
 
 void VoxRlCapture::SetMilitaryPhase(PlayerTypes ePlayer, int phase)
 {
-	const int turn = GC.getGame().getGameTurn();
-	if (m_orderPlayer != ePlayer || m_orderTurn != turn)
-	{
-		m_orderPlayer = ePlayer;
-		m_orderTurn = turn;
-		m_nextRequestOrder = 0;
-	}
 	m_phasePlayer = ePlayer;
 	m_currentPhase = phase;
 	// Event buffering is attachment-scoped and therefore receives context
 	// for minors and other actors without an admitted capture segment.
-	VoxRlSetMilitaryEventContext(ePlayer, phase, m_nextRequestOrder);
+	VoxRlSetMilitaryEventContext(ePlayer, phase, GC.getGame().getGameTurn());
 }
 
 void VoxRlCapture::PushOperationChangeCause(PlayerTypes eOwner,
@@ -1100,14 +1085,18 @@ void VoxRlCapture::OnOperationalMovesComplete(PlayerTypes ePlayer)
 	EmitSynchronizationRequest();
 }
 
+// Binds the first pre-choice observation once for the actor-turn.
 void VoxRlCapture::OnStanceAssessmentReady(PlayerTypes ePlayer)
 {
 	if (m_searchActive || !IsObserving(ePlayer)) return;
+	// One assessment supplies this actor-turn's stance batch, including across WORLD replacement.
+	if (m_operationState->stanceAssessmentValid &&
+		m_operationState->assessmentPlayer == ePlayer &&
+		m_operationState->assessmentTurn == m_segment->turn) return;
 	m_operationState->pendingZoneChoices.clear();
 	m_operationState->stanceAssessmentValid = false;
 	m_operationState->stanceChoicesReady = false;
 	m_operationState->stanceBatchPublished = false;
-	m_operationState->applyAssessmentContext = false;
 	if (!EmitSynchronizationRequest()) return;
 	m_operationState->assessmentPlayer = ePlayer;
 	m_operationState->assessmentTurn = m_segment->turn;
@@ -1116,9 +1105,11 @@ void VoxRlCapture::OnStanceAssessmentReady(PlayerTypes ePlayer)
 	m_operationState->stanceAssessmentValid = true;
 }
 
+// Retains the first assessment's labels after native posture selection and sorting.
 void VoxRlCapture::OnStanceChoicesReady(PlayerTypes ePlayer)
 {
-	if (m_searchActive || !IsObserving(ePlayer) || !m_operationState->stanceAssessmentValid ||
+	if (m_searchActive || !IsObserving(ePlayer) || m_operationState->stanceChoicesReady ||
+		!m_operationState->stanceAssessmentValid ||
 		m_operationState->assessmentPlayer != ePlayer ||
 		m_operationState->assessmentTurn != m_segment->turn) return;
 	VoxRlZoneSnapshot zones;
@@ -1142,6 +1133,7 @@ void VoxRlCapture::OnStanceChoicesReady(PlayerTypes ePlayer)
 	m_operationState->stanceChoicesReady = true;
 }
 
+// Publishes one stance batch, including a completed batch with no zone choices.
 void VoxRlCapture::OnFirstZoneDispatch(PlayerTypes ePlayer)
 {
 	if (!IsObserving(ePlayer) || m_operationState->stanceBatchPublished) return;
@@ -1162,11 +1154,9 @@ void VoxRlCapture::OnFirstZoneDispatch(PlayerTypes ePlayer)
 		boundary.observationWorldGeneration = m_operationState->assessmentWorldGeneration;
 		boundary.observationDeltaSequence = m_operationState->assessmentDeltaSequence;
 		pending.requestCampaignBoundaries.push_back(boundary);
-		m_operationState->applyAssessmentContext = true;
 		if (!EmitSynchronizationRequest()) return;
 	}
 	m_operationState->stanceBatchPublished = true;
-	m_operationState->applyAssessmentContext = false;
 }
 
 void VoxRlCapture::OnZoneReinforcementComplete(PlayerTypes ePlayer)
@@ -2238,7 +2228,6 @@ void VoxRlCapture::ClearDirtyState()
 	segment.revealedOverrideUpserts.clear();
 	segment.removedRevealedOverrides.clear();
 	segment.dirtyInterceptors.clear();
-	segment.dirtyRelations.clear();
 	segment.pendingDangerEvents.clear();
 	segment.dirtyUnitModifiers.clear();
 	segment.dirtyUnitPlagues.clear();
@@ -2264,7 +2253,6 @@ void VoxRlCapture::CommitOperationalRows()
 {
 	if (m_operationState == NULL || m_segment == NULL) return;
 	m_operationState->pendingRowsByOwner.erase(static_cast<int>(m_segment->player));
-	m_operationState->applyAssessmentContext = false;
 	m_operationState->collectTurnEntryEconomics = false;
 }
 
@@ -2770,22 +2758,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	}
 	m_operationState->stagedRelationCount = m_operationState->bufferedRelations.size();
 
-	// Directed relation replacements from the complete captured matrix.
-	for (std::map<VoxRlEntityKey, unsigned char>::const_iterator relation = segment.dirtyRelations.begin();
-		relation != segment.dirtyRelations.end(); ++relation)
-	{
-		if ((*relation).second == 0) continue;
-		TeamRelationRecord record;
-		std::memset(&record, 0, sizeof(record));
-		CollectTeamRelationRecord(GET_TEAM(static_cast<TeamTypes>((*relation).first.owner)),
-			static_cast<TeamTypes>((*relation).first.id), capturingPlayer, record);
-		RequestTeamRelationRecord row;
-		std::memcpy(&row, &record, sizeof(record));
-		row.team = static_cast<i8>((*relation).first.owner);
-		row.otherTeam = static_cast<i8>((*relation).first.id);
-		data.requestTeamRelations.push_back(row);
-	}
-
 	// Sparse family replacements are entity-keyed: each replacement names one
 	// entity and carries that entity's complete current rows for its family.
 	// Only dirty entities are recollected; an absent replacement leaves that
@@ -2992,7 +2964,6 @@ bool VoxRlCapture::EmitStagedRequest()
 	}
 	segment.lastRequestSequence = segment.nextDeltaSequence;
 	segment.nextDeltaSequence += 1;
-	AdvanceRequestOrder();
 	VoxRlCommitMilitaryEvents(segment.player);
 	CommitBufferedRelations();
 	CommitOperationalRows();
@@ -3015,7 +2986,7 @@ void VoxRlCapture::InitializeRequestHeader(VoxRlRequestData& data)
 	Segment& segment = *m_segment;
 	data.requestHeader.phase = static_cast<u8>(m_phasePlayer == segment.player
 		? m_currentPhase : VOX_RL_MILITARY_PHASE_UNKNOWN);
-	data.requestHeader.order = m_nextRequestOrder;
+	data.requestHeader.order = VoxRlTakeMilitaryEventOrder();
 	data.requestHeader.operationOwner = static_cast<i8>(NO_PLAYER);
 	data.requestHeader.operationId = -1;
 	data.requestHeader.zoneId = -1;
@@ -3023,8 +2994,7 @@ void VoxRlCapture::InitializeRequestHeader(VoxRlRequestData& data)
 	data.requestHeader.assessmentDeltaSequence = 0;
 	if (m_operationState->stanceAssessmentValid &&
 		m_operationState->assessmentPlayer == segment.player &&
-		m_operationState->assessmentTurn == segment.turn &&
-		m_operationState->assessmentWorldGeneration == segment.worldGeneration)
+		m_operationState->assessmentTurn == segment.turn)
 	{
 		data.requestHeader.assessmentWorldGeneration = m_operationState->assessmentWorldGeneration;
 		data.requestHeader.assessmentDeltaSequence = m_operationState->assessmentDeltaSequence;
@@ -3034,15 +3004,6 @@ void VoxRlCapture::InitializeRequestHeader(VoxRlRequestData& data)
 	{
 		data.requestHeader.operationOwner = static_cast<i8>(context->owner);
 		data.requestHeader.operationId = context->operationId;
-	}
-}
-
-void VoxRlCapture::AdvanceRequestOrder()
-{
-	m_nextRequestOrder += 1;
-	if (m_phasePlayer != NO_PLAYER)
-	{
-		VoxRlSetMilitaryEventContext(m_phasePlayer, m_currentPhase, m_nextRequestOrder);
 	}
 }
 
@@ -3088,7 +3049,6 @@ bool VoxRlCapture::EmitSynchronizationRequest()
 	}
 	segment.lastRequestSequence = segment.nextDeltaSequence;
 	segment.nextDeltaSequence += 1;
-	AdvanceRequestOrder();
 	VoxRlCommitMilitaryEvents(segment.player);
 	CommitBufferedRelations();
 	CommitOperationalRows();
@@ -3387,11 +3347,10 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	data.requestHeader.returnToStartPositions = bReturnToStartPositions ? 1 : 0;
 	if (pTarget != NULL && m_operationState->stanceAssessmentValid &&
 		m_operationState->assessmentPlayer == ePlayer &&
-		m_operationState->assessmentTurn == segment.turn &&
-		m_operationState->assessmentWorldGeneration == segment.worldGeneration)
+		m_operationState->assessmentTurn == segment.turn)
 	{
 		data.requestHeader.zoneId = GET_PLAYER(ePlayer).GetTacticalAI()->
-			GetTacticalAnalysisMap()->GetDominanceZoneID(pTarget->GetPlotIndex());
+			GetTacticalAnalysisMap()->GetDominanceZoneIDWithoutRefresh(pTarget->GetPlotIndex());
 	}
 	for (size_t index = 0; index < vUnits.size(); ++index)
 	{
@@ -3478,7 +3437,6 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	}
 	segment.lastRequestSequence = segment.nextDeltaSequence;
 	segment.nextDeltaSequence += 1;
-	AdvanceRequestOrder();
 	VoxRlCommitMilitaryEvents(segment.player);
 	CommitBufferedRelations();
 	CommitOperationalRows();

@@ -485,7 +485,8 @@ public:
 	static int CalcExperienceTimes100ForConvert(PlayerTypes eFromPlayer, PlayerTypes eToPlayer, int iExperienceTimes100);
 	void grantExperienceFromLostPromotions(int iNumLost);
 
-	void convert(CvUnit* pUnit, bool bIsUpgrade);
+	// Vox Deorum: distinguishes actual gifts from other cross-owner conversions.
+	void convert(CvUnit* pUnit, bool bIsUpgrade, bool bIsGift = false);
 	void kill(bool bDelay, PlayerTypes ePlayer = NO_PLAYER);
 
 	void doTurn();

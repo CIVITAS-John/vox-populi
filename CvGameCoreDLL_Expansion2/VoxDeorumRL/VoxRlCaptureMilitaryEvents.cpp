@@ -81,7 +81,8 @@ namespace
     size_t collectedEconomics = 0;
     int eventActor = -1;
     int eventPhase = 0;
-    unsigned int eventOrder = 0;
+    int eventTurn = -1;
+    unsigned int nextEventOrder = 0;
     unsigned int nextTransfer = 1;
     unsigned int nextCreatedCamp = 0x80000001u;
     unsigned int goldDepth = 0;
@@ -118,6 +119,19 @@ namespace
         target = static_cast<Target>(value);
     }
 
+    // Checks plot identity storage before narrowing to the wire type.
+    template <typename Target>
+    void SetPlot(Target& target, int value, const char* record)
+    {
+        if (value < -1 || value > 32767)
+        {
+            VoxRlNoteCaptureRangeFailure("captureRange", record, "plotIndex", value, -1, 32767);
+            captureFailed = true;
+            return;
+        }
+        target = static_cast<Target>(value);
+    }
+
     // Fills the occurrence identity before any later observer receives the event.
     template <typename Row>
     void SetOccurrence(Row& row)
@@ -125,7 +139,7 @@ namespace
         SetTurn(row.occurrenceTurn, GC.getGame().getGameTurn(), "MilitaryEvent", "occurrenceTurn");
         row.occurrenceActor = static_cast<i8>(eventActor);
         row.occurrencePhase = static_cast<u8>(eventPhase);
-        row.occurrenceOrder = eventOrder;
+        row.occurrenceOrder = VoxRlTakeMilitaryEventOrder();
     }
 
     // Collects initialized capabilities now, even when the receiving segment is closed.
@@ -141,7 +155,7 @@ namespace
         }
         if (!VoxRlAppendEventUnitSnapshot(unit, unit.getTeam(), snapshot, &event.row.eventUnitIndex)) captureFailed = true;
         event.snapshot.Take(snapshot);
-        event.row.plotIndex = static_cast<i16>(unit.plot()->GetPlotIndex());
+        SetPlot(event.row.plotIndex, unit.plot()->GetPlotIndex(), "MilitaryEvent");
     }
 
     // Starts an event with owner-qualified source and persistent lineage.
@@ -215,7 +229,7 @@ void VoxRlResetMilitaryEvents()
 {
     lineage.clear(); events.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
     collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
-    eventActor = -1; eventPhase = 0; eventOrder = 0; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; captureFailed = false;
+    eventActor = -1; eventPhase = 0; eventTurn = -1; nextEventOrder = 0; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; captureFailed = false;
 }
 
 // Uses the first observed owner-qualified unit identity within the source game.
@@ -228,9 +242,16 @@ void VoxRlGetUnitLineage(const CvUnit& unit, int& owner, int& unitId)
 }
 
 // Retains native scheduling context even for actors without capture segments.
-void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, unsigned int order)
+void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, int turn)
 {
-    eventActor = actor; eventPhase = phase; eventOrder = order;
+    if (eventActor != actor || eventTurn != turn) nextEventOrder = 0;
+    eventActor = actor; eventPhase = phase; eventTurn = turn;
+}
+
+// Returns a unique occurrence position within the current actor and turn.
+unsigned int VoxRlTakeMilitaryEventOrder()
+{
+    return nextEventOrder++;
 }
 
 // Buffers creation evidence and propagates the original identity before collection.
@@ -259,10 +280,9 @@ void VoxRlNoteBarbarianCampCreated(CvPlot& plot, int improvementType)
     SetOccurrence(row);
     row.campId = nextCreatedCamp++;
     row.improvementType = improvementType;
-    row.plotIndex = static_cast<i16>(plot.GetPlotIndex());
+    SetPlot(row.plotIndex, plot.GetPlotIndex(), "BarbarianCampCreation");
     campIds[plot.GetPlotIndex()] = row.campId;
     campCreations.push_back(row);
-    ++eventOrder;
 }
 
 // Records a completed barbarian spawn for delivery by the next admitted major segment.
@@ -274,7 +294,6 @@ void VoxRlNoteBarbarianUnitCreated(CvUnit& unit, CvPlot& source, bool fromCamp)
     event.row.initializationComplete = 1;
     event.row.sourceCampId = fromCamp ? ExistingCampId(source) : 0;
     events.push_back(event);
-    ++eventOrder;
 }
 
 // Updates only the pending initialization for this unit, preserving its occurrence.
@@ -295,9 +314,8 @@ void VoxRlCompleteMilitaryUnit(CvUnit& unit, const CvUnit* source)
         event.row.lineageOwner = static_cast<i8>(owner); event.row.lineageUnitId = id;
         if (source != NULL)
         {
-            event.row.donorPlayer = static_cast<i8>(source->getOwner());
-            if (source->getOwner() != unit.getOwner() && event.row.cause == VOX_RL_EVENT_UNKNOWN)
-                event.row.cause = VOX_RL_EVENT_GIFT;
+            if (event.row.cause == VOX_RL_EVENT_GIFT)
+                event.row.donorPlayer = static_cast<i8>(source->getOwner());
         }
         Snapshot(event, unit);
     }
@@ -330,30 +348,31 @@ void VoxRlCompleteMilitaryCapture(CvUnit& unit, PlayerTypes sourceOwner, int sou
     VoxRlCompleteMilitaryUnit(unit);
     MilitaryEvent* event = PendingArrival(unit);
     if (event == NULL) return;
-    event->row.cause = VOX_RL_EVENT_CONVERSION; event->row.donorPlayer = static_cast<i8>(sourceOwner);
+    event->row.cause = VOX_RL_EVENT_CONVERSION; event->row.donorPlayer = -1;
 }
 
 // Captures a departure before the native unit is removed from its original owner.
-void VoxRlNoteMilitaryDeparture(CvUnit& unit, int receiver, bool gift)
+void VoxRlNoteMilitaryDeparture(CvUnit& unit, int receiver, int cause)
 {
     if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(unit.getOwner())) return;
-    MilitaryEvent event = MakeEvent(unit, 1, gift ? VOX_RL_EVENT_GIFT : VOX_RL_EVENT_DISBAND);
+    MilitaryEvent event = MakeEvent(unit, 1, cause);
     event.row.initializationComplete = 1;
-    if (gift) event.row.transferId = nextTransfer++;
-    event.row.donorPlayer = static_cast<i8>(gift ? receiver : -1);
+    if (cause == VOX_RL_EVENT_GIFT) event.row.transferId = nextTransfer++;
+    event.row.donorPlayer = static_cast<i8>(cause == VOX_RL_EVENT_GIFT ? receiver : -1);
     events.push_back(event);
-    // Immediate replacements share the transfer identity with their source departure.
-    for (size_t i = 0; i + 1 < events.size(); ++i)
-        if (events[i].kind == 0 && events[i].receiver == receiver &&
-            events[i].row.lineageOwner == event.row.lineageOwner && events[i].row.lineageUnitId == event.row.lineageUnitId)
-            events[i].row.transferId = event.row.transferId;
+    // Immediate gifts share the transfer identity with their source departure.
+    if (event.row.transferId != 0)
+        for (size_t i = 0; i + 1 < events.size(); ++i)
+            if (events[i].kind == 0 && events[i].receiver == receiver &&
+                events[i].row.lineageOwner == event.row.lineageOwner && events[i].row.lineageUnitId == event.row.lineageUnitId)
+                events[i].row.transferId = event.row.transferId;
 }
 
 // Records the source before native distance-gift storage removes the unit.
 void VoxRlNoteMilitaryTransferStarted(CvUnit& unit, PlayerTypes receiver, int arrivalTurn)
 {
     const size_t before = events.size();
-    VoxRlNoteMilitaryDeparture(unit, receiver, true);
+    VoxRlNoteMilitaryDeparture(unit, receiver, VOX_RL_EVENT_GIFT);
     CampaignPendingTransferRecord row = CampaignPendingTransferRecord();
     row.transferId = events.size() == before ? nextTransfer++ : events.back().row.transferId;
     row.sourceOwner = static_cast<i8>(unit.getOwner()); row.sourceUnitId = unit.GetID();
@@ -471,7 +490,7 @@ void VoxRlBeginMilitaryEconomicTurn(PlayerTypes player)
         row.player = static_cast<i8>(player);
         SetTurn(row.fromTurn, interval.turn, "RequestEconomicBatchRecord", "fromTurn");
         SetTurn(row.toTurn, turn, "RequestEconomicBatchRecord", "toTurn");
-        row.occurrencePhase = static_cast<u8>(eventPhase); row.occurrenceOrder = eventOrder;
+        row.occurrencePhase = static_cast<u8>(eventPhase); row.occurrenceOrder = VoxRlTakeMilitaryEventOrder();
         if (interval.external < (-2147483647 - 1) || interval.external > 2147483647) captureFailed = true;
         else row.externalGoldTimes100 = static_cast<i32>(interval.external);
         economicBatches.push_back(row);

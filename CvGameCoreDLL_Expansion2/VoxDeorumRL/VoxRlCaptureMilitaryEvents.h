@@ -15,8 +15,10 @@ struct VoxRlCampaignData;
 void VoxRlResetMilitaryEvents();
 // Resolves the first observed identity, retained through replacement and transfer.
 void VoxRlGetUnitLineage(const CvUnit& unit, int& owner, int& unitId);
-// Associates subsequent events with the native actor and military boundary.
-void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, unsigned int order);
+// Associates subsequent events with the native actor, turn, and military boundary.
+void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, int turn);
+// Allocates the next occurrence order shared by requests and native events.
+unsigned int VoxRlTakeMilitaryEventOrder();
 // Retains initialized creation capabilities and optional replacement lineage.
 void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source);
 // Buffers one successful camp placement before its defenders are created.
@@ -32,7 +34,7 @@ void VoxRlNoteMilitaryGiftArrival(CvUnit& unit, PlayerTypes donor);
 // Restores capture lineage when the original unit was removed before replacement.
 void VoxRlCompleteMilitaryCapture(CvUnit& unit, PlayerTypes sourceOwner, int sourceUnitId);
 // Retains the exiting unit's capabilities before an accepted gift or disband.
-void VoxRlNoteMilitaryDeparture(CvUnit& unit, int receiver, bool gift);
+void VoxRlNoteMilitaryDeparture(CvUnit& unit, int receiver, int cause);
 // Retains an accepted distance gift's source identity through its travel interval.
 void VoxRlNoteMilitaryTransferStarted(CvUnit& unit, PlayerTypes receiver, int arrivalTurn);
 // Connects a delivered or returned gift to its pending source identity.

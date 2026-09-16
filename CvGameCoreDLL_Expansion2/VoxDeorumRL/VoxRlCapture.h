@@ -343,8 +343,6 @@ private:
 	void InitializeRequestHeader(VoxRlRequestData& data);
 	// Finds the nearest active cause for one owner, optionally requiring an operation identity.
 	const OperationCauseContext* FindOperationCause(PlayerTypes eOwner, bool requireOperationId) const;
-	// Advances request order and keeps attachment-scoped event context aligned.
-	void AdvanceRequestOrder();
 	// Compares live operations with the last accepted owner inventory and queues versions.
 	bool ReconcileOperations(PlayerTypes eOwner, int recordKind, int invocationResult,
 		int operationId = -1);
@@ -392,9 +390,6 @@ private:
 	// replacement checkpoint.
 	bool m_worldReplacementPending;
 	unsigned int m_decisionIdCounter;
-	PlayerTypes m_orderPlayer;
-	int m_orderTurn;
-	unsigned int m_nextRequestOrder;
 	PlayerTypes m_phasePlayer;
 	int m_currentPhase;
 	bool m_identityPendingLogged;
