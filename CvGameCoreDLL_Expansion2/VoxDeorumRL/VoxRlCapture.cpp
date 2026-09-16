@@ -2341,8 +2341,10 @@ void VoxRlCapture::SeedWorldIterationIndices()
 	}
 }
 
+// Checks independent dirty records before rejecting an incomplete request delta.
 bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 {
+	bool valid = true;
 	Segment& segment = *m_segment;
 	ScopedTiming timing(m_config.timings, segment.timings.deltaCollectNs);
 	const PlayerTypes capturingPlayer = segment.player;
@@ -2374,7 +2376,11 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		team != segment.lastTeamResourceRows.end(); ++team)
 		resourceTeams.insert(team->first);
 	std::vector<TeamResourceRecord> teamResources;
-	if (!VoxRlCollectTeamResourceRows(resourceTeams, teamResources)) return false;
+	if (!VoxRlCollectTeamResourceRows(resourceTeams, teamResources))
+	{
+		valid = false;
+		teamResources.clear();
+	}
 	for (size_t index = 0; index < teamResources.size(); ++index)
 	{
 		const TeamResourceRecord& record = teamResources[index];
@@ -2398,11 +2404,11 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		CvPlayerAI& entryPlayer = GET_PLAYER(segment.player);
 		resourceRefreshPlayers.insert(static_cast<int>(segment.player));
 		RequestPlayerEconomicsRecord economics;
-		if (!VoxRlCollectPlayerEconomicsRecord(entryPlayer, economics)) return false;
-		data.requestPlayerEconomics.push_back(economics);
+		if (!VoxRlCollectPlayerEconomicsRecord(entryPlayer, economics)) valid = false;
+		else data.requestPlayerEconomics.push_back(economics);
 	}
 	if (!resourceRefreshPlayers.empty() &&
-		!VoxRlCollectPlayerResourceRows(resourceRefreshPlayers, data.requestPlayerResources)) return false;
+		!VoxRlCollectPlayerResourceRows(resourceRefreshPlayers, data.requestPlayerResources)) valid = false;
 	const int plotCount = map.numPlots();
 	// Compare the captured roster with its last emitted state, including policy
 	// bonuses and empire totals, without requiring setter hooks.
@@ -2412,7 +2418,11 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		PlayerRecord row;
 		std::memset(&row, 0, sizeof(row));
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(baseline->first));
-		if (!CollectPlayerRecord(owner, capturingPlayer, row)) return false;
+		if (!CollectPlayerRecord(owner, capturingPlayer, row))
+		{
+			valid = false;
+			continue;
+		}
 		row.id = static_cast<i8>(baseline->first);
 		if (std::memcmp(&baseline->second, &row, sizeof(row)) == 0) continue;
 		RequestDeltaPlayerRecord delta;
@@ -2434,31 +2444,34 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	if (m_zoneSnapshotDirty)
 	{
 		VoxRlZoneSnapshot zones;
-		if (!VoxRlCollectZones(zoneMap, zones) || zones.plotZones.size() != segment.zoneSnapshot.plotZones.size())
-			return false;
-		if (!SameRows(zones.zones, segment.zoneSnapshot.zones) ||
-			!SameRows(zones.neighbors, segment.zoneSnapshot.neighbors))
+		if (!VoxRlCollectZones(zoneMap, zones)) valid = false;
+		else
 		{
-			data.requestHeader.hasZoneReplacement = 1;
-			VoxRlMirrorSparseRows(zones.zones, data.requestZoneReplacements);
-			VoxRlMirrorSparseRows(zones.neighbors, data.requestZoneNeighbors);
-			// The decode table is rebuilt only when a new table is accepted.
-			segment.zoneRowByZoneId.clear();
-			for (size_t zoneIndex = 0; zoneIndex < zones.zones.size(); ++zoneIndex)
-				segment.zoneRowByZoneId[zones.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
-		}
-		for (int plot = 0; plot < plotCount; ++plot)
-		{
-			if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot])
+			if (zones.plotZones.size() != segment.zoneSnapshot.plotZones.size()) return false;
+			if (!SameRows(zones.zones, segment.zoneSnapshot.zones) ||
+				!SameRows(zones.neighbors, segment.zoneSnapshot.neighbors))
 			{
-				segment.dirtyPlots.insert(plot);
-				zoneChangedPlots.push_back(plot);
+				data.requestHeader.hasZoneReplacement = 1;
+				VoxRlMirrorSparseRows(zones.zones, data.requestZoneReplacements);
+				VoxRlMirrorSparseRows(zones.neighbors, data.requestZoneNeighbors);
+				// The decode table is rebuilt only when a new table is accepted.
+				segment.zoneRowByZoneId.clear();
+				for (size_t zoneIndex = 0; zoneIndex < zones.zones.size(); ++zoneIndex)
+					segment.zoneRowByZoneId[zones.zones[zoneIndex].zoneId] = static_cast<unsigned int>(zoneIndex + 1);
 			}
+			for (int plot = 0; plot < plotCount; ++plot)
+			{
+				if (zones.plotZones[plot] != segment.zoneSnapshot.plotZones[plot])
+				{
+					segment.dirtyPlots.insert(plot);
+					zoneChangedPlots.push_back(plot);
+				}
+			}
+			segment.zoneSnapshot.zones.swap(zones.zones);
+			segment.zoneSnapshot.neighbors.swap(zones.neighbors);
+			segment.zoneSnapshot.plotZones.swap(zones.plotZones);
+			m_zoneSnapshotDirty = false;
 		}
-		segment.zoneSnapshot.zones.swap(zones.zones);
-		segment.zoneSnapshot.neighbors.swap(zones.neighbors);
-		segment.zoneSnapshot.plotZones.swap(zones.plotZones);
-		m_zoneSnapshotDirty = false;
 	}
 	// The retained table is exactly the table this request's assignments decode
 	// against: the replacement when one is carried, and otherwise the previously
@@ -2509,7 +2522,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		std::vector<UnitMovementCountRecord> movementCounts;
 		if (!VoxRlCollectUnitRecord(*pUnit, capturingTeam, record, movementCounts))
 		{
-			return false;
+			valid = false;
+			continue;
 		}
 		record.iterationIndex = UnitIterationIndex(static_cast<PlayerTypes>((*key).owner), (*key).id);
 		UnitWireRecord wireRow;
@@ -2518,7 +2532,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		if (!VoxRlSplitUnitRecord(record, wireRow, sparseRows, &splitFailure))
 		{
 			VoxRlNoteSplitFailure(splitFailure);
-			return false;
+			valid = false;
+			continue;
 		}
 		RequestDeltaUnitRecord delta;
 		std::memcpy(&delta, &wireRow, sizeof(wireRow));
@@ -2528,8 +2543,14 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		VoxRlMirrorSparseRows(movementCounts, requestCounts);
 		std::vector<RequestUnitSparseFieldRecord> requestSparseRows;
 		VoxRlMirrorSparseRows(sparseRows, requestSparseRows);
-		if (!AppendRequestDeltaUnitRecordMovementCountRange(&delta, &data, requestCounts)) return false;
-		if (!AppendRequestDeltaUnitRecordSparseFieldRange(&delta, &data, requestSparseRows)) return false;
+		bool unitValid = true;
+		if (!AppendRequestDeltaUnitRecordMovementCountRange(&delta, &data, requestCounts)) unitValid = false;
+		if (!AppendRequestDeltaUnitRecordSparseFieldRange(&delta, &data, requestSparseRows)) unitValid = false;
+		if (!unitValid)
+		{
+			valid = false;
+			continue;
+		}
 		data.requestDeltaUnits.push_back(delta);
 		segment.lastUnitActualHealRates[*key] = record.actualHealRate;
 	}
@@ -2550,7 +2571,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		std::memset(&record, 0, sizeof(record));
 		if (!VoxRlCollectPlotRecord(*plot, record))
 		{
-			return false;
+			valid = false;
+			continue;
 		}
 		const VoxRlEntityKey plotKey(-2, *plotIndex);
 		std::map<VoxRlEntityKey, PlotCaptureRecord>::const_iterator last =
@@ -2559,7 +2581,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		{
 			continue;
 		}
-		segment.lastPlotRows[plotKey] = record;
 		changedPlots.push_back(record);
 		changedPlotIndices.push_back(*plotIndex);
 	}
@@ -2567,9 +2588,10 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	// plots it carries, so the tokens never reference another block's numbering.
 	std::vector<RequestCityReferenceRecord> requestCityReferences;
 	std::map<VoxRlCityKey, unsigned int> requestTokenByCity;
-	if (!VoxRlBuildCityReferenceTable(changedPlots, &requestCityReferences, &requestTokenByCity)) return false;
+	const bool cityReferencesValid = VoxRlBuildCityReferenceTable(changedPlots, &requestCityReferences, &requestTokenByCity);
+	if (!cityReferencesValid) valid = false;
 	data.requestCityReferences = requestCityReferences;
-	for (size_t index = 0; index < changedPlots.size(); ++index)
+	for (size_t index = 0; cityReferencesValid && index < changedPlots.size(); ++index)
 	{
 		RequestDeltaPlotCoreRecord delta;
 		std::memset(&delta, 0, sizeof(delta));
@@ -2577,7 +2599,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		if (!VoxRlEncodePlotCore(changedPlots[index], requestTokenByCity, delta, &encodeFailure))
 		{
 			VoxRlNoteSplitFailure(encodeFailure);
-			return false;
+			valid = false;
+			continue;
 		}
 		delta.plotIndex = changedPlotIndices[index];
 		data.requestDeltaPlots.push_back(delta);
@@ -2590,8 +2613,10 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		else if (encodeFailure.record != 0)
 		{
 			VoxRlNoteSplitFailure(encodeFailure);
-			return false;
+			valid = false;
+			continue;
 		}
+		segment.lastPlotRows[VoxRlEntityKey(-2, changedPlotIndices[index])] = changedPlots[index];
 	}
 
 	// Zone assignment deltas carry every plot whose native zone id changed, encoded
@@ -2636,17 +2661,19 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		}
 		CityRecord record;
 		std::memset(&record, 0, sizeof(record));
-		if (!VoxRlCollectCityRecord(*pCity, capturingPlayer, record))
-		{
-			return false;
-		}
+		const bool cityValid = VoxRlCollectCityRecord(*pCity, capturingPlayer, record);
 		record.iterationIndex = CityIterationIndex(static_cast<PlayerTypes>((*key).owner), (*key).id);
 		RequestDeltaCityRecord delta;
 		std::memcpy(&delta, &record, sizeof(record));
 		// A dirty city is the replacement marker for its complete nonzero
 		// building-resource contribution, including resource-only changes.
 		std::vector<RequestCityResourceRecord> resourceRows;
-		if (!VoxRlCollectCityResourceRows(*pCity, resourceRows)) return false;
+		const bool resourcesValid = VoxRlCollectCityResourceRows(*pCity, resourceRows);
+		if (!cityValid || !resourcesValid)
+		{
+			valid = false;
+			continue;
+		}
 		if (!AppendChangedCityReplacement(*key, delta, resourceRows, segment.lastCityRows,
 			segment.lastCityResourceRows, data)) continue;
 		segment.lastCityNeedsGarrison[*key] = record.needsGarrison ? 1 : 0;
@@ -2657,7 +2684,12 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	if (m_teamPassabilityDirty)
 	{
 		std::vector<TeamPassabilityRecord> teamPassability;
-		if (!VoxRlCollectTeamPassabilityRows(teamPassability)) return false;
+		const bool passabilityValid = VoxRlCollectTeamPassabilityRows(teamPassability);
+		if (!passabilityValid)
+		{
+			valid = false;
+			teamPassability.clear();
+		}
 		for (size_t index = 0; index < teamPassability.size(); ++index)
 		{
 			const TeamPassabilityRecord& record = teamPassability[index];
@@ -2670,7 +2702,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			segment.lastTeamPassabilityRows[static_cast<int>(record.team)] = record;
 			data.requestTeamPassability.push_back(row);
 		}
-		m_teamPassabilityDirty = false;
+		if (passabilityValid) m_teamPassabilityDirty = false;
 	}
 
 	// Known-visibility resets travel before the ordinary flips of the same
@@ -2795,7 +2827,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		std::vector<UnitModifierRecord> rows;
 		if (!VoxRlCollectUnitModifierRows(static_cast<PlayerTypes>((*key).owner), (*key).id, pUnit, rows))
 		{
-			return false;
+			valid = false;
+			continue;
 		}
 		RequestUnitModifierReplacementRecord replacement;
 		std::memset(&replacement, 0, sizeof(replacement));
@@ -2809,7 +2842,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			requestRows[index].index = rows[index].index;
 			requestRows[index].value = rows[index].value;
 		}
-		if (!AppendRequestUnitModifierReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		if (!AppendRequestUnitModifierReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
 		data.requestUnitModifierReplacements.push_back(replacement);
 	}
 	// Plagues and blocked promotions come from one native pass per unit, so the two
@@ -2843,7 +2876,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 				requestRows[index].applyOnDefense = plagues[index].applyOnDefense;
 				requestRows[index].applyChance = plagues[index].applyChance;
 			}
-			if (!AppendRequestUnitPlagueReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+			if (!AppendRequestUnitPlagueReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
 			data.requestUnitPlagueReplacements.push_back(replacement);
 		}
 		if (segment.dirtyUnitBlockedPromotions.count(*key) != 0)
@@ -2858,7 +2891,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			{
 				requestRows[index].promotion = blocked[index].promotion;
 			}
-			if (!AppendRequestUnitBlockedPromotionReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+			if (!AppendRequestUnitBlockedPromotionReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
 			data.requestUnitBlockedPromotionReplacements.push_back(replacement);
 		}
 	}
@@ -2880,7 +2913,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			requestRows[index].attackingPlayer = rows[index].attackingPlayer;
 			requestRows[index].count = rows[index].count;
 		}
-		if (!AppendRequestUnitAttackCountReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		if (!AppendRequestUnitAttackCountReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
 		data.requestUnitAttackCountReplacements.push_back(replacement);
 	}
 	for (std::set<int>::const_iterator player = segment.dirtyPlayerResistances.begin();
@@ -2898,7 +2931,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			requestRows[index].opponent = rows[index].opponent;
 			requestRows[index].dominationResistance = rows[index].dominationResistance;
 		}
-		if (!AppendRequestPlayerResistanceReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		if (!AppendRequestPlayerResistanceReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
 		data.requestPlayerResistanceReplacements.push_back(replacement);
 	}
 	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyCityAttackCounts.begin();
@@ -2919,7 +2952,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			requestRows[index].attackingPlayer = rows[index].attackingPlayer;
 			requestRows[index].count = rows[index].count;
 		}
-		if (!AppendRequestCityAttackCountReplacementRecordRowRange(&replacement, &data, requestRows)) return false;
+		if (!AppendRequestCityAttackCountReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
 		data.requestCityAttackCountReplacements.push_back(replacement);
 	}
 
@@ -2927,13 +2960,13 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	data.requestDangerEvents = segment.pendingDangerEvents;
 	// Military events may have occurred outside the observer's segment.
 	// Collection stages a prefix that is consumed only after enqueue succeeds.
-	if (!VoxRlCollectMilitaryEvents(segment.player, data)) return false;
+	if (!VoxRlCollectMilitaryEvents(segment.player, data)) valid = false;
 	if (m_config.timings)
 	{
 		segment.timings.deltaCollectCount += 1;
 		segment.timings.deltaRows += CountRequestRows(data);
 	}
-	return true;
+	return valid;
 }
 
 bool VoxRlCapture::EmitStagedRequest()

@@ -169,6 +169,7 @@ namespace
 	bool CollectCityResources(CvCity& city, std::vector<ResourceRow>& rows,
 		std::vector<int>* ordinarySupply, std::vector<int>* wonderConsumption)
 	{
+		bool valid = true;
 		const int resourceCount = GC.getNumResourceInfos();
 		std::vector<int> contribution(resourceCount, 0);
 		if (ordinarySupply != NULL && ordinarySupply->size() != static_cast<size_t>(resourceCount)) return false;
@@ -202,11 +203,11 @@ namespace
 			ZeroRecord(row);
 			row.cityOwner = static_cast<i8>(city.getOwner());
 			row.cityId = city.GetID();
-			if (!AssignCheckedI16(row.resourceType, resourceType, "CityResourceRecord", "resourceType", 0) ||
-				!AssignCheckedI16(row.contribution, contribution[resourceType], "CityResourceRecord", "contribution")) return false;
+			if (!AssignCheckedI16(row.resourceType, resourceType, "CityResourceRecord", "resourceType", 0)) valid = false;
+			if (!AssignCheckedI16(row.contribution, contribution[resourceType], "CityResourceRecord", "contribution")) valid = false;
 			rows.push_back(row);
 		}
-		return true;
+		return valid;
 	}
 
 	// Returns whether the owning team can ordinarily use this plot's resource.
@@ -243,6 +244,7 @@ namespace
 		const std::vector<int>& ordinarySupply, const std::vector<int>& wonderConsumption,
 		std::vector<ResourceRow>& rows)
 	{
+		bool valid = true;
 		const int resourceCount = GC.getNumResourceInfos();
 		if (tileSupply.size() != static_cast<size_t>(resourceCount) ||
 			ordinarySupply.size() != static_cast<size_t>(resourceCount) ||
@@ -254,11 +256,11 @@ namespace
 			ResourceRow row;
 			ZeroRecord(row);
 			row.player = static_cast<i8>(player.GetID());
-			if (!AssignCheckedI16(row.resourceType, resourceType, "PlayerResourceRecord", "resourceType", 0) ||
-				!AssignCheckedI16(row.externalContribution, external, "PlayerResourceRecord", "externalContribution")) return false;
+			if (!AssignCheckedI16(row.resourceType, resourceType, "PlayerResourceRecord", "resourceType", 0)) valid = false;
+			if (!AssignCheckedI16(row.externalContribution, external, "PlayerResourceRecord", "externalContribution")) valid = false;
 			rows.push_back(row);
 		}
-		return true;
+		return valid;
 	}
 
 	// Collects the shared balance and maintenance fields into a WORLD or REQUEST row.
@@ -296,7 +298,7 @@ namespace
 }
 
 // Reports one capture conversion or row the wire contract rejected. The generated
-// collectors and split call sites call this immediately before failing their build,
+// collectors and split call sites report each rejected value while collecting,
 // so the capture log names the reason, record, field, original value, and allowed
 // interval.
 void VoxRlNoteCaptureRangeFailure(const char* reason, const char* record, const char* field, i32 value, i32 minValue, i32 maxValue)
@@ -329,6 +331,7 @@ bool VoxRlCollectCityResourceRows(CvCity& city,
 bool VoxRlCollectPlayerResourceRows(const std::set<int>& players,
 	std::vector<RequestPlayerResourceRecord>& rows)
 {
+	bool valid = true;
 	const int resourceCount = GC.getNumResourceInfos();
 	std::vector<std::vector<int> > allTileSupply(MAX_PLAYERS, std::vector<int>(resourceCount, 0));
 	CollectTileResourceTotals(allTileSupply);
@@ -342,12 +345,12 @@ bool VoxRlCollectPlayerResourceRows(const std::set<int>& players,
 		int loop = 0;
 		for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
 		{
-			if (!CollectCityResources(*city, ignoredRows, &ordinarySupply, &wonderConsumption)) return false;
+			if (!CollectCityResources(*city, ignoredRows, &ordinarySupply, &wonderConsumption)) valid = false;
 		}
 		if (!CollectPlayerResources(player, allTileSupply[*playerId], ordinarySupply,
-			wonderConsumption, rows)) return false;
+			wonderConsumption, rows)) valid = false;
 	}
-	return true;
+	return valid;
 }
 
 // Collects one player's current balances and retained maintenance baseline.
@@ -414,6 +417,7 @@ int VoxRlResolveDamagedCityOwner(PlayerTypes actingPlayer, const STacticalAssign
 bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 	const std::vector<STacticalAssignment>& assignments, VoxRlResultData& data)
 {
+	bool valid = true;
 	data.resultAssignments.clear();
 	data.resultAssignmentDamage.clear();
 	data.resultAssignmentHealing.clear();
@@ -456,11 +460,11 @@ bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 			healing.value = static_cast<i32>((*entry).second);
 			healingRows.push_back(healing);
 		}
-		if (!AppendResultAssignmentRecordUnitDamageRange(&row, &data, damageRows) ||
-			!AppendResultAssignmentRecordUnitHealingRange(&row, &data, healingRows)) return false;
+		if (!AppendResultAssignmentRecordUnitDamageRange(&row, &data, damageRows)) valid = false;
+		if (!AppendResultAssignmentRecordUnitHealingRange(&row, &data, healingRows)) valid = false;
 		data.resultAssignments.push_back(row);
 	}
-	return true;
+	return valid;
 }
 
 // Collects one unit's modifiers and rejects schema capacities that cannot fit.
@@ -674,7 +678,8 @@ bool VoxRlCollectPlotRecord(CvPlot& plot, PlotCaptureRecord& row)
 bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row,
 	std::vector<UnitMovementCountRecord>& movementCounts)
 {
-	if (!CollectUnitRecord(unit, capturingTeam, row)) return false;
+	bool valid = true;
+	if (!CollectUnitRecord(unit, capturingTeam, row)) valid = false;
 	int lineageOwner = -1;
 	int lineageUnitId = -1;
 	VoxRlGetUnitLineage(unit, lineageOwner, lineageUnitId);
@@ -682,7 +687,7 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 	row.lineageUnitId = lineageUnitId;
 	// CvUnit::reset initializes the deployment turn to -100 before any operation.
 	if (!AssignCheckedI16(row.deployFromOperationTurn, unit.GetDeployFromOperationTurn(),
-		"UnitRecord", "deployFromOperationTurn", -100)) return false;
+		"UnitRecord", "deployFromOperationTurn", -100)) valid = false;
 #if defined(MOD_BALANCE_CORE_JFD)
 	row.setResourceConsumptionExempt(MOD_BALANCE_CORE_JFD && unit.isContractUnit());
 #else
@@ -744,7 +749,7 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 				row.allowFeaturePassable[feature / 8] = static_cast<u8>(row.allowFeaturePassable[feature / 8] | (1 << (feature % 8)));
 		}
 	}
-	return true;
+	return valid;
 }
 
 // Captures one immutable event unit before later native changes can overwrite its
@@ -883,6 +888,7 @@ bool VoxRlCollectTeamPassabilityRows(std::vector<TeamPassabilityRecord>& rows)
 bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
 	std::vector<TeamResourceRecord>& rows)
 {
+	bool valid = true;
 	if (GC.getNumResourceInfos() > VoxRlResourceCapacity) return false;
 	rows.clear();
 	rows.reserve(teams.size());
@@ -891,15 +897,16 @@ bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
 		if (*team < 0 || *team >= MAX_TEAMS) return false;
 		TeamResourceRecord row;
 		ZeroRecord(row);
-		if (!CollectTeamResourceRecord(GET_TEAM(static_cast<TeamTypes>(*team)), row)) return false;
+		if (!CollectTeamResourceRecord(GET_TEAM(static_cast<TeamTypes>(*team)), row)) valid = false;
 		rows.push_back(row);
 	}
-	return true;
+	return valid;
 }
 
 // Collects every live unit's modifiers for a complete sparse replacement.
 bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows)
 {
+	bool valid = true;
 	int loop = 0;
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
@@ -908,10 +915,10 @@ bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows)
 		for (CvUnit* pUnit = owner.firstUnit(&loop); pUnit != NULL; pUnit = owner.nextUnit(&loop))
 		{
 			if (pUnit->isDelayedDeath()) continue;
-			if (!VoxRlCollectUnitModifierRows(owner.GetID(), pUnit->GetID(), pUnit, rows)) return false;
+			if (!VoxRlCollectUnitModifierRows(owner.GetID(), pUnit->GetID(), pUnit, rows)) valid = false;
 		}
 	}
-	return true;
+	return valid;
 }
 
 // Collects all live units' plague and blocked-promotion rows for sparse capture.
@@ -975,12 +982,13 @@ void VoxRlCollectAllPlayerResistanceRows(std::vector<PlayerResistanceRecord>& ro
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
+	bool valid = true;
 	VoxRlStaticData data;
 	ZeroRecord(data.staticRules);
-	if (!CollectStaticRulesRecord(data.staticRules)) return false;
+	if (!CollectStaticRulesRecord(data.staticRules)) valid = false;
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
 	ZeroRecord(data.staticHandicapLimits);
-	if (!CollectStaticHandicapLimitsRecord(data.staticHandicapLimits)) return false;
+	if (!CollectStaticHandicapLimitsRecord(data.staticHandicapLimits)) valid = false;
 	// A mod can delete info-table rows, so the accessors return NULL for
 	// those indexes. The vectors stay index-aligned with the native tables:
 	// a missing row becomes a zeroed placeholder instead of a skip.
@@ -989,7 +997,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		TerrainInfoRecord row;
 		ZeroRecord(row);
 		CvTerrainInfo* info = GC.getTerrainInfo(static_cast<TerrainTypes>(index));
-		if (info != NULL && !CollectTerrainInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectTerrainInfoRecord(*info, row)) valid = false;
 		data.staticTerrainInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumFeatureInfos(); ++index)
@@ -997,7 +1005,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		FeatureInfoRecord row;
 		ZeroRecord(row);
 		CvFeatureInfo* info = GC.getFeatureInfo(static_cast<FeatureTypes>(index));
-		if (info != NULL && !CollectFeatureInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectFeatureInfoRecord(*info, row)) valid = false;
 		data.staticFeatureInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumRouteInfos(); ++index)
@@ -1005,7 +1013,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		RouteInfoRecord row;
 		ZeroRecord(row);
 		CvRouteInfo* info = GC.getRouteInfo(static_cast<RouteTypes>(index));
-		if (info != NULL && !CollectRouteInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectRouteInfoRecord(*info, row)) valid = false;
 		data.staticRouteInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumImprovementInfos(); ++index)
@@ -1013,7 +1021,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		ImprovementInfoRecord row;
 		ZeroRecord(row);
 		CvImprovementEntry* info = GC.getImprovementInfo(static_cast<ImprovementTypes>(index));
-		if (info != NULL && !CollectImprovementInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectImprovementInfoRecord(*info, row)) valid = false;
 		data.staticImprovementInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumResourceInfos(); ++index)
@@ -1021,7 +1029,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		ResourceInfoRecord row;
 		ZeroRecord(row);
 		CvResourceInfo* info = GC.getResourceInfo(static_cast<ResourceTypes>(index));
-		if (info != NULL && !CollectResourceInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectResourceInfoRecord(*info, row)) valid = false;
 		data.staticResourceInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumUnitInfos(); ++index)
@@ -1031,14 +1039,14 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		CvUnitEntry* entry = GC.getUnitInfo(static_cast<UnitTypes>(index));
 		if (entry != NULL)
 		{
-			if (!CollectUnitEntryInfoRecord(*entry, row)) return false;
+			if (!CollectUnitEntryInfoRecord(*entry, row)) valid = false;
 			VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(*entry, false));
 			VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(*entry, true));
 		}
 		data.staticUnitEntryInfos.push_back(row);
 	}
 	ZeroRecord(data.staticBuildIds);
-	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) return false;
+	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) valid = false;
 	// Plot indices travel as signed sixteen-bit wire values, so only maps of one through
 	// 32768 plots can record. The wide product rejects bad dimensions before any
 	// plot-indexed data is collected, and the same rule is rechecked on every load.
@@ -1049,14 +1057,14 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 			static_cast<unsigned __int64>(gridWidth) * static_cast<unsigned __int64>(gridHeight) > 32768ULL) return false;
 	}
 	ZeroRecord(data.staticMapTopology);
-	if (!CollectMapTopologyRecord(GC.getMap(), data.staticMapTopology)) return false;
+	if (!CollectMapTopologyRecord(GC.getMap(), data.staticMapTopology)) valid = false;
 	for (int index = 0; index < GC.getMap().numPlots(); ++index)
 	{
 		CvPlot* plot = GC.getMap().plotByIndex(index);
 		if (plot == NULL) return false;
 		PlotTopologyRecord row;
 		ZeroRecord(row);
-		if (!CollectPlotTopologyRecord(*plot, row)) return false;
+		if (!CollectPlotTopologyRecord(*plot, row)) valid = false;
 		data.staticPlotTopology.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumPromotionInfos(); ++index)
@@ -1064,7 +1072,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		PromotionInfoRecord row;
 		ZeroRecord(row);
 		CvPromotionEntry* info = GC.getPromotionInfo(static_cast<PromotionTypes>(index));
-		if (info != NULL && !CollectPromotionInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectPromotionInfoRecord(*info, row)) valid = false;
 		data.staticPromotionInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumProcessInfos(); ++index)
@@ -1072,7 +1080,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		ProcessInfoRecord row;
 		ZeroRecord(row);
 		CvProcessInfo* info = GC.getProcessInfo(static_cast<ProcessTypes>(index));
-		if (info != NULL && !CollectProcessInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectProcessInfoRecord(*info, row)) valid = false;
 		data.staticProcessInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumCityEventChoiceInfos(); ++index)
@@ -1080,14 +1088,14 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		CityEventChoiceInfoRecord row;
 		ZeroRecord(row);
 		CvModEventCityChoiceInfo* info = GC.getCityEventChoiceInfo(static_cast<CityEventChoiceTypes>(index));
-		if (info != NULL && !CollectCityEventChoiceInfoRecord(*info, row)) return false;
+		if (info != NULL && !CollectCityEventChoiceInfoRecord(*info, row)) valid = false;
 		data.staticCityEventChoiceInfos.push_back(row);
 	}
 	for (int index = 0; index < GC.getNumUnitClassInfos(); ++index)
 	{
 		StaticUnitClassInfoRecord row;
 		ZeroRecord(row);
-		if (!CollectStaticUnitClassInfoRecord(index, row)) return false;
+		if (!CollectStaticUnitClassInfoRecord(index, row)) valid = false;
 		data.staticUnitClassInfos.push_back(row);
 	}
 	for (int formationIndex = 0; formationIndex < GC.getNumMultiUnitFormationInfos(); ++formationIndex)
@@ -1111,7 +1119,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 			slot.required = native.m_requiredSlot ? 1 : 0;
 			slots.push_back(slot);
 		}
-		if (!AppendFormationInfoRecordSlotRange(&row, &data, slots)) return false;
+		if (!AppendFormationInfoRecordSlotRange(&row, &data, slots)) valid = false;
 		data.staticFormationInfos.push_back(row);
 	}
 	for (int unitType = 0; unitType < GC.getNumUnitInfos(); ++unitType)
@@ -1126,9 +1134,9 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 			ZeroRecord(row);
 			row.unitType = unitType;
 			if (!AssignCheckedI16(row.resourceType, resourceType,
-				"UnitResourceRequirementRecord", "resourceType", 0) ||
-				!AssignCheckedI16(row.quantity, quantity,
-				"UnitResourceRequirementRecord", "quantity", 0)) return false;
+				"UnitResourceRequirementRecord", "resourceType", 0)) valid = false;
+			if (!AssignCheckedI16(row.quantity, quantity,
+				"UnitResourceRequirementRecord", "quantity", 0)) valid = false;
 			data.staticUnitResourceRequirements.push_back(row);
 		}
 	}
@@ -1142,28 +1150,34 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 			ImprovementResourceCompatibilityRecord row;
 			ZeroRecord(row);
 			if (!AssignCheckedI16(row.improvementType, improvementType,
-				"ImprovementResourceCompatibilityRecord", "improvementType", 0) ||
-				!AssignCheckedI16(row.resourceType, resourceType,
-				"ImprovementResourceCompatibilityRecord", "resourceType", 0)) return false;
+				"ImprovementResourceCompatibilityRecord", "improvementType", 0)) valid = false;
+			if (!AssignCheckedI16(row.resourceType, resourceType,
+				"ImprovementResourceCompatibilityRecord", "resourceType", 0)) valid = false;
 			data.staticImprovementResourceCompatibilities.push_back(row);
 		}
 	}
+	if (!valid) return false;
 	return data.Write(identity, storage, length);
 }
 
 // Collects the native zone table and assignments without advancing its lifecycle.
 bool VoxRlCollectZones(CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapshot)
 {
+	bool valid = true;
 	snapshot.zones.clear();
 	snapshot.neighbors.clear();
 	const int zoneCount = zoneMap != NULL ? zoneMap->GetNumZonesWithoutRefresh() : 0;
 	for (int zoneIndex = 0; zoneIndex < zoneCount; ++zoneIndex)
 	{
 		const CvTacticalDominanceZone* zone = zoneMap->GetZoneByIndexWithoutRefresh(zoneIndex);
-		if (zone == NULL) return false;
+		if (zone == NULL)
+		{
+			valid = false;
+			continue;
+		}
 		ZoneRecord row;
 		ZeroRecord(row);
-		if (!CollectZoneRecord(*zone, row)) return false;
+		if (!CollectZoneRecord(*zone, row)) valid = false;
 		row.avgX = static_cast<i32>(zone->GetAverageX());
 		row.avgY = static_cast<i32>(zone->GetAverageY());
 		CvCity* city = zone->GetZoneCity();
@@ -1187,7 +1201,7 @@ bool VoxRlCollectZones(CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapsh
 	snapshot.plotZones.resize(plotCount);
 	for (int plot = 0; plot < plotCount; ++plot)
 		snapshot.plotZones[plot] = zoneMap != NULL ? zoneMap->GetDominanceZoneIDWithoutRefresh(plot) : -1;
-	return true;
+	return valid;
 }
 
 // Collects native WORLD state in stable owner and plot order for the generated writer.
@@ -1196,6 +1210,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
 	std::vector<TeamResourceRecord>& teamResourceSnapshot, VoxRlWorldBuildTimings* timings)
 {
+	bool valid = true;
 	CvMap& map = GC.getMap();
 	const int plotCount = map.numPlots();
 	// The world build rechecks the map bound from the static generation, because capture
@@ -1241,9 +1256,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	if (danger == NULL) return false;
 	DangerPlayerRecord dangerRow;
 	ZeroRecord(dangerRow);
-	if (!CollectDangerPlayerRecord(capturingPlayer, dangerRow)) return false;
+	if (!CollectDangerPlayerRecord(capturingPlayer, dangerRow)) valid = false;
 	if (!AssignCheckedI16(dangerRow.turnBuilt, danger->GetTurnBuilt(),
-		"DangerPlayerRecord", "turnBuilt", -1)) return false;
+		"DangerPlayerRecord", "turnBuilt", -1)) valid = false;
 	dangerRow.dirty = danger->IsDirty() ? 1 : 0;
 	std::vector<KnownAttackerRecord> known;
 	for (UnitSet::const_iterator entry = danger->GetKnownUnits().begin(); entry != danger->GetKnownUnits().end(); ++entry)
@@ -1263,11 +1278,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		row.unitId = static_cast<i32>(entry->second);
 		vanished.push_back(row);
 	}
-	if (!AppendDangerPlayerRecordKnownUnitRange(&dangerRow, &data, known) ||
-		!AppendDangerPlayerRecordVanishedUnitRange(&dangerRow, &data, vanished)) return false;
+	if (!AppendDangerPlayerRecordKnownUnitRange(&dangerRow, &data, known)) valid = false;
+	if (!AppendDangerPlayerRecordVanishedUnitRange(&dangerRow, &data, vanished)) valid = false;
 	data.worldDangerPlayers.push_back(dangerRow);
 
-	if (!VoxRlCollectAllUnitModifierRows(data.worldUnitModifiers)) return false;
+	if (!VoxRlCollectAllUnitModifierRows(data.worldUnitModifiers)) valid = false;
 	VoxRlCollectAllUnitPlagueRows(data.worldUnitPlagues, data.worldUnitBlockedPromotions);
 	VoxRlCollectAllUnitAttackCountRows(data.worldUnitAttackCounts);
 	VoxRlCollectAllCityAttackCountRows(data.worldCityAttackCounts);
@@ -1282,7 +1297,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			if (major.isMinorCiv() || major.isBarbarian()) continue;
 			MinorRelationRecord row;
 			ZeroRecord(row);
-			if (!CollectMinorRelationRecord(minor, *minor.GetMinorCivAI(), minor.GetID(), major.GetID(), row)) return false;
+			if (!CollectMinorRelationRecord(minor, *minor.GetMinorCivAI(), minor.GetID(), major.GetID(), row)) valid = false;
 			data.worldMinorRelations.push_back(row);
 		}
 	}
@@ -1294,7 +1309,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	// Zones are the checkpoint table. The no-refresh accessors never trigger
 	// the native rebuild, so capture cannot fire the tactical-time zone
 	// recompute ahead of its normal schedule.
-	if (!VoxRlCollectZones(zoneMap, zones)) return false;
+	if (!VoxRlCollectZones(zoneMap, zones)) valid = false;
 	data.worldZones = zones.zones;
 	data.worldZoneNeighbors = zones.neighbors;
 	// Each plot's zone membership is encoded as a one-based index into the ordered table.
@@ -1306,6 +1321,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	ScopedWorldTiming plotUnitTiming(timings != NULL ? &timings->plotUnitNs : NULL);
 	std::vector<PlotCaptureRecord> plotCaptures;
 	plotCaptures.reserve(static_cast<size_t>(plotCount));
+	std::vector<bool> validPlots;
+	validPlots.reserve(static_cast<size_t>(plotCount));
+	bool allPlotsValid = true;
 	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 	{
 		CvPlot* plot = map.plotByIndex(plotIndex);
@@ -1314,15 +1332,21 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		// rows, and the city tokens are encoded from it after every plot is collected.
 		PlotCaptureRecord row;
 		ZeroRecord(row);
-		if (!VoxRlCollectPlotRecord(*plot, row)) return false;
+		const bool plotValid = VoxRlCollectPlotRecord(*plot, row);
+		if (!plotValid)
+		{
+			valid = false;
+			allPlotsValid = false;
+		}
 		plotCaptures.push_back(row);
+		validPlots.push_back(plotValid);
 		const i32 plotZone = zones.plotZones[plotIndex];
 		unsigned int zoneTableIndex = 0;
 		if (plotZone != -1)
 		{
 			std::map<int, unsigned int>::const_iterator zoneRow = zoneRowByZoneId.find(plotZone);
-			if (zoneRow == zoneRowByZoneId.end()) return false;
-			zoneTableIndex = zoneRow->second;
+			if (zoneRow == zoneRowByZoneId.end()) valid = false;
+			else zoneTableIndex = zoneRow->second;
 		}
 		if (wideZoneIndices)
 		{
@@ -1350,7 +1374,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			UnitRecord unitRow;
 			ZeroRecord(unitRow);
 			std::vector<UnitMovementCountRecord> movementCounts;
-			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow, movementCounts)) return false;
+			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow, movementCounts))
+			{
+				valid = false;
+				continue;
+			}
 			std::map<VoxRlEntityKey, unsigned int>::const_iterator iteration =
 				iterationByUnit.find(VoxRlEntityKey(static_cast<int>(unit->getOwner()), unit->GetID()));
 			if (iteration == iterationByUnit.end()) return false;
@@ -1363,10 +1391,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			if (!VoxRlSplitUnitRecord(unitRow, wireRow, sparseRows, &splitFailure))
 			{
 				VoxRlNoteSplitFailure(splitFailure);
-				return false;
+				valid = false;
+				continue;
 			}
-			if (!AppendUnitWireRecordMovementCountRange(&wireRow, &data, movementCounts)) return false;
-			if (!AppendUnitWireRecordSparseFieldRange(&wireRow, &data, sparseRows)) return false;
+			if (!AppendUnitWireRecordMovementCountRange(&wireRow, &data, movementCounts)) valid = false;
+			if (!AppendUnitWireRecordSparseFieldRange(&wireRow, &data, sparseRows)) valid = false;
 			units.push_back(wireRow);
 		}
 		// Unit rows append in captured plot order; the loader reconstructs each
@@ -1377,10 +1406,20 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	// the block, then each plot's core row and optional counter row encode against it.
 	std::vector<CityReferenceRecord> cityReferences;
 	std::map<VoxRlCityKey, unsigned int> tokenByCity;
-	if (!VoxRlBuildCityReferenceTable(plotCaptures, &cityReferences, &tokenByCity)) return false;
+	// Invalid plot records keep their indices but never enter the plot codecs.
+	std::vector<PlotCaptureRecord> validPlotCaptures;
+	if (!allPlotsValid)
+	{
+		for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
+			if (validPlots[plotIndex]) validPlotCaptures.push_back(plotCaptures[plotIndex]);
+	}
+	const bool cityReferencesValid = VoxRlBuildCityReferenceTable(
+		allPlotsValid ? plotCaptures : validPlotCaptures, &cityReferences, &tokenByCity);
+	if (!cityReferencesValid) valid = false;
 	data.worldCityReferences = cityReferences;
 	for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 	{
+		if (!validPlots[plotIndex] || !cityReferencesValid) continue;
 		PlotCoreRecord core;
 		ZeroRecord(core);
 		PlotSparseCountersRecord counters;
@@ -1389,22 +1428,23 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		if (!VoxRlEncodePlotCore(plotCaptures[plotIndex], tokenByCity, core, &encodeFailure))
 		{
 			VoxRlNoteSplitFailure(encodeFailure);
-			return false;
+			valid = false;
 		}
-		if (VoxRlEncodePlotCounters(plotCaptures[plotIndex], plotIndex, counters, &encodeFailure))
+		VoxRlFieldRangeFailure counterFailure;
+		if (VoxRlEncodePlotCounters(plotCaptures[plotIndex], plotIndex, counters, &counterFailure))
 		{
 			data.worldPlotSparseCounters.push_back(counters);
 		}
-		else if (encodeFailure.record != 0)
+		else if (counterFailure.record != 0)
 		{
-			VoxRlNoteSplitFailure(encodeFailure);
-			return false;
+			VoxRlNoteSplitFailure(counterFailure);
+			valid = false;
 		}
 		data.worldPlotCore.push_back(core);
 	}
-	if (!VoxRlCollectTeamPassabilityRows(data.worldTeamPassability)) return false;
+	if (!VoxRlCollectTeamPassabilityRows(data.worldTeamPassability)) valid = false;
 	teamPassabilitySnapshot = data.worldTeamPassability;
-	if (data.worldUnits.size() != iterationByUnit.size()) return false;
+	if (data.worldUnits.size() != iterationByUnit.size()) valid = false;
 	if (timings != NULL) timings->unitCount = static_cast<unsigned int>(data.worldUnits.size());
 	plotUnitTiming.Stop();
 
@@ -1455,7 +1495,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			for (int kind = 0; kind < 4; ++kind)
 				if (bits[kind]) (*bitsets[kind])[teamIndex * bitBytes + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));
 		}
-		if (!AppendPlotTeamRecordRevealedOverrideRange(&row, &data, overrides)) return false;
+		if (!AppendPlotTeamRecordRevealedOverrideRange(&row, &data, overrides)) valid = false;
 		data.worldPlotTeams.push_back(row);
 	}
 	if (!hasInvisibleVisibility) data.worldInvisibleVisibleBits.clear();
@@ -1481,21 +1521,21 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		{
 			CityRecord row;
 			ZeroRecord(row);
-			if (!VoxRlCollectCityRecord(*city, capturingPlayer, row)) return false;
+			if (!VoxRlCollectCityRecord(*city, capturingPlayer, row)) valid = false;
 			row.iterationIndex = iteration++;
 			data.worldCities.push_back(row);
 			if (!CollectCityResources(*city, data.worldCityResources,
-				&ordinaryBuildingSupply[player], &wonderResourceConsumption[player])) return false;
+				&ordinaryBuildingSupply[player], &wonderResourceConsumption[player])) valid = false;
 		}
 		PlayerRecord row;
 		ZeroRecord(row);
-		if (!CollectPlayerRecord(owner, capturingPlayer, row)) return false;
+		if (!CollectPlayerRecord(owner, capturingPlayer, row)) valid = false;
 		row.id = static_cast<i8>(player);
 		data.worldPlayers.push_back(row);
 		if (!CollectPlayerResources(owner, tileResourceTotals[player], ordinaryBuildingSupply[player],
-			wonderResourceConsumption[player], data.worldPlayerResources)) return false;
+			wonderResourceConsumption[player], data.worldPlayerResources)) valid = false;
 		PlayerEconomicsRecord economics;
-		if (!CollectPlayerEconomics(owner, economics)) return false;
+		if (!CollectPlayerEconomics(owner, economics)) valid = false;
 		data.worldPlayerEconomics.push_back(economics);
 	}
 	for (std::set<int>::const_iterator team = recordedTeams.begin(); team != recordedTeams.end(); ++team)
@@ -1505,10 +1545,10 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		CvTeam& teamRecord = GET_TEAM(static_cast<TeamTypes>(*team));
 		TeamRecord row;
 		ZeroRecord(row);
-		if (!CollectTeamRecord(teamRecord, row)) return false;
+		if (!CollectTeamRecord(teamRecord, row)) valid = false;
 		data.worldTeams.push_back(row);
 	}
-	if (!VoxRlCollectTeamResourceRows(recordedTeams, data.worldTeamResources)) return false;
+	if (!VoxRlCollectTeamResourceRows(recordedTeams, data.worldTeamResources)) valid = false;
 	teamResourceSnapshot = data.worldTeamResources;
 	for (size_t team = 0; team < aliveTeams.size(); ++team)
 		for (size_t other = 0; other < aliveTeams.size(); ++other)
@@ -1516,7 +1556,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			if (team == other) continue;
 			TeamRelationRecord row;
 			ZeroRecord(row);
-			if (!CollectTeamRelationRecord(GET_TEAM(aliveTeams[team]), aliveTeams[other], capturingPlayer, row)) return false;
+			if (!CollectTeamRelationRecord(GET_TEAM(aliveTeams[team]), aliveTeams[other], capturingPlayer, row)) valid = false;
 			data.worldTeamRelations.push_back(row);
 		}
 	for (size_t player = 0; player < alivePlayers.size(); ++player)
@@ -1536,11 +1576,12 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			entry.plotIndex = static_cast<i16>(nativeEntries[index].second);
 			entries.push_back(entry);
 		}
-		if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) return false;
+		if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) valid = false;
 		data.worldInterceptorCaches.push_back(row);
 	}
 	if (timings != NULL) timings->cityCount = static_cast<unsigned int>(data.worldCities.size());
 	entityRelationTiming.Stop();
+	if (!valid) return false;
 	ScopedWorldTiming serializeTiming(timings != NULL ? &timings->serializeNs : NULL);
 	const bool written = data.Write(identity, storage, length);
 	serializeTiming.Stop();
@@ -1552,13 +1593,14 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
+	bool valid = true;
 	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
 	CvMilitaryAI* military = capturing.GetMilitaryAI();
 	if (military == NULL) return false;
 	VoxRlCampaignData data;
 	CampaignHeaderRecord& header = data.campaignHeader;
 	ZeroRecord(header);
-	if (!CollectCampaignHeaderRecord(*military, capturing, header)) return false;
+	if (!CollectCampaignHeaderRecord(*military, capturing, header)) valid = false;
 	header.alignedWorldGeneration = alignedWorldGeneration;
 	header.alignedNextDeltaSequence = alignedNextDeltaSequence;
 	InitializeBaselineMilitaryFlavors(
@@ -1596,12 +1638,20 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		// The three plot references carry the optional -1 sentinel; the checked
 		// conversion rejects anything outside the sixteen-bit plot domain.
 		VoxRlFieldRangeFailure plotFailure;
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iMusterPlotIndex, &row.musterPlotIndex, &plotFailure) ||
-			!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iStagingPlotIndex, &row.stagingPlotIndex, &plotFailure) ||
-			!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iTargetPlotIndex, &row.targetPlotIndex, &plotFailure))
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iMusterPlotIndex, &row.musterPlotIndex, &plotFailure))
 		{
 			VoxRlNoteSplitFailure(plotFailure);
-			return false;
+			valid = false;
+		}
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iStagingPlotIndex, &row.stagingPlotIndex, &plotFailure))
+		{
+			VoxRlNoteSplitFailure(plotFailure);
+			valid = false;
+		}
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iTargetPlotIndex, &row.targetPlotIndex, &plotFailure))
+		{
+			VoxRlNoteSplitFailure(plotFailure);
+			valid = false;
 		}
 		row.pathLength = static_cast<i32>(attackTargets[index].m_iPathLength);
 		row.approachScore = static_cast<i32>(attackTargets[index].m_iApproachScore);
@@ -1620,7 +1670,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.cityId = city != NULL ? static_cast<i32>(city->GetID()) : static_cast<i32>(-1);
 		exposedRows.push_back(row);
 	}
-	if (!AppendCampaignHeaderRecordExposedCityRange(&data, exposedRows)) return false;
+	if (!AppendCampaignHeaderRecordExposedCityRange(&data, exposedRows)) valid = false;
 	std::vector<CvCity*> threatened = capturing.GetThreatenedCities(false);
 	std::vector<CampaignThreatenedCityRecord> threatenedRows;
 	for (size_t index = 0; index < threatened.size(); ++index)
@@ -1631,7 +1681,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.cityId = threatened[index] != NULL ? static_cast<i32>(threatened[index]->GetID()) : -1;
 		threatenedRows.push_back(row);
 	}
-	if (!AppendCampaignHeaderRecordThreatenedCityRange(&data, threatenedRows)) return false;
+	if (!AppendCampaignHeaderRecordThreatenedCityRange(&data, threatenedRows)) valid = false;
 	std::vector<CvCity*> coastal = capturing.GetThreatenedCities(true);
 	std::vector<CampaignCoastalThreatenedCityRecord> coastalRows;
 	for (size_t index = 0; index < coastal.size(); ++index)
@@ -1642,7 +1692,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.cityId = coastal[index] != NULL ? static_cast<i32>(coastal[index]->GetID()) : -1;
 		coastalRows.push_back(row);
 	}
-	if (!AppendCampaignHeaderRecordCoastalThreatenedCityRange(&data, coastalRows)) return false;
+	if (!AppendCampaignHeaderRecordCoastalThreatenedCityRange(&data, coastalRows)) valid = false;
 	for (size_t index = 0; index < capturing.getNumAIOperations(); ++index)
 	{
 		CvAIOperation* operation = capturing.getAIOperationByIndex(index);
@@ -1660,11 +1710,11 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.targetX = static_cast<i32>(operation->GetTargetX());
 		row.targetY = static_cast<i32>(operation->GetTargetY());
 		if (!AssignCheckedI16(row.turnStarted, operation->GetTurnStarted(),
-			"CampaignOperationRecord", "turnStarted", -1)) return false;
+			"CampaignOperationRecord", "turnStarted", -1)) valid = false;
 		row.distanceMusterToTarget = static_cast<i32>(operation->GetDistanceMusterToTarget());
 		row.abortReason = static_cast<i8>(operation->GetAbortReason());
 		if (!AssignCheckedI16(row.lastTurnMoved, operation->GetLastTurnMoved(),
-			"CampaignOperationRecord", "lastTurnMoved", -1)) return false;
+			"CampaignOperationRecord", "lastTurnMoved", -1)) valid = false;
 		std::vector<CampaignOperationArmyIdRecord> armyIds;
 		const std::vector<int>& ids = operation->GetArmyIDs();
 		for (size_t army = 0; army < ids.size(); ++army)
@@ -1674,7 +1724,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 			id.armyId = static_cast<i32>(ids[army]);
 			armyIds.push_back(id);
 		}
-		if (!AppendCampaignOperationRecordArmyIdRange(&row, &data, armyIds)) return false;
+		if (!AppendCampaignOperationRecordArmyIdRange(&row, &data, armyIds)) valid = false;
 		data.campaignOperations.push_back(row);
 		for (size_t army = 0; army < ids.size(); ++army)
 		{
@@ -1700,10 +1750,10 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 				entry.required = nativeSlots[slot].IsRequired() ? 1 : 0;
 				for (size_t history = 0; history < VoxRlCheckpointhistoryCapacity; ++history)
 					if (!AssignCheckedI16(entry.checkpointTurns[history], nativeSlots[slot].GetTurnsToCheckpoint(history),
-						"CampaignFormationEntryRecord", "checkpointTurns", -1)) return false;
+						"CampaignFormationEntryRecord", "checkpointTurns", -1)) valid = false;
 				slots.push_back(entry);
 			}
-			if (!AppendCampaignArmyRecordFormationRange(&armyRow, &data, slots)) return false;
+			if (!AppendCampaignArmyRecordFormationRange(&armyRow, &data, slots)) valid = false;
 			data.campaignArmies.push_back(armyRow);
 		}
 	}
@@ -1715,7 +1765,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		if (zone == NULL) return false;
 		CampaignZoneRecord row;
 		ZeroRecord(row);
-		CollectCampaignZoneRecord(*zone, row);
+		if (!CollectCampaignZoneRecord(*zone, row)) valid = false;
 		row.avgX = static_cast<i32>(zone->GetAverageX());
 		row.avgY = static_cast<i32>(zone->GetAverageY());
 		CvCity* city = zone->GetZoneCity();
@@ -1730,7 +1780,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 			entry.zoneId = static_cast<i32>(nativeNeighbors[neighbor]);
 			neighbors.push_back(entry);
 		}
-		if (!AppendCampaignZoneRecordNeighborRange(&row, &data, neighbors)) return false;
+		if (!AppendCampaignZoneRecordNeighborRange(&row, &data, neighbors)) valid = false;
 		data.campaignZones.push_back(row);
 	}
 	const std::vector<CvFocusArea>& focusAreas = capturing.GetTacticalAI()->GetFocusAreas();
@@ -1738,7 +1788,11 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	{
 		CvPlot* center = GC.getMap().plot(focusAreas[index].m_iX, focusAreas[index].m_iY);
 		if (center == NULL || focusAreas[index].m_iRadius < 0 || focusAreas[index].m_iRadius > 255 ||
-			focusAreas[index].m_iLastTurn < -1 || focusAreas[index].m_iLastTurn > 32767) return false;
+			focusAreas[index].m_iLastTurn < -1 || focusAreas[index].m_iLastTurn > 32767)
+		{
+			valid = false;
+			continue;
+		}
 		CampaignFocusAreaRecord row;
 		ZeroRecord(row);
 		row.centerPlotIndex = static_cast<i16>(center->GetPlotIndex());
@@ -1747,6 +1801,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		data.campaignFocusAreas.push_back(row);
 	}
 	VoxRlCollectPendingMilitaryTransfers(capturingPlayer, data);
+	if (!valid) return false;
 	return data.Write(identity, storage, length);
 }
 
@@ -1757,6 +1812,7 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 	unsigned char kind, unsigned char changeCause, unsigned char invocationResult,
 	signed char abortReason, VoxRlRequestData& data)
 {
+	bool valid = true;
 	RequestOperationRecord record;
 	ZeroRecord(record);
 	record.kind = kind;
@@ -1774,7 +1830,6 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 	}
 	const int turnStarted = operation.GetTurnStarted();
 	const int lastTurnMoved = operation.GetLastTurnMoved();
-	if (turnStarted < -1 || turnStarted > 32767 || lastTurnMoved < -1 || lastTurnMoved > 32767) return false;
 	RequestOperationVersionRecord version;
 	ZeroRecord(version);
 	version.owner = static_cast<i8>(operation.GetOwner());
@@ -1787,12 +1842,14 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 	version.musterY = operation.GetMusterY();
 	version.targetX = operation.GetTargetX();
 	version.targetY = operation.GetTargetY();
-	version.turnStarted = static_cast<i16>(turnStarted);
+	if (!AssignCheckedI16(version.turnStarted, turnStarted,
+		"RequestOperationVersionRecord", "turnStarted", -1)) valid = false;
 	version.distanceMusterToTarget = operation.GetDistanceMusterToTarget();
 	version.abortReason = static_cast<i8>(operation.GetAbortReason());
-	version.lastTurnMoved = static_cast<i16>(lastTurnMoved);
+	if (!AssignCheckedI16(version.lastTurnMoved, lastTurnMoved,
+		"RequestOperationVersionRecord", "lastTurnMoved", -1)) valid = false;
 	std::vector<RequestOperationVersionRecord> versions(1, version);
-	if (!AppendRequestOperationRecordOperationVersionRange(&record, &data, versions)) return false;
+	if (!AppendRequestOperationRecordOperationVersionRange(&record, &data, versions)) valid = false;
 
 	std::vector<RequestArmyVersionRecord> armies;
 	std::vector<RequestFormationEntryVersionRecord> slots;
@@ -1829,22 +1886,23 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 			for (size_t history = 0; history < VoxRlCheckpointhistoryCapacity; ++history)
 			{
 				const int estimate = nativeSlots[slotIndex].GetTurnsToCheckpoint(history);
-				if (estimate < -1 || estimate > 32767) return false;
-				slot.checkpointTurns[history] = static_cast<i16>(estimate);
+				if (!AssignCheckedI16(slot.checkpointTurns[history], estimate,
+					"RequestFormationEntryVersionRecord", "checkpointTurns", -1)) valid = false;
 			}
 			slots.push_back(slot);
 		}
 	}
-	if (!AppendRequestOperationRecordArmyVersionRange(&record, &data, armies) ||
-		!AppendRequestOperationRecordFormationEntryVersionRange(&record, &data, slots)) return false;
+	if (!AppendRequestOperationRecordArmyVersionRange(&record, &data, armies)) valid = false;
+	if (!AppendRequestOperationRecordFormationEntryVersionRange(&record, &data, slots)) valid = false;
 	data.requestOperations.push_back(record);
-	return true;
+	return valid;
 }
 
 // Binds staged request children through their declared generated range helpers.
 bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData& data,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
+	bool valid = true;
 	// Preserve every section, including parent rows and their request-local children.
 	// Section row counts now replace the header helpers that used to copy these rows.
 	VoxRlRequestData output = data;
@@ -1862,10 +1920,11 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 			entries.push_back(data.requestInterceptorEntries[entryCursor]);
 			++entryCursor;
 		}
-		if (!AppendRequestInterceptorReplacementRecordEntryRange(&replacement, &output, entries)) return false;
+		if (!AppendRequestInterceptorReplacementRecordEntryRange(&replacement, &output, entries)) valid = false;
 	}
 	if (entryCursor != data.requestInterceptorEntries.size()) return false;
 	// The sparse replacement tiling and identity consistency are enforced by the
 	// generated request validator, which runs inside Write.
+	if (!valid) return false;
 	return output.Write(identity, storage, length);
 }

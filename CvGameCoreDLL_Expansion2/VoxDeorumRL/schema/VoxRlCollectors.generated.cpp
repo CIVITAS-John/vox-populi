@@ -9,6 +9,7 @@
 
 bool CollectStaticRulesRecord(StaticRulesRecord& out)
 {
+    bool valid = true;
     // GD_INT_GET define.
     out.barbarianCampImprovement = static_cast<i32>(GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT));
     // GD_INT_GET define.
@@ -37,9 +38,12 @@ bool CollectStaticRulesRecord(StaticRulesRecord& out)
         if (checkedTacticalMapTempZoneTurns < 0 || checkedTacticalMapTempZoneTurns > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "StaticRulesRecord", "tacticalMapTempZoneTurns", checkedTacticalMapTempZoneTurns, 0, 32767);
-            return false;
+            valid = false;
         }
-        out.tacticalMapTempZoneTurns = static_cast<i16>(checkedTacticalMapTempZoneTurns);
+        else
+        {
+            out.tacticalMapTempZoneTurns = static_cast<i16>(checkedTacticalMapTempZoneTurns);
+        }
     }
     // Base city air-unit capacity.
     {
@@ -61,9 +65,12 @@ bool CollectStaticRulesRecord(StaticRulesRecord& out)
         if (checkedArtifactResource < -1 || checkedArtifactResource > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "StaticRulesRecord", "artifactResource", checkedArtifactResource, -1, 32767);
-            return false;
+            valid = false;
         }
-        out.artifactResource = static_cast<i16>(checkedArtifactResource);
+        else
+        {
+            out.artifactResource = static_cast<i16>(checkedArtifactResource);
+        }
     }
     // Hidden resource identifier excluded from ordinary improvement connection.
     {
@@ -71,9 +78,12 @@ bool CollectStaticRulesRecord(StaticRulesRecord& out)
         if (checkedHiddenArtifactResource < -1 || checkedHiddenArtifactResource > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "StaticRulesRecord", "hiddenArtifactResource", checkedHiddenArtifactResource, -1, 32767);
-            return false;
+            valid = false;
         }
-        out.hiddenArtifactResource = static_cast<i16>(checkedHiddenArtifactResource);
+        else
+        {
+            out.hiddenArtifactResource = static_cast<i16>(checkedHiddenArtifactResource);
+        }
     }
     // GD_INT_GET define.
     {
@@ -396,9 +406,12 @@ bool CollectStaticRulesRecord(StaticRulesRecord& out)
         if (checkedBarbarianReleaseTurn < -1 || checkedBarbarianReleaseTurn > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "StaticRulesRecord", "barbarianReleaseTurn", checkedBarbarianReleaseTurn, -1, 32767);
-            return false;
+            valid = false;
         }
-        out.barbarianReleaseTurn = static_cast<i16>(checkedBarbarianReleaseTurn);
+        else
+        {
+            out.barbarianReleaseTurn = static_cast<i16>(checkedBarbarianReleaseTurn);
+        }
     }
     // GD_INT_GET define; the base fortification bonus per turn the fortify modifier reads.
     {
@@ -440,9 +453,12 @@ bool CollectStaticRulesRecord(StaticRulesRecord& out)
         if (checkedFogDefaultDanger < 0 || checkedFogDefaultDanger > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "StaticRulesRecord", "fogDefaultDanger", checkedFogDefaultDanger, 0, 255);
-            return false;
+            valid = false;
         }
-        out.fogDefaultDanger = static_cast<u8>(checkedFogDefaultDanger);
+        else
+        {
+            out.fogDefaultDanger = static_cast<u8>(checkedFogDefaultDanger);
+        }
     }
     // Compile-time mod flag.
     out.modCoreDelayedVisibility = (MOD_CORE_DELAYED_VISIBILITY) ? 1 : 0;
@@ -492,22 +508,24 @@ bool CollectStaticRulesRecord(StaticRulesRecord& out)
     out.modBalanceCityStrengthSwitch = (MOD_BALANCE_CITY_STRENGTH_SWITCH) ? 1 : 0;
     // Compile-time mod flag; gates the permanent-pantheon belief term of the city range-strike modifier.
     out.modBalancePermanentPantheons = (MOD_BALANCE_PERMANENT_PANTHEONS) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectStaticHandicapLimitsRecord(StaticHandicapLimitsRecord& out)
 {
+    bool valid = true;
     // Active handicap value.
     out.maxBranches = static_cast<i32>(GC.getGame().getHandicapInfo().getTacticalSimMaxBranches());
     // Active handicap value.
     out.maxChoicesPerUnit = static_cast<i32>(GC.getGame().getHandicapInfo().getTacticalSimMaxChoicesPerUnit());
     // Active handicap value.
     out.maxCompletedPositions = static_cast<i32>(GC.getGame().getHandicapInfo().getTacticalSimMaxCompletedPositions());
-    return true;
+    return valid;
 }
 
 bool CollectTerrainInfoRecord(CvTerrainInfo& terrainInfo, TerrainInfoRecord& out)
 {
+    bool valid = true;
     // Terrain movement cost.
     {
         i32 clampedMovementCost = static_cast<i32>(terrainInfo.getMovementCost());
@@ -552,11 +570,12 @@ bool CollectTerrainInfoRecord(CvTerrainInfo& terrainInfo, TerrainInfoRecord& out
     }
     // Terrain impassability.
     out.impassable = (terrainInfo.isImpassable()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectFeatureInfoRecord(CvFeatureInfo& featureInfo, FeatureInfoRecord& out)
 {
+    bool valid = true;
     // Feature movement cost.
     {
         i32 clampedMovementCost = static_cast<i32>(featureInfo.getMovementCost());
@@ -598,11 +617,12 @@ bool CollectFeatureInfoRecord(CvFeatureInfo& featureInfo, FeatureInfoRecord& out
     out.isVolcano = (featureInfo.GetType() == CvString("FEATURE_VOLCANO")) ? 1 : 0;
     // Natural-wonder flag; the trait area-effect plot derivation reads it.
     out.isNaturalWonder = (featureInfo.IsNaturalWonder()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectRouteInfoRecord(CvRouteInfo& routeInfo, RouteInfoRecord& out)
 {
+    bool valid = true;
     // Route movement cost.
     {
         i32 clampedMovementCost = static_cast<i32>(routeInfo.getMovementCost());
@@ -617,11 +637,12 @@ bool CollectRouteInfoRecord(CvRouteInfo& routeInfo, RouteInfoRecord& out)
         if (clampedFlatMovementCost > 32767) clampedFlatMovementCost = 32767;
         out.flatMovementCost = static_cast<i16>(clampedFlatMovementCost);
     }
-    return true;
+    return valid;
 }
 
 bool CollectImprovementInfoRecord(CvImprovementEntry& improvementInfo, ImprovementInfoRecord& out)
 {
+    bool valid = true;
     // Positive values activate the Feitoria owner-war rule.
     out.luxuryCopiesSiphonedFromMinor = static_cast<i32>(improvementInfo.GetLuxuryCopiesSiphonedFromMinor());
     // Improvement defense modifier.
@@ -650,26 +671,31 @@ bool CollectImprovementInfoRecord(CvImprovementEntry& improvementInfo, Improveme
     out.permanent = (improvementInfo.IsPermanent()) ? 1 : 0;
     // Goody improvements cannot be pillaged.
     out.goody = (improvementInfo.IsGoody()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectResourceInfoRecord(CvResourceInfo& resourceInfo, ResourceInfoRecord& out)
 {
+    bool valid = true;
     // Resource usage class.
     {
         const i32 checkedResourceUsage = static_cast<i32>(resourceInfo.getResourceUsage());
         if (checkedResourceUsage < 0 || checkedResourceUsage > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "ResourceInfoRecord", "resourceUsage", checkedResourceUsage, 0, 255);
-            return false;
+            valid = false;
         }
-        out.resourceUsage = static_cast<u8>(checkedResourceUsage);
+        else
+        {
+            out.resourceUsage = static_cast<u8>(checkedResourceUsage);
+        }
     }
-    return true;
+    return valid;
 }
 
 bool CollectUnitEntryInfoRecord(CvUnitEntry& unitEntry, UnitEntryInfoRecord& out)
 {
+    bool valid = true;
     // Allowed special cargo class or NO_SPECIALUNIT.
     out.specialCargo = static_cast<i32>(unitEntry.GetSpecialCargo());
     // This unit type's special cargo class.
@@ -726,9 +752,12 @@ bool CollectUnitEntryInfoRecord(CvUnitEntry& unitEntry, UnitEntryInfoRecord& out
         if (checkedDomainCargo < -128 || checkedDomainCargo > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitEntryInfoRecord", "domainCargo", checkedDomainCargo, -128, 127);
-            return false;
+            valid = false;
         }
-        out.domainCargo = static_cast<i8>(checkedDomainCargo);
+        else
+        {
+            out.domainCargo = static_cast<i8>(checkedDomainCargo);
+        }
     }
     // Default unit AI type.
     {
@@ -736,9 +765,12 @@ bool CollectUnitEntryInfoRecord(CvUnitEntry& unitEntry, UnitEntryInfoRecord& out
         if (checkedDefaultUnitAiType < -128 || checkedDefaultUnitAiType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitEntryInfoRecord", "defaultUnitAiType", checkedDefaultUnitAiType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.defaultUnitAiType = static_cast<i8>(checkedDefaultUnitAiType);
+        else
+        {
+            out.defaultUnitAiType = static_cast<i8>(checkedDefaultUnitAiType);
+        }
     }
     // Range attacks confined to the source landmass or domain.
     out.rangeAttackOnlyInDomain = (unitEntry.IsRangeAttackOnlyInDomain()) ? 1 : 0;
@@ -752,22 +784,24 @@ bool CollectUnitEntryInfoRecord(CvUnitEntry& unitEntry, UnitEntryInfoRecord& out
     out.unitAiTypeAdmiral = (unitEntry.GetUnitAIType(UNITAI_ADMIRAL)) ? 1 : 0;
     // Entry-level city attack support flag of the unit predicate.
     out.isCityAttackSupport = (unitEntry.IsCityAttackSupport()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectStaticBuildIdsRecord(StaticBuildIdsRecord& out)
 {
+    bool valid = true;
     // BUILD_CITADEL identifier.
     out.citadel = static_cast<i32>(GC.getInfoTypeForString("BUILD_CITADEL"));
     // BUILD_ORDO identifier when balance VP is active.
     out.ordo = static_cast<i32>(GC.getInfoTypeForString("BUILD_ORDO"));
     // BUILD_ISIBAYA identifier when balance VP is active.
     out.isibaya = static_cast<i32>(GC.getInfoTypeForString("BUILD_ISIBAYA"));
-    return true;
+    return valid;
 }
 
 bool CollectMapTopologyRecord(CvMap& map, MapTopologyRecord& out)
 {
+    bool valid = true;
     // Map width.
     out.gridWidth = static_cast<i32>(map.getGridWidth());
     // Map height.
@@ -776,11 +810,12 @@ bool CollectMapTopologyRecord(CvMap& map, MapTopologyRecord& out)
     out.wrapX = (map.isWrapX()) ? 1 : 0;
     // Vertical wrapping.
     out.wrapY = (map.isWrapY()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectPlotTopologyRecord(CvPlot& plot, PlotTopologyRecord& out)
 {
+    bool valid = true;
     // Area identifier.
     out.area = static_cast<i32>(plot.getArea());
     // Landmass identifier.
@@ -791,9 +826,12 @@ bool CollectPlotTopologyRecord(CvPlot& plot, PlotTopologyRecord& out)
         if (checkedTerrainType < -128 || checkedTerrainType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotTopologyRecord", "terrainType", checkedTerrainType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.terrainType = static_cast<i8>(checkedTerrainType);
+        else
+        {
+            out.terrainType = static_cast<i8>(checkedTerrainType);
+        }
     }
     // Flat, hill, mountain, or water plot type.
     {
@@ -801,9 +839,12 @@ bool CollectPlotTopologyRecord(CvPlot& plot, PlotTopologyRecord& out)
         if (checkedPlotType < -128 || checkedPlotType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotTopologyRecord", "plotType", checkedPlotType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.plotType = static_cast<i8>(checkedPlotType);
+        else
+        {
+            out.plotType = static_cast<i8>(checkedPlotType);
+        }
     }
     // Hill flag.
     out.hills = (plot.isHills()) ? 1 : 0;
@@ -843,9 +884,12 @@ bool CollectPlotTopologyRecord(CvPlot& plot, PlotTopologyRecord& out)
         if (checkedRiverCrossingCount < 0 || checkedRiverCrossingCount > 6)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotTopologyRecord", "riverCrossingCount", checkedRiverCrossingCount, 0, 6);
-            return false;
+            valid = false;
         }
-        out.riverCrossingCount = static_cast<u8>(checkedRiverCrossingCount);
+        else
+        {
+            out.riverCrossingCount = static_cast<u8>(checkedRiverCrossingCount);
+        }
     }
     // Native return type is char.
     {
@@ -853,17 +897,21 @@ bool CollectPlotTopologyRecord(CvPlot& plot, PlotTopologyRecord& out)
         if (checkedContinentType < -128 || checkedContinentType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotTopologyRecord", "continentType", checkedContinentType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.continentType = static_cast<i8>(checkedContinentType);
+        else
+        {
+            out.continentType = static_cast<i8>(checkedContinentType);
+        }
     }
     // Lowercase native accessor.
     out.roughGround = (plot.isRoughGround()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectPromotionInfoRecord(CvPromotionEntry& promotionInfo, PromotionInfoRecord& out)
 {
+    bool valid = true;
     // Scoring priority of the plague promotion.
     {
         i32 clampedPlaguePriority = static_cast<i32>(promotionInfo.GetPlaguePriority());
@@ -871,11 +919,12 @@ bool CollectPromotionInfoRecord(CvPromotionEntry& promotionInfo, PromotionInfoRe
         if (clampedPlaguePriority > 32767) clampedPlaguePriority = 32767;
         out.plaguePriority = static_cast<i16>(clampedPlaguePriority);
     }
-    return true;
+    return valid;
 }
 
 bool CollectProcessInfoRecord(CvProcessInfo& processInfo, ProcessInfoRecord& out)
 {
+    bool valid = true;
     // Defense value of the production process.
     {
         i32 clampedDefenseValue = static_cast<i32>(processInfo.getDefenseValue());
@@ -883,11 +932,12 @@ bool CollectProcessInfoRecord(CvProcessInfo& processInfo, ProcessInfoRecord& out
         if (clampedDefenseValue > 32767) clampedDefenseValue = 32767;
         out.defenseValue = static_cast<i16>(clampedDefenseValue);
     }
-    return true;
+    return valid;
 }
 
 bool CollectCityEventChoiceInfoRecord(CvModEventCityChoiceInfo& cityEventChoiceInfo, CityEventChoiceInfoRecord& out)
 {
+    bool valid = true;
     // Flat city defense modifier of the event choice.
     {
         i32 clampedCityDefenseModifierBase = static_cast<i32>(cityEventChoiceInfo.getCityDefenseModifierBase());
@@ -902,11 +952,12 @@ bool CollectCityEventChoiceInfoRecord(CvModEventCityChoiceInfo& cityEventChoiceI
         if (clampedCityDefenseModifier > 32767) clampedCityDefenseModifier = 32767;
         out.cityDefenseModifier = static_cast<i16>(clampedCityDefenseModifier);
     }
-    return true;
+    return valid;
 }
 
 bool CollectPlotTeamRecord(TeamTypes otherTeam, PlotTeamRecord& out)
 {
+    bool valid = true;
     // Sparse values whose revealed state differs from actual state.
     // revealedOverrideRange has no generated assignment because its capture mode is builder.
     // Native team identifier.
@@ -915,24 +966,31 @@ bool CollectPlotTeamRecord(TeamTypes otherTeam, PlotTeamRecord& out)
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotTeamRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
-    return true;
+    return valid;
 }
 
 bool CollectRevealedOverrideRecord(CvPlot& plot, TeamTypes otherTeam, RevealedOverrideRecord& out)
 {
+    bool valid = true;
     // Plot index, narrowed to sixteen bits on the wire.
     {
         const i32 checkedPlotIndex = static_cast<i32>(plot.GetPlotIndex());
         if (checkedPlotIndex < 0 || checkedPlotIndex > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "RevealedOverrideRecord", "plotIndex", checkedPlotIndex, 0, 32767);
-            return false;
+            valid = false;
         }
-        out.plotIndex = static_cast<i32>(checkedPlotIndex);
+        else
+        {
+            out.plotIndex = static_cast<i32>(checkedPlotIndex);
+        }
     }
     // Ordinary non-debug overload, narrowed to one byte on the wire.
     {
@@ -940,9 +998,12 @@ bool CollectRevealedOverrideRecord(CvPlot& plot, TeamTypes otherTeam, RevealedOv
         if (checkedRevealedImprovementType < -1 || checkedRevealedImprovementType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "RevealedOverrideRecord", "revealedImprovementType", checkedRevealedImprovementType, -1, 127);
-            return false;
+            valid = false;
         }
-        out.revealedImprovementType = static_cast<i32>(checkedRevealedImprovementType);
+        else
+        {
+            out.revealedImprovementType = static_cast<i32>(checkedRevealedImprovementType);
+        }
     }
     // Ordinary non-debug overload, including the barbarian player 63, narrowed to the player domain on the wire.
     {
@@ -950,9 +1011,12 @@ bool CollectRevealedOverrideRecord(CvPlot& plot, TeamTypes otherTeam, RevealedOv
         if (checkedRevealedOwner < -1 || checkedRevealedOwner > 63)
         {
             VoxRlNoteCaptureRangeFailure("range", "RevealedOverrideRecord", "revealedOwner", checkedRevealedOwner, -1, 63);
-            return false;
+            valid = false;
         }
-        out.revealedOwner = static_cast<i32>(checkedRevealedOwner);
+        else
+        {
+            out.revealedOwner = static_cast<i32>(checkedRevealedOwner);
+        }
     }
     // Viewing team.
     {
@@ -960,9 +1024,12 @@ bool CollectRevealedOverrideRecord(CvPlot& plot, TeamTypes otherTeam, RevealedOv
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "RevealedOverrideRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
     // Ordinary non-debug overload.
     {
@@ -970,15 +1037,19 @@ bool CollectRevealedOverrideRecord(CvPlot& plot, TeamTypes otherTeam, RevealedOv
         if (checkedRevealedRouteType < -128 || checkedRevealedRouteType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "RevealedOverrideRecord", "revealedRouteType", checkedRevealedRouteType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.revealedRouteType = static_cast<i8>(checkedRevealedRouteType);
+        else
+        {
+            out.revealedRouteType = static_cast<i8>(checkedRevealedRouteType);
+        }
     }
-    return true;
+    return valid;
 }
 
 bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& out)
 {
+    bool valid = true;
     bool indirectFireAllowed = false;
 
     // Promised operation or -1.
@@ -1009,9 +1080,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedDeepWaterTileDamage < -1 || checkedDeepWaterTileDamage > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "deepWaterTileDamage", checkedDeepWaterTileDamage, -1, 32767);
-            return false;
+            valid = false;
         }
-        out.deepWaterTileDamage = static_cast<i16>(checkedDeepWaterTileDamage);
+        else
+        {
+            out.deepWaterTileDamage = static_cast<i16>(checkedDeepWaterTileDamage);
+        }
     }
     // Portable city plot index, sixteen bits on the wire.
     {
@@ -1019,9 +1093,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedPlotIndex < 0 || checkedPlotIndex > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "plotIndex", checkedPlotIndex, 0, 32767);
-            return false;
+            valid = false;
         }
-        out.plotIndex = static_cast<i16>(checkedPlotIndex);
+        else
+        {
+            out.plotIndex = static_cast<i16>(checkedPlotIndex);
+        }
     }
     // Maximum hit points.
     {
@@ -1089,9 +1166,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedGameTurnFounded < -1 || checkedGameTurnFounded > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "gameTurnFounded", checkedGameTurnFounded, -1, 32767);
-            return false;
+            valid = false;
         }
-        out.gameTurnFounded = static_cast<i16>(checkedGameTurnFounded);
+        else
+        {
+            out.gameTurnFounded = static_cast<i16>(checkedGameTurnFounded);
+        }
     }
     // Whether military policy reserves this city's garrison.
     out.needsGarrison = (city.NeedsGarrison()) ? 1 : 0;
@@ -1101,9 +1181,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedOwner < -128 || checkedOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "owner", checkedOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.owner = static_cast<i8>(checkedOwner);
+        else
+        {
+            out.owner = static_cast<i8>(checkedOwner);
+        }
     }
     // Owner team.
     {
@@ -1111,9 +1194,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
     // Can make a ranged strike.
     out.canRangeStrike = (city.canRangeStrike()) ? 1 : 0;
@@ -1138,9 +1224,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedGarrisonOwner < -128 || checkedGarrisonOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "garrisonOwner", checkedGarrisonOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.garrisonOwner = static_cast<i8>(checkedGarrisonOwner);
+        else
+        {
+            out.garrisonOwner = static_cast<i8>(checkedGarrisonOwner);
+        }
     }
     // Native default minimum water size.
     out.coastal = (city.isCoastal()) ? 1 : 0;
@@ -1152,9 +1241,12 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (checkedOriginalOwner < -128 || checkedOriginalOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "originalOwner", checkedOriginalOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.originalOwner = static_cast<i8>(checkedOriginalOwner);
+        else
+        {
+            out.originalOwner = static_cast<i8>(checkedOriginalOwner);
+        }
     }
     // Border-obstacle building flag; entering this city's land plots from outside ends the turn.
     out.borderObstacleLand = (city.IsBorderObstacleLand()) ? 1 : 0;
@@ -1181,20 +1273,24 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
         if (clampedReligiousMajority > 127) clampedReligiousMajority = 127;
         out.religiousMajority = static_cast<i8>(clampedReligiousMajority);
     }
-    return true;
+    return valid;
 }
 
 bool CollectTeamRelationRecord(CvTeam& team, TeamTypes otherTeam, PlayerTypes capturingPlayer, TeamRelationRecord& out)
 {
+    bool valid = true;
     // Source team.
     {
         const i32 checkedTeam = static_cast<i32>(team.GetID());
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "TeamRelationRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
     // Target team.
     {
@@ -1202,9 +1298,12 @@ bool CollectTeamRelationRecord(CvTeam& team, TeamTypes otherTeam, PlayerTypes ca
         if (checkedOtherTeam < -128 || checkedOtherTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "TeamRelationRecord", "otherTeam", checkedOtherTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.otherTeam = static_cast<i8>(checkedOtherTeam);
+        else
+        {
+            out.otherTeam = static_cast<i8>(checkedOtherTeam);
+        }
     }
     // War relation.
     out.atWar = (team.isAtWar(otherTeam)) ? 1 : 0;
@@ -1216,11 +1315,12 @@ bool CollectTeamRelationRecord(CvTeam& team, TeamTypes otherTeam, PlayerTypes ca
     out.forcePeace = (team.isForcePeace(otherTeam)) ? 1 : 0;
     // War declaration for the capturing player.
     out.canDeclareWar = (team.canDeclareWar(otherTeam, capturingPlayer)) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectTeamRecord(CvTeam& team, TeamRecord& out)
 {
+    bool valid = true;
     // Per-route movement change.
     for (int index = 0; index < 8; ++index) {
         out.routeChange[index] = 0;
@@ -1237,9 +1337,12 @@ bool CollectTeamRecord(CvTeam& team, TeamRecord& out)
         if (checkedId < -128 || checkedId > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "TeamRecord", "id", checkedId, -128, 127);
-            return false;
+            valid = false;
         }
-        out.id = static_cast<i8>(checkedId);
+        else
+        {
+            out.id = static_cast<i8>(checkedId);
+        }
     }
     // Minor civilization team.
     out.minorCiv = (team.isMinorCiv()) ? 1 : 0;
@@ -1257,11 +1360,12 @@ bool CollectTeamRecord(CvTeam& team, TeamRecord& out)
     out.extraWaterSeeFrom = (team.isExtraWaterSeeFrom()) ? 1 : 0;
     // Ocean-crossing construction ability.
     out.canBuildOceanCrossingUnit = (team.CanBuildOceanCrossingUnit()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectPlayerRecord(CvPlayer& player, PlayerTypes otherPlayer, PlayerRecord& out)
 {
+    bool valid = true;
     // Average unit experience scaled by 100.
     out.avgUnitExp100 = static_cast<i32>(player.GetAvgUnitExp100());
     // Non-const accessor, captured per domain.
@@ -1310,15 +1414,12 @@ bool CollectPlayerRecord(CvPlayer& player, PlayerTypes otherPlayer, PlayerRecord
         if (clampedGreatGeneralCombatBonus > 32767) clampedGreatGeneralCombatBonus = 32767;
         out.greatGeneralCombatBonus = static_cast<i16>(clampedGreatGeneralCombatBonus);
     }
-    // Current supplied units.
+    // Unit supply capacity, capped at 32767. Barbarians have unlimited supply and the native accessor returns INT_MAX.
     {
-        const i32 checkedUnitsSupplied = static_cast<i32>(player.GetNumUnitsSupplied());
-        if (checkedUnitsSupplied < 0 || checkedUnitsSupplied > 32767)
-        {
-            VoxRlNoteCaptureRangeFailure("range", "PlayerRecord", "unitsSupplied", checkedUnitsSupplied, 0, 32767);
-            return false;
-        }
-        out.unitsSupplied = static_cast<i16>(checkedUnitsSupplied);
+        i32 clampedUnitsSupplied = static_cast<i32>(player.GetNumUnitsSupplied());
+        if (clampedUnitsSupplied < 0) clampedUnitsSupplied = 0;
+        if (clampedUnitsSupplied > 32767) clampedUnitsSupplied = 32767;
+        out.unitsSupplied = static_cast<i16>(clampedUnitsSupplied);
     }
     // Current unsupplied units.
     {
@@ -1333,9 +1434,12 @@ bool CollectPlayerRecord(CvPlayer& player, PlayerTypes otherPlayer, PlayerRecord
         if (checkedAttackBonusTurns < 0 || checkedAttackBonusTurns > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlayerRecord", "attackBonusTurns", checkedAttackBonusTurns, 0, 32767);
-            return false;
+            valid = false;
         }
-        out.attackBonusTurns = static_cast<i16>(checkedAttackBonusTurns);
+        else
+        {
+            out.attackBonusTurns = static_cast<i16>(checkedAttackBonusTurns);
+        }
     }
     // Total empire population.
     {
@@ -1497,9 +1601,12 @@ bool CollectPlayerRecord(CvPlayer& player, PlayerTypes otherPlayer, PlayerRecord
         if (checkedId < -128 || checkedId > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlayerRecord", "id", checkedId, -128, 127);
-            return false;
+            valid = false;
         }
-        out.id = static_cast<i8>(checkedId);
+        else
+        {
+            out.id = static_cast<i8>(checkedId);
+        }
     }
     // Alive player flag.
     out.alive = (player.isAlive()) ? 1 : 0;
@@ -1523,9 +1630,12 @@ bool CollectPlayerRecord(CvPlayer& player, PlayerTypes otherPlayer, PlayerRecord
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlayerRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
     // Trait owned by CvPlayerTraits.
     out.riverMovementBonus = (player.GetPlayerTraits()->IsRiverMovementBonus()) ? 1 : 0;
@@ -1565,26 +1675,33 @@ bool CollectPlayerRecord(CvPlayer& player, PlayerTypes otherPlayer, PlayerRecord
         if (checkedCapitalCityOwner < -128 || checkedCapitalCityOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlayerRecord", "capitalCityOwner", checkedCapitalCityOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.capitalCityOwner = static_cast<i8>(checkedCapitalCityOwner);
+        else
+        {
+            out.capitalCityOwner = static_cast<i8>(checkedCapitalCityOwner);
+        }
     }
     // Trait flag adding natural-wonder plots to the trait area-effect plot list.
     out.combatBoostNearNaturalWonder = (player.GetPlayerTraits()->IsCombatBoostNearNaturalWonder()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectMinorRelationRecord(CvPlayer& player, CvMinorCivAI& minorCivAI, PlayerTypes otherPlayer, PlayerTypes queriedPlayer, MinorRelationRecord& out)
 {
+    bool valid = true;
     // Related player.
     {
         const i32 checkedPlayer = static_cast<i32>(otherPlayer);
         if (checkedPlayer < -128 || checkedPlayer > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "MinorRelationRecord", "player", checkedPlayer, -128, 127);
-            return false;
+            valid = false;
         }
-        out.player = static_cast<i8>(checkedPlayer);
+        else
+        {
+            out.player = static_cast<i8>(checkedPlayer);
+        }
     }
     // Major player supplied to the minor relation accessor.
     {
@@ -1592,9 +1709,12 @@ bool CollectMinorRelationRecord(CvPlayer& player, CvMinorCivAI& minorCivAI, Play
         if (checkedQueriedPlayer < -128 || checkedQueriedPlayer > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "MinorRelationRecord", "queriedPlayer", checkedQueriedPlayer, -128, 127);
-            return false;
+            valid = false;
         }
-        out.queriedPlayer = static_cast<i8>(checkedQueriedPlayer);
+        else
+        {
+            out.queriedPlayer = static_cast<i8>(checkedQueriedPlayer);
+        }
     }
     // Non-const native accessor for the qualified player.
     out.friends = (minorCivAI.IsFriends(queriedPlayer)) ? 1 : 0;
@@ -1606,9 +1726,12 @@ bool CollectMinorRelationRecord(CvPlayer& player, CvMinorCivAI& minorCivAI, Play
         if (checkedAlly < -128 || checkedAlly > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "MinorRelationRecord", "ally", checkedAlly, -128, 127);
-            return false;
+            valid = false;
         }
-        out.ally = static_cast<i8>(checkedAlly);
+        else
+        {
+            out.ally = static_cast<i8>(checkedAlly);
+        }
     }
     // Qualified player protection relation.
     out.protectedByMajor = (minorCivAI.IsProtectedByMajor(queriedPlayer)) ? 1 : 0;
@@ -1620,15 +1743,19 @@ bool CollectMinorRelationRecord(CvPlayer& player, CvMinorCivAI& minorCivAI, Play
         if (checkedWarState < -128 || checkedWarState > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "MinorRelationRecord", "warState", checkedWarState, -128, 127);
-            return false;
+            valid = false;
         }
-        out.warState = static_cast<i8>(checkedWarState);
+        else
+        {
+            out.warState = static_cast<i8>(checkedWarState);
+        }
     }
-    return true;
+    return valid;
 }
 
 bool CollectZoneRecord(const CvTacticalDominanceZone& zone, ZoneRecord& out)
 {
+    bool valid = true;
     // Zone identifier.
     out.zoneId = static_cast<i32>(zone.GetZoneID());
     // Builder captures the referenced CityRef ID without changing its null convention.
@@ -1709,9 +1836,12 @@ bool CollectZoneRecord(const CvTacticalDominanceZone& zone, ZoneRecord& out)
         if (checkedTerritoryType < 0 || checkedTerritoryType > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "ZoneRecord", "territoryType", checkedTerritoryType, 0, 255);
-            return false;
+            valid = false;
         }
-        out.territoryType = static_cast<u8>(checkedTerritoryType);
+        else
+        {
+            out.territoryType = static_cast<u8>(checkedTerritoryType);
+        }
     }
     // Overall dominance flag.
     {
@@ -1719,9 +1849,12 @@ bool CollectZoneRecord(const CvTacticalDominanceZone& zone, ZoneRecord& out)
         if (checkedOverallDominanceFlag < 0 || checkedOverallDominanceFlag > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "ZoneRecord", "overallDominanceFlag", checkedOverallDominanceFlag, 0, 255);
-            return false;
+            valid = false;
         }
-        out.overallDominanceFlag = static_cast<u8>(checkedOverallDominanceFlag);
+        else
+        {
+            out.overallDominanceFlag = static_cast<u8>(checkedOverallDominanceFlag);
+        }
     }
     // Tactical posture.
     {
@@ -1729,9 +1862,12 @@ bool CollectZoneRecord(const CvTacticalDominanceZone& zone, ZoneRecord& out)
         if (checkedPosture < 0 || checkedPosture > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "ZoneRecord", "posture", checkedPosture, 0, 255);
-            return false;
+            valid = false;
         }
-        out.posture = static_cast<u8>(checkedPosture);
+        else
+        {
+            out.posture = static_cast<u8>(checkedPosture);
+        }
     }
     // Zone owner.
     {
@@ -1739,24 +1875,29 @@ bool CollectZoneRecord(const CvTacticalDominanceZone& zone, ZoneRecord& out)
         if (checkedOwner < -128 || checkedOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "ZoneRecord", "owner", checkedOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.owner = static_cast<i8>(checkedOwner);
+        else
+        {
+            out.owner = static_cast<i8>(checkedOwner);
+        }
     }
     // Builder resolves the referenced city owner or NO_PLAYER for the native null sentinel.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectZoneNeighborRecord(ZoneNeighborRecord& out)
 {
+    bool valid = true;
     // Child entry of ZoneRecord.neighborRange.
     // zoneId has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectDangerPlayerRecord(PlayerTypes otherPlayer, DangerPlayerRecord& out)
 {
+    bool valid = true;
     // Known membership immediately before the selected refresh; capture must not substitute the post-refresh set.
     // knownUnitRange has no generated assignment because its capture mode is builder.
     // Vanished membership immediately before the selected refresh.
@@ -1771,33 +1912,39 @@ bool CollectDangerPlayerRecord(PlayerTypes otherPlayer, DangerPlayerRecord& out)
         if (checkedObserver < -128 || checkedObserver > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "DangerPlayerRecord", "observer", checkedObserver, -128, 127);
-            return false;
+            valid = false;
         }
-        out.observer = static_cast<i8>(checkedObserver);
+        else
+        {
+            out.observer = static_cast<i8>(checkedObserver);
+        }
     }
-    return true;
+    return valid;
 }
 
 bool CollectKnownAttackerRecord(KnownAttackerRecord& out)
 {
+    bool valid = true;
     // Attacker UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Attacker UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectVanishedAttackerRecord(VanishedAttackerRecord& out)
 {
+    bool valid = true;
     // Attacker UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Attacker UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignHeaderRecord(CvMilitaryAI& campaign, CvPlayer& player, CampaignHeaderRecord& out)
 {
+    bool valid = true;
     // Original WORLD generation whose state underlies this checkpoint.
     // alignedWorldGeneration has no generated assignment because its capture mode is builder.
     // Exclusive REQUEST delta sequence at the checkpoint; zero selects the WORLD alone.
@@ -1852,28 +1999,33 @@ bool CollectCampaignHeaderRecord(CvMilitaryAI& campaign, CvPlayer& player, Campa
         if (checkedNumCivsAtWar < 0 || checkedNumCivsAtWar > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "CampaignHeaderRecord", "numCivsAtWar", checkedNumCivsAtWar, 0, 255);
-            return false;
+            valid = false;
         }
-        out.numCivsAtWar = static_cast<u8>(checkedNumCivsAtWar);
+        else
+        {
+            out.numCivsAtWar = static_cast<u8>(checkedNumCivsAtWar);
+        }
     }
     // Complete global military flavor vector in shared semantic slot order, scaled from 0 to 100.
     // militaryFlavors has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignEnemyRecord(CampaignEnemyRecord& out)
 {
+    bool valid = true;
     // Only valid enemy players are emitted.
     // player has no generated assignment because its capture mode is builder.
     // Per-enemy war state, or NO_WAR_STATE_TYPE for barbarians.
     // warState has no generated assignment because its capture mode is builder.
     // Per-enemy war score.
     // warScore has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignAttackTargetRecord(CampaignAttackTargetRecord& out)
 {
+    bool valid = true;
     // Path length.
     // pathLength has no generated assignment because its capture mode is builder.
     // Approach score.
@@ -1888,20 +2040,22 @@ bool CollectCampaignAttackTargetRecord(CampaignAttackTargetRecord& out)
     // armyType has no generated assignment because its capture mode is builder.
     // Preferred target flag.
     // preferred has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignExposedCityRecord(CampaignExposedCityRecord& out)
 {
+    bool valid = true;
     // Exposed CityRef ID.
     // cityId has no generated assignment because its capture mode is builder.
     // Exposed CityRef owner.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignOperationRecord(CampaignOperationRecord& out)
 {
+    bool valid = true;
     // Operation ID.
     // id has no generated assignment because its capture mode is builder.
     // Muster x coordinate.
@@ -1932,18 +2086,20 @@ bool CollectCampaignOperationRecord(CampaignOperationRecord& out)
     // enemy has no generated assignment because its capture mode is builder.
     // First accepted abort reason, or NO_ABORT_REASON.
     // abortReason has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignOperationArmyIdRecord(CampaignOperationArmyIdRecord& out)
 {
+    bool valid = true;
     // Child entry of CampaignOperationRecord.armyIdRange.
     // armyId has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignArmyRecord(CampaignArmyRecord& out)
 {
+    bool valid = true;
     // Army ID.
     // id has no generated assignment because its capture mode is builder.
     // Formation type.
@@ -1958,11 +2114,12 @@ bool CollectCampaignArmyRecord(CampaignArmyRecord& out)
     // formationRange has no generated assignment because its capture mode is builder.
     // Army AI state.
     // aiState has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignFormationEntryRecord(CampaignFormationEntryRecord& out)
 {
+    bool valid = true;
     // Assigned UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Formation slot index within the army.
@@ -1973,29 +2130,32 @@ bool CollectCampaignFormationEntryRecord(CampaignFormationEntryRecord& out)
     // unitOwner has no generated assignment because its capture mode is builder.
     // Required formation slot.
     // required has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignThreatenedCityRecord(CampaignThreatenedCityRecord& out)
 {
+    bool valid = true;
     // Child CityRef ID of CampaignHeaderRecord.threatenedCityRange.
     // cityId has no generated assignment because its capture mode is builder.
     // Threatened CityRef owner.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignCoastalThreatenedCityRecord(CampaignCoastalThreatenedCityRecord& out)
 {
+    bool valid = true;
     // Child CityRef ID of CampaignHeaderRecord.coastalThreatenedCityRange.
     // cityId has no generated assignment because its capture mode is builder.
     // Threatened coastal CityRef owner.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignZoneRecord(const CvTacticalDominanceZone& zone, CampaignZoneRecord& out)
 {
+    bool valid = true;
     // Zone identifier at campaign capture time.
     out.zoneId = static_cast<i32>(zone.GetZoneID());
     // Builder captures the referenced CityRef ID without changing its null convention.
@@ -2076,9 +2236,12 @@ bool CollectCampaignZoneRecord(const CvTacticalDominanceZone& zone, CampaignZone
         if (checkedTerritoryType < 0 || checkedTerritoryType > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "CampaignZoneRecord", "territoryType", checkedTerritoryType, 0, 255);
-            return false;
+            valid = false;
         }
-        out.territoryType = static_cast<u8>(checkedTerritoryType);
+        else
+        {
+            out.territoryType = static_cast<u8>(checkedTerritoryType);
+        }
     }
     // Overall dominance flag.
     {
@@ -2086,9 +2249,12 @@ bool CollectCampaignZoneRecord(const CvTacticalDominanceZone& zone, CampaignZone
         if (checkedOverallDominanceFlag < 0 || checkedOverallDominanceFlag > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "CampaignZoneRecord", "overallDominanceFlag", checkedOverallDominanceFlag, 0, 255);
-            return false;
+            valid = false;
         }
-        out.overallDominanceFlag = static_cast<u8>(checkedOverallDominanceFlag);
+        else
+        {
+            out.overallDominanceFlag = static_cast<u8>(checkedOverallDominanceFlag);
+        }
     }
     // Tactical posture.
     {
@@ -2096,9 +2262,12 @@ bool CollectCampaignZoneRecord(const CvTacticalDominanceZone& zone, CampaignZone
         if (checkedPosture < 0 || checkedPosture > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "CampaignZoneRecord", "posture", checkedPosture, 0, 255);
-            return false;
+            valid = false;
         }
-        out.posture = static_cast<u8>(checkedPosture);
+        else
+        {
+            out.posture = static_cast<u8>(checkedPosture);
+        }
     }
     // Zone owner.
     {
@@ -2106,24 +2275,29 @@ bool CollectCampaignZoneRecord(const CvTacticalDominanceZone& zone, CampaignZone
         if (checkedOwner < -128 || checkedOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "CampaignZoneRecord", "owner", checkedOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.owner = static_cast<i8>(checkedOwner);
+        else
+        {
+            out.owner = static_cast<i8>(checkedOwner);
+        }
     }
     // Builder resolves the referenced city owner or NO_PLAYER for the native null sentinel.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignZoneNeighborRecord(CampaignZoneNeighborRecord& out)
 {
+    bool valid = true;
     // Child entry of CampaignZoneRecord.neighborRange.
     // zoneId has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestHeaderRecord(RequestHeaderRecord& out)
 {
+    bool valid = true;
     // Strictly increasing request order within the actor-turn.
     // order has no generated assignment because its capture mode is builder.
     // Parent operation identity or -1.
@@ -2164,11 +2338,12 @@ bool CollectRequestHeaderRecord(RequestHeaderRecord& out)
     // militaryFlavors has no generated assignment because its capture mode is builder.
     // Whether this request replaces the complete tactical zone table, including an intentionally empty table.
     // hasZoneReplacement has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaUnitRecord(RequestDeltaUnitRecord& out)
 {
+    bool valid = true;
     // First observed unit identity in this lineage.
     // lineageUnitId has no generated assignment because its capture mode is builder.
     // Transport unit identity or -1.
@@ -2441,11 +2616,12 @@ bool CollectRequestDeltaUnitRecord(RequestDeltaUnitRecord& out)
     // fortified has no generated assignment because its capture mode is builder.
     // Unit combat class; -1 when the type has none.
     // unitCombatType has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaPlotCoreRecord(RequestDeltaPlotCoreRecord& out)
 {
+    bool valid = true;
     // Plot identity, implicit in WORLD's per-plot order and narrowed to sixteen bits here.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Zero means no owning city; one through the table size select the block's city reference rows.
@@ -2484,11 +2660,12 @@ bool CollectRequestDeltaPlotCoreRecord(RequestDeltaPlotCoreRecord& out)
     // restoreMoves has no generated assignment because its capture mode is builder.
     // Free movement edge flag.
     // freeMoveAcross has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaCityRecord(RequestDeltaCityRecord& out)
 {
+    bool valid = true;
     // Promised operation or -1.
     // promisedOperationId has no generated assignment because its capture mode is builder.
     // Promised army or -1.
@@ -2573,49 +2750,54 @@ bool CollectRequestDeltaCityRecord(RequestDeltaCityRecord& out)
     // counterspyRank has no generated assignment because its capture mode is builder.
     // Religious majority of the city or -1 when none.
     // religiousMajority has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestRemovedUnitRecord(RequestRemovedUnitRecord& out)
 {
+    bool valid = true;
     // Removed UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Removed UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestKnownAttackerRecord(RequestKnownAttackerRecord& out)
 {
+    bool valid = true;
     // Attacker UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Observing player whose known set changes.
     // observer has no generated assignment because its capture mode is builder.
     // Attacker UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestParticipantRecord(RequestParticipantRecord& out)
 {
+    bool valid = true;
     // Participant UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Participant UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDroppedUnitRecord(RequestDroppedUnitRecord& out)
 {
+    bool valid = true;
     // Dropped UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Dropped UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectResultAssignmentRecord(ResultAssignmentRecord& out)
 {
+    bool valid = true;
     // Assigned UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // City damage.
@@ -2644,84 +2826,92 @@ bool CollectResultAssignmentRecord(ResultAssignmentRecord& out)
     // moveType has no generated assignment because its capture mode is builder.
     // Damaged CityRef owner or NO_PLAYER.
     // damagedCityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectResultAssignmentDamageRecord(ResultAssignmentDamageRecord& out)
 {
+    bool valid = true;
     // Damaged UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Damage amount.
     // value has no generated assignment because its capture mode is builder.
     // Damaged UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectResultAssignmentHealingRecord(ResultAssignmentHealingRecord& out)
 {
+    bool valid = true;
     // Healed UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Healing amount.
     // value has no generated assignment because its capture mode is builder.
     // Healed UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectTeamPassabilityRecord(TeamPassabilityRecord& out)
 {
+    bool valid = true;
     // Native team identifier, including the barbarian team.
     // team has no generated assignment because its capture mode is builder.
     // Terrain impassability after the team's prerequisite-passable technology.
     // terrainImpassable has no generated assignment because its capture mode is builder.
     // Feature impassability after the team's prerequisite-passable technology.
     // featureImpassable has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectInterceptorCacheRecord(InterceptorCacheRecord& out)
 {
+    bool valid = true;
     // Native cache order.
     // entryRange has no generated assignment because its capture mode is builder.
     // Owner of the cache.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectInterceptorCacheEntryRecord(InterceptorCacheEntryRecord& out)
 {
+    bool valid = true;
     // Interceptor UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Captured cache plot key.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Interceptor UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestRemovedCityRecord(RequestRemovedCityRecord& out)
 {
+    bool valid = true;
     // Removed CityRef ID.
     // cityId has no generated assignment because its capture mode is builder.
     // Removed CityRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestTeamPassabilityRecord(RequestTeamPassabilityRecord& out)
 {
+    bool valid = true;
     // Native team identifier, including the barbarian team.
     // team has no generated assignment because its capture mode is builder.
     // Terrain impassability after the team's prerequisite-passable technology.
     // terrainImpassable has no generated assignment because its capture mode is builder.
     // Feature impassability after the team's prerequisite-passable technology.
     // featureImpassable has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestVisibilityWordRecord(RequestVisibilityWordRecord& out)
 {
+    bool valid = true;
     // One bits per plot the row changes; other plots keep their bits.
     // mask has no generated assignment because its capture mode is builder.
     // Replacement bit values under the mask.
@@ -2732,11 +2922,12 @@ bool CollectRequestVisibilityWordRecord(RequestVisibilityWordRecord& out)
     // team has no generated assignment because its capture mode is builder.
     // Revealed, visible, known-visible, or invisible-visible bitset selector.
     // bitsetKind has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestRevealedOverrideUpsertRecord(RequestRevealedOverrideUpsertRecord& out)
 {
+    bool valid = true;
     // Plot index, narrowed to sixteen bits on the wire.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Ordinary non-debug overload, narrowed to one byte on the wire.
@@ -2747,47 +2938,52 @@ bool CollectRequestRevealedOverrideUpsertRecord(RequestRevealedOverrideUpsertRec
     // team has no generated assignment because its capture mode is builder.
     // Ordinary non-debug overload.
     // revealedRouteType has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestRemovedRevealedOverrideRecord(RequestRemovedRevealedOverrideRecord& out)
 {
+    bool valid = true;
     // Plot whose sparse override is removed, narrowed to sixteen bits on the wire.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Team whose sparse override is removed.
     // team has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestInterceptorReplacementRecord(RequestInterceptorReplacementRecord& out)
 {
+    bool valid = true;
     // Replacement entries in native cache order.
     // entryRange has no generated assignment because its capture mode is builder.
     // Owner of the replaced cache.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestInterceptorEntryRecord(RequestInterceptorEntryRecord& out)
 {
+    bool valid = true;
     // Interceptor UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Captured cache plot key.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Interceptor UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectStaticUnitClassInfoRecord(int unitClassIndex, StaticUnitClassInfoRecord& out)
 {
+    bool valid = true;
     // World-limited instance count; -1 means unlimited. The context carries the unit class index.
     out.maxGlobalInstances = static_cast<i32>(GC.getUnitClassInfo(static_cast<UnitClassTypes>(unitClassIndex))->getMaxGlobalInstances());
-    return true;
+    return valid;
 }
 
 bool CollectRequestDangerEventRecord(RequestDangerEventRecord& out)
 {
+    bool valid = true;
     // Attacker identity for discovery; -1 for other operations.
     // unitId has no generated assignment because its capture mode is builder.
     // New game turn for kind 4; zero for other operations.
@@ -2798,11 +2994,12 @@ bool CollectRequestDangerEventRecord(RequestDangerEventRecord& out)
     // observer has no generated assignment because its capture mode is builder.
     // Attacker owner for discovery; -1 for other operations.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestTeamRelationRecord(RequestTeamRelationRecord& out)
 {
+    bool valid = true;
     // Source team.
     // team has no generated assignment because its capture mode is builder.
     // Target team.
@@ -2817,11 +3014,12 @@ bool CollectRequestTeamRelationRecord(RequestTeamRelationRecord& out)
     // forcePeace has no generated assignment because its capture mode is builder.
     // War declaration for the capturing player.
     // canDeclareWar has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectReplayHeaderRecord(ReplayHeaderRecord& out)
 {
+    bool valid = true;
     // Exactly the applied request's decision identifier; strict validation mirrors it against the frame header.
     // decisionId has no generated assignment because its capture mode is builder.
     // Exactly the applied request's caller classification.
@@ -2836,11 +3034,12 @@ bool CollectReplayHeaderRecord(ReplayHeaderRecord& out)
     // unusableUnitRange has no generated assignment because its capture mode is builder.
     // True when the executable prefix ends with A_RESTART because new enemies or a city capture require a refreshed decision.
     // restartRequired has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectReplayAssignmentRecord(ReplayAssignmentRecord& out)
 {
+    bool valid = true;
     // Assigned UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // City damage.
@@ -2869,42 +3068,46 @@ bool CollectReplayAssignmentRecord(ReplayAssignmentRecord& out)
     // moveType has no generated assignment because its capture mode is builder.
     // Damaged CityRef owner or NO_PLAYER.
     // damagedCityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectReplayAssignmentDamageRecord(ReplayAssignmentDamageRecord& out)
 {
+    bool valid = true;
     // Damaged UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Damage amount.
     // value has no generated assignment because its capture mode is builder.
     // Damaged UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectReplayAssignmentHealingRecord(ReplayAssignmentHealingRecord& out)
 {
+    bool valid = true;
     // Healed UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Healing amount.
     // value has no generated assignment because its capture mode is builder.
     // Healed UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectReplayUnusableUnitRecord(ReplayUnusableUnitRecord& out)
 {
+    bool valid = true;
     // Unusable UnitRef ID.
     // unitId has no generated assignment because its capture mode is builder.
     // Unusable UnitRef owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitModifierRecord(UnitModifierRecord& out)
 {
+    bool valid = true;
     // Identifier of the unit the row belongs to.
     // unitId has no generated assignment because its capture mode is builder.
     // Type index within the family.
@@ -2915,11 +3118,12 @@ bool CollectUnitModifierRecord(UnitModifierRecord& out)
     // owner has no generated assignment because its capture mode is builder.
     // Indexed-modifier family selector.
     // family has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitPlagueRecord(UnitPlagueRecord& out)
 {
+    bool valid = true;
     // Identifier of the unit the plague belongs to.
     // unitId has no generated assignment because its capture mode is builder.
     // Plague promotion identifier.
@@ -2934,22 +3138,24 @@ bool CollectUnitPlagueRecord(UnitPlagueRecord& out)
     // applyOnAttack has no generated assignment because its capture mode is builder.
     // Plague applies on defense.
     // applyOnDefense has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitBlockedPromotionRecord(UnitBlockedPromotionRecord& out)
 {
+    bool valid = true;
     // Identifier of the unit the blocked promotion belongs to.
     // unitId has no generated assignment because its capture mode is builder.
     // Blocked promotion identifier.
     // promotion has no generated assignment because its capture mode is builder.
     // Owner of the unit the blocked promotion belongs to.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitAttackCountRecord(UnitAttackCountRecord& out)
 {
+    bool valid = true;
     // Identifier of the unit the counter belongs to.
     // unitId has no generated assignment because its capture mode is builder.
     // Attacks already received from that player this turn.
@@ -2958,22 +3164,24 @@ bool CollectUnitAttackCountRecord(UnitAttackCountRecord& out)
     // owner has no generated assignment because its capture mode is builder.
     // Attacking player the counter tracks.
     // attackingPlayer has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlayerResistanceRecord(PlayerResistanceRecord& out)
 {
+    bool valid = true;
     // Warmonger-fueled resistance after native cap processing.
     // dominationResistance has no generated assignment because its capture mode is builder.
     // Owner of the resistance value.
     // player has no generated assignment because its capture mode is builder.
     // Opponent the resistance targets.
     // opponent has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCityAttackCountRecord(CityAttackCountRecord& out)
 {
+    bool valid = true;
     // Identifier of the city the counter belongs to.
     // cityId has no generated assignment because its capture mode is builder.
     // Owner of the city the counter belongs to.
@@ -2982,11 +3190,12 @@ bool CollectCityAttackCountRecord(CityAttackCountRecord& out)
     // attackingPlayer has no generated assignment because its capture mode is builder.
     // Attacks already received from that player this turn.
     // count has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestZoneReplacementRecord(RequestZoneReplacementRecord& out)
 {
+    bool valid = true;
     // Zone identifier.
     // zoneId has no generated assignment because its capture mode is builder.
     // Builder captures the referenced CityRef ID without changing its null convention.
@@ -3041,105 +3250,116 @@ bool CollectRequestZoneReplacementRecord(RequestZoneReplacementRecord& out)
     // owner has no generated assignment because its capture mode is builder.
     // Builder resolves the referenced city owner or NO_PLAYER for the native null sentinel.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestZoneNeighborRecord(RequestZoneNeighborRecord& out)
 {
+    bool valid = true;
     // Child entry of ZoneRecord.neighborRange.
     // zoneId has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlotZoneIndexRecord(PlotZoneIndexRecord& out)
 {
+    bool valid = true;
     // Zero marks no zone; a positive index selects the ordered table row at index minus one.
     // zoneTableIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlotZoneIndexWideRecord(PlotZoneIndexWideRecord& out)
 {
+    bool valid = true;
     // Zero marks no zone; a positive index selects the ordered table row at index minus one.
     // zoneTableIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaPlotZoneRecord(RequestDeltaPlotZoneRecord& out)
 {
+    bool valid = true;
     // Changed plot identity, narrowed to sixteen bits on the wire.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Zero clears membership; a positive index selects the applicable table's ordered row at index minus one.
     // zoneTableIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaPlotZoneWideRecord(RequestDeltaPlotZoneWideRecord& out)
 {
+    bool valid = true;
     // Changed plot identity, narrowed to sixteen bits on the wire.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Zero clears membership; a positive index selects the applicable table's ordered row at index minus one.
     // zoneTableIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitMovementCountRecord(UnitMovementCountRecord& out)
 {
+    bool valid = true;
     // Nonzero extra-move count.
     // count has no generated assignment because its capture mode is builder.
     // Zero selects the terrain table, one the feature table.
     // kind has no generated assignment because its capture mode is builder.
     // Terrain or feature index.
     // typeIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitMovementCountRecord(RequestUnitMovementCountRecord& out)
 {
+    bool valid = true;
     // Nonzero extra-move count.
     // count has no generated assignment because its capture mode is builder.
     // Zero selects the terrain table, one the feature table.
     // kind has no generated assignment because its capture mode is builder.
     // Terrain or feature index.
     // typeIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitModifierReplacementRecord(RequestUnitModifierReplacementRecord& out)
 {
+    bool valid = true;
     // Identity of the unit whose modifier rows are replaced; it must exist after this request's unit changes are applied.
     // unitId has no generated assignment because its capture mode is builder.
     // That unit's complete current modifier rows in family order; an empty range clears them.
     // rowRange has no generated assignment because its capture mode is builder.
     // Owner of the unit whose modifier rows are replaced.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitModifierRowRecord(RequestUnitModifierRowRecord& out)
 {
+    bool valid = true;
     // Type index within the family.
     // index has no generated assignment because its capture mode is builder.
     // Captured modifier value.
     // value has no generated assignment because its capture mode is builder.
     // Indexed-modifier family selector.
     // family has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitPlagueReplacementRecord(RequestUnitPlagueReplacementRecord& out)
 {
+    bool valid = true;
     // Identity of the unit whose plague rows are replaced; it must exist after this request's unit changes are applied.
     // unitId has no generated assignment because its capture mode is builder.
     // That unit's complete current plague rows; an empty range clears them.
     // rowRange has no generated assignment because its capture mode is builder.
     // Owner of the unit whose plague rows are replaced.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitPlagueRowRecord(RequestUnitPlagueRowRecord& out)
 {
+    bool valid = true;
     // Plague promotion identifier.
     // plague has no generated assignment because its capture mode is builder.
     // Chance the plague applies.
@@ -3150,116 +3370,128 @@ bool CollectRequestUnitPlagueRowRecord(RequestUnitPlagueRowRecord& out)
     // applyOnAttack has no generated assignment because its capture mode is builder.
     // Plague applies on defense.
     // applyOnDefense has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitBlockedPromotionReplacementRecord(RequestUnitBlockedPromotionReplacementRecord& out)
 {
+    bool valid = true;
     // Identity of the unit whose blocked promotions are replaced; it must exist after this request's unit changes are applied.
     // unitId has no generated assignment because its capture mode is builder.
     // That unit's complete current blocked promotions; an empty range clears them.
     // rowRange has no generated assignment because its capture mode is builder.
     // Owner of the unit whose blocked promotions are replaced.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitBlockedPromotionRowRecord(RequestUnitBlockedPromotionRowRecord& out)
 {
+    bool valid = true;
     // Blocked promotion identifier.
     // promotion has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitAttackCountReplacementRecord(RequestUnitAttackCountReplacementRecord& out)
 {
+    bool valid = true;
     // Identity of the unit whose attack counters are replaced; it must exist after this request's unit changes are applied.
     // unitId has no generated assignment because its capture mode is builder.
     // That unit's complete current attack counters; an empty range clears them.
     // rowRange has no generated assignment because its capture mode is builder.
     // Owner of the unit whose attack counters are replaced.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitAttackCountRowRecord(RequestUnitAttackCountRowRecord& out)
 {
+    bool valid = true;
     // Attacks already received from that player this turn.
     // count has no generated assignment because its capture mode is builder.
     // Attacking player the counter tracks.
     // attackingPlayer has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestPlayerResistanceReplacementRecord(RequestPlayerResistanceReplacementRecord& out)
 {
+    bool valid = true;
     // That player's complete current resistance rows; an empty range clears them.
     // rowRange has no generated assignment because its capture mode is builder.
     // Player whose domination resistance rows are replaced; the player must exist in the captured WORLD.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestPlayerResistanceRowRecord(RequestPlayerResistanceRowRecord& out)
 {
+    bool valid = true;
     // Warmonger-fueled resistance after native cap processing.
     // dominationResistance has no generated assignment because its capture mode is builder.
     // Opponent the resistance targets.
     // opponent has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestCityAttackCountReplacementRecord(RequestCityAttackCountReplacementRecord& out)
 {
+    bool valid = true;
     // Identity of the city whose attack counters are replaced; it must exist after this request's city changes are applied.
     // cityId has no generated assignment because its capture mode is builder.
     // That city's complete current attack counters; an empty range clears them.
     // rowRange has no generated assignment because its capture mode is builder.
     // Owner of the city whose attack counters are replaced.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestCityAttackCountRowRecord(RequestCityAttackCountRowRecord& out)
 {
+    bool valid = true;
     // Attacking player the counter tracks.
     // attackingPlayer has no generated assignment because its capture mode is builder.
     // Attacks already received from that player this turn.
     // count has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestVisibilityResetRecord(RequestVisibilityResetRecord& out)
 {
+    bool valid = true;
     // Team whose complete known-visible bitset clears before this request's ordinary flips.
     // team has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitSparseFieldRecord(UnitSparseFieldRecord& out)
 {
+    bool valid = true;
     // The scalar's two's-complement bit pattern or the bitset word's little-endian bits.
     // value has no generated assignment because its capture mode is builder.
     // Generated sparse field identifier of the owning unit record.
     // fieldId has no generated assignment because its capture mode is builder.
     // Zero for scalars; the 32-bit word position for sparse bitsets.
     // wordIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestUnitSparseFieldRecord(RequestUnitSparseFieldRecord& out)
 {
+    bool valid = true;
     // The scalar's two's-complement bit pattern or the bitset word's little-endian bits.
     // value has no generated assignment because its capture mode is builder.
     // Generated sparse field identifier of the owning unit record.
     // fieldId has no generated assignment because its capture mode is builder.
     // Zero for scalars; the 32-bit word position for sparse bitsets.
     // wordIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlotSparseCountersRecord(PlotSparseCountersRecord& out)
 {
+    bool valid = true;
     // Plot index keying the counter row.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Extra path movement cost over a clamped signed 16-bit domain.
@@ -3268,20 +3500,22 @@ bool CollectPlotSparseCountersRecord(PlotSparseCountersRecord& out)
     // unitIncrement has no generated assignment because its capture mode is builder.
     // Recon count, 0 through 127; native storage is char.
     // reconCount has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCityReferenceRecord(CityReferenceRecord& out)
 {
+    bool valid = true;
     // City identity within its owner.
     // id has no generated assignment because its capture mode is builder.
     // City owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaPlotSparseCountersRecord(RequestDeltaPlotSparseCountersRecord& out)
 {
+    bool valid = true;
     // Plot index keying the counter row.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Extra path movement cost over a clamped signed 16-bit domain.
@@ -3290,31 +3524,34 @@ bool CollectRequestDeltaPlotSparseCountersRecord(RequestDeltaPlotSparseCountersR
     // unitIncrement has no generated assignment because its capture mode is builder.
     // Recon count, 0 through 127; native storage is char.
     // reconCount has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestCityReferenceRecord(RequestCityReferenceRecord& out)
 {
+    bool valid = true;
     // City identity within its owner.
     // id has no generated assignment because its capture mode is builder.
     // City owner.
     // owner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignMilitaryFlavorOverrideRecord(CampaignMilitaryFlavorOverrideRecord& out)
 {
+    bool valid = true;
     // Counterpart player receiving the partial override.
     // counterpartPlayer has no generated assignment because its capture mode is builder.
     // Override values in shared semantic slot order, scaled from 0 to 100.
     // militaryFlavors has no generated assignment because its capture mode is builder.
     // Lower five bits identify fields supplied by this override.
     // presenceMask has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestDeltaPlayerRecord(RequestDeltaPlayerRecord& out)
 {
+    bool valid = true;
     // Average unit experience scaled by 100.
     // avgUnitExp100 has no generated assignment because its capture mode is builder.
     // Non-const accessor, captured per domain.
@@ -3335,7 +3572,7 @@ bool CollectRequestDeltaPlayerRecord(RequestDeltaPlayerRecord& out)
     // woundedUnitDamageMod has no generated assignment because its capture mode is builder.
     // Great general combat bonus.
     // greatGeneralCombatBonus has no generated assignment because its capture mode is builder.
-    // Current supplied units.
+    // Unit supply capacity, capped at 32767. Barbarians have unlimited supply and the native accessor returns INT_MAX.
     // unitsSupplied has no generated assignment because its capture mode is builder.
     // Current unsupplied units.
     // unitsOutOfSupply has no generated assignment because its capture mode is builder.
@@ -3431,20 +3668,22 @@ bool CollectRequestDeltaPlayerRecord(RequestDeltaPlayerRecord& out)
     // capitalCityOwner has no generated assignment because its capture mode is builder.
     // Trait flag adding natural-wonder plots to the trait area-effect plot list.
     // combatBoostNearNaturalWonder has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectFormationInfoRecord(FormationInfoRecord& out)
 {
+    bool valid = true;
     // Formation info index.
     // formationType has no generated assignment because its capture mode is builder.
     // Slots in native formation order.
     // slotRange has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectFormationSlotInfoRecord(FormationSlotInfoRecord& out)
 {
+    bool valid = true;
     // Owning formation info index.
     // formationType has no generated assignment because its capture mode is builder.
     // Position within the formation.
@@ -3455,31 +3694,34 @@ bool CollectFormationSlotInfoRecord(FormationSlotInfoRecord& out)
     // secondaryUnitAi has no generated assignment because its capture mode is builder.
     // Whether the slot must be filled.
     // required has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectUnitResourceRequirementRecord(UnitResourceRequirementRecord& out)
 {
+    bool valid = true;
     // Unit info index.
     // unitType has no generated assignment because its capture mode is builder.
     // Required resource info index.
     // resourceType has no generated assignment because its capture mode is builder.
     // Resource units consumed by one live unit.
     // quantity has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectImprovementResourceCompatibilityRecord(ImprovementResourceCompatibilityRecord& out)
 {
+    bool valid = true;
     // Improvement info index.
     // improvementType has no generated assignment because its capture mode is builder.
     // Resource info index developed by the improvement.
     // resourceType has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCityResourceRecord(CityResourceRecord& out)
 {
+    bool valid = true;
     // Contributing city identity.
     // cityId has no generated assignment because its capture mode is builder.
     // Resource info index.
@@ -3488,22 +3730,24 @@ bool CollectCityResourceRecord(CityResourceRecord& out)
     // contribution has no generated assignment because its capture mode is builder.
     // Contributing city owner.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlayerResourceRecord(PlayerResourceRecord& out)
 {
+    bool valid = true;
     // Resource info index.
     // resourceType has no generated assignment because its capture mode is builder.
     // Residual after excluding ordinarily connected base tile quantities and ordinary city building supply. Includes trade, minor supply, other grants, and tile quantity bonuses.
     // externalContribution has no generated assignment because its capture mode is builder.
     // Affected player.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlayerEconomicsRecord(PlayerEconomicsRecord& out)
 {
+    bool valid = true;
     // Current gold balance in hundredths.
     // goldTimes100 has no generated assignment because its capture mode is builder.
     // Current faith balance in hundredths.
@@ -3522,22 +3766,24 @@ bool CollectPlayerEconomicsRecord(PlayerEconomicsRecord& out)
     // economicIntervalTurn has no generated assignment because its capture mode is builder.
     // Affected player.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignFocusAreaRecord(CampaignFocusAreaRecord& out)
 {
+    bool valid = true;
     // Center plot.
     // centerPlotIndex has no generated assignment because its capture mode is builder.
     // Turn when the area expires.
     // expiryTurn has no generated assignment because its capture mode is builder.
     // Inclusive focus radius.
     // radius has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectCampaignPendingTransferRecord(CampaignPendingTransferRecord& out)
 {
+    bool valid = true;
     // Stable transfer occurrence identity.
     // transferId has no generated assignment because its capture mode is builder.
     // Unit identity before transfer.
@@ -3552,11 +3798,12 @@ bool CollectCampaignPendingTransferRecord(CampaignPendingTransferRecord& out)
     // lineageOwner has no generated assignment because its capture mode is builder.
     // Receiving player.
     // receiver has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestOperationRecord(RequestOperationRecord& out)
 {
+    bool valid = true;
     // Operation identity.
     // operationId has no generated assignment because its capture mode is builder.
     // Zero or one complete operation version.
@@ -3577,11 +3824,12 @@ bool CollectRequestOperationRecord(RequestOperationRecord& out)
     // invocationResult has no generated assignment because its capture mode is builder.
     // Final reason for this record, or NO_ABORT_REASON.
     // abortReason has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestOperationVersionRecord(RequestOperationVersionRecord& out)
 {
+    bool valid = true;
     // Operation identity.
     // id has no generated assignment because its capture mode is builder.
     // Muster x.
@@ -3610,11 +3858,12 @@ bool CollectRequestOperationVersionRecord(RequestOperationVersionRecord& out)
     // enemy has no generated assignment because its capture mode is builder.
     // Abort reason.
     // abortReason has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestArmyVersionRecord(RequestArmyVersionRecord& out)
 {
+    bool valid = true;
     // Owning operation identity.
     // operationId has no generated assignment because its capture mode is builder.
     // Army identity.
@@ -3631,11 +3880,12 @@ bool CollectRequestArmyVersionRecord(RequestArmyVersionRecord& out)
     // operationOwner has no generated assignment because its capture mode is builder.
     // Army AI state.
     // aiState has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestFormationEntryVersionRecord(RequestFormationEntryVersionRecord& out)
 {
+    bool valid = true;
     // Owning operation identity.
     // operationId has no generated assignment because its capture mode is builder.
     // Owning army identity.
@@ -3652,11 +3902,12 @@ bool CollectRequestFormationEntryVersionRecord(RequestFormationEntryVersionRecor
     // unitOwner has no generated assignment because its capture mode is builder.
     // Required slot.
     // required has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestCampaignBoundaryRecord(RequestCampaignBoundaryRecord& out)
 {
+    bool valid = true;
     // Operation identity or -1.
     // operationId has no generated assignment because its capture mode is builder.
     // Zone identity or -1.
@@ -3669,11 +3920,12 @@ bool CollectRequestCampaignBoundaryRecord(RequestCampaignBoundaryRecord& out)
     // kind has no generated assignment because its capture mode is builder.
     // Operation owner or NO_PLAYER.
     // operationOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestZoneChoiceRecord(RequestZoneChoiceRecord& out)
 {
+    bool valid = true;
     // Chosen zone.
     // zoneId has no generated assignment because its capture mode is builder.
     // WORLD generation of the assessment.
@@ -3684,11 +3936,12 @@ bool CollectRequestZoneChoiceRecord(RequestZoneChoiceRecord& out)
     // priorityRank has no generated assignment because its capture mode is builder.
     // Native posture label.
     // posture has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestFocusAreaRecord(RequestFocusAreaRecord& out)
 {
+    bool valid = true;
     // Focus center.
     // centerPlotIndex has no generated assignment because its capture mode is builder.
     // Expiry turn; -1 on deletion.
@@ -3697,11 +3950,12 @@ bool CollectRequestFocusAreaRecord(RequestFocusAreaRecord& out)
     // kind has no generated assignment because its capture mode is builder.
     // Inclusive radius; zero on deletion.
     // radius has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestCityResourceRecord(RequestCityResourceRecord& out)
 {
+    bool valid = true;
     // Contributing city identity.
     // cityId has no generated assignment because its capture mode is builder.
     // Resource info index.
@@ -3710,22 +3964,24 @@ bool CollectRequestCityResourceRecord(RequestCityResourceRecord& out)
     // contribution has no generated assignment because its capture mode is builder.
     // Contributing city owner.
     // cityOwner has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestPlayerResourceRecord(RequestPlayerResourceRecord& out)
 {
+    bool valid = true;
     // Resource info index.
     // resourceType has no generated assignment because its capture mode is builder.
     // Residual after excluding ordinarily connected base tile quantities and ordinary city building supply. Includes trade, minor supply, other grants, and tile quantity bonuses.
     // externalContribution has no generated assignment because its capture mode is builder.
     // Affected player.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestPlayerEconomicsRecord(RequestPlayerEconomicsRecord& out)
 {
+    bool valid = true;
     // Current gold balance in hundredths.
     // goldTimes100 has no generated assignment because its capture mode is builder.
     // Current faith balance in hundredths.
@@ -3744,11 +4000,12 @@ bool CollectRequestPlayerEconomicsRecord(RequestPlayerEconomicsRecord& out)
     // economicIntervalTurn has no generated assignment because its capture mode is builder.
     // Affected player.
     // player has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEconomicBatchRecord(RequestEconomicBatchRecord& out)
 {
+    bool valid = true;
     // Actor-turn event order.
     // occurrenceOrder has no generated assignment because its capture mode is builder.
     // Signed external change after exclusions.
@@ -3761,11 +4018,12 @@ bool CollectRequestEconomicBatchRecord(RequestEconomicBatchRecord& out)
     // player has no generated assignment because its capture mode is builder.
     // MilitaryPhase at application.
     // occurrencePhase has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestMilitaryGoldTransactionRecord(RequestMilitaryGoldTransactionRecord& out)
 {
+    bool valid = true;
     // Actor-turn event order.
     // occurrenceOrder has no generated assignment because its capture mode is builder.
     // Signed actual gold effect.
@@ -3780,11 +4038,12 @@ bool CollectRequestMilitaryGoldTransactionRecord(RequestMilitaryGoldTransactionR
     // player has no generated assignment because its capture mode is builder.
     // VoxRlMilitaryEventCauseValue.
     // cause has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitRecord(RequestEventUnitRecord& out)
 {
+    bool valid = true;
     // First observed unit identity in this lineage.
     // lineageUnitId has no generated assignment because its capture mode is builder.
     // Transport unit identity or -1.
@@ -4057,44 +4316,48 @@ bool CollectRequestEventUnitRecord(RequestEventUnitRecord& out)
     // fortified has no generated assignment because its capture mode is builder.
     // Unit combat class; -1 when the type has none.
     // unitCombatType has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitMovementCountRecord(RequestEventUnitMovementCountRecord& out)
 {
+    bool valid = true;
     // Nonzero extra-move count.
     // count has no generated assignment because its capture mode is builder.
     // Zero selects the terrain table, one the feature table.
     // kind has no generated assignment because its capture mode is builder.
     // Terrain or feature index.
     // typeIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitSparseFieldRecord(RequestEventUnitSparseFieldRecord& out)
 {
+    bool valid = true;
     // The scalar's two's-complement bit pattern or the bitset word's little-endian bits.
     // value has no generated assignment because its capture mode is builder.
     // Generated sparse field identifier of the owning unit record.
     // fieldId has no generated assignment because its capture mode is builder.
     // Zero for scalars; the 32-bit word position for sparse bitsets.
     // wordIndex has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitModifierRecord(RequestEventUnitModifierRecord& out)
 {
+    bool valid = true;
     // Type index within the family.
     // index has no generated assignment because its capture mode is builder.
     // Captured modifier value.
     // value has no generated assignment because its capture mode is builder.
     // Indexed-modifier family selector.
     // family has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitPlagueRecord(RequestEventUnitPlagueRecord& out)
 {
+    bool valid = true;
     // Plague promotion identifier.
     // plague has no generated assignment because its capture mode is builder.
     // Chance the plague applies.
@@ -4105,27 +4368,30 @@ bool CollectRequestEventUnitPlagueRecord(RequestEventUnitPlagueRecord& out)
     // applyOnAttack has no generated assignment because its capture mode is builder.
     // Plague applies on defense.
     // applyOnDefense has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitBlockedPromotionRecord(RequestEventUnitBlockedPromotionRecord& out)
 {
+    bool valid = true;
     // Blocked promotion identifier.
     // promotion has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestEventUnitAttackCountRecord(RequestEventUnitAttackCountRecord& out)
 {
+    bool valid = true;
     // Attacks already received from that player this turn.
     // count has no generated assignment because its capture mode is builder.
     // Attacking player the counter tracks.
     // attackingPlayer has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestMilitaryArrivalRecord(RequestMilitaryArrivalRecord& out)
 {
+    bool valid = true;
     // Actor-turn order.
     // occurrenceOrder has no generated assignment because its capture mode is builder.
     // Source identity or -1.
@@ -4168,11 +4434,12 @@ bool CollectRequestMilitaryArrivalRecord(RequestMilitaryArrivalRecord& out)
     // donorPlayer has no generated assignment because its capture mode is builder.
     // Whether caller completion captured finalized placement, transport, and conversion state.
     // initializationComplete has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestMilitaryDepartureRecord(RequestMilitaryDepartureRecord& out)
 {
+    bool valid = true;
     // Actor-turn order.
     // occurrenceOrder has no generated assignment because its capture mode is builder.
     // Departing identity.
@@ -4213,11 +4480,12 @@ bool CollectRequestMilitaryDepartureRecord(RequestMilitaryDepartureRecord& out)
     // donorPlayer has no generated assignment because its capture mode is builder.
     // Whether the immutable final state is complete.
     // initializationComplete has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectRequestBarbarianCampCreationRecord(RequestBarbarianCampCreationRecord& out)
 {
+    bool valid = true;
     // Order within the barbarian actor-turn.
     // occurrenceOrder has no generated assignment because its capture mode is builder.
     // Stable nonzero identity. Newly created camps use the high identity range so reused plots remain distinct.
@@ -4232,20 +4500,24 @@ bool CollectRequestBarbarianCampCreationRecord(RequestBarbarianCampCreationRecor
     // occurrenceActor has no generated assignment because its capture mode is builder.
     // MilitaryPhase at occurrence.
     // occurrencePhase has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectTeamResourceRecord(CvTeam& team, TeamResourceRecord& out)
 {
+    bool valid = true;
     // Recorded team identifier.
     {
         const i32 checkedTeam = static_cast<i32>(team.GetID());
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "TeamResourceRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
     // Ordinary technology, policy, and trait reveal state by resource.
     for (int index = 0; index < 8; ++index) {
@@ -4271,22 +4543,24 @@ bool CollectTeamResourceRecord(CvTeam& team, TeamResourceRecord& out)
             out.improveableResources[index / 8] = static_cast<u8>(out.improveableResources[index / 8] | (1 << (index % 8)));
         }
     }
-    return true;
+    return valid;
 }
 
 bool CollectRequestTeamResourceRecord(RequestTeamResourceRecord& out)
 {
+    bool valid = true;
     // Recorded team identifier.
     // team has no generated assignment because its capture mode is builder.
     // Ordinary technology, policy, and trait reveal state by resource.
     // revealedResources has no generated assignment because its capture mode is builder.
     // Technology-based connection eligibility by resource.
     // improveableResources has no generated assignment because its capture mode is builder.
-    return true;
+    return valid;
 }
 
 bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
 {
+    bool valid = true;
     // Quantity of the fixed resource on this tile.
     out.resourceCount = static_cast<i32>(plot.getNumResource());
     // Effective working-city identity after the native override. The core row carries this reference as a token into the block's city reference table.
@@ -4309,9 +4583,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedEffectiveOwningCityOwner < -128 || checkedEffectiveOwningCityOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "effectiveOwningCityOwner", checkedEffectiveOwningCityOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.effectiveOwningCityOwner = static_cast<i8>(checkedEffectiveOwningCityOwner);
+        else
+        {
+            out.effectiveOwningCityOwner = static_cast<i8>(checkedEffectiveOwningCityOwner);
+        }
     }
     // Owning player.
     {
@@ -4319,9 +4596,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedOwner < -128 || checkedOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "owner", checkedOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.owner = static_cast<i8>(checkedOwner);
+        else
+        {
+            out.owner = static_cast<i8>(checkedOwner);
+        }
     }
     // Dynamic feature type.
     {
@@ -4329,9 +4609,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedFeatureType < -128 || checkedFeatureType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "featureType", checkedFeatureType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.featureType = static_cast<i8>(checkedFeatureType);
+        else
+        {
+            out.featureType = static_cast<i8>(checkedFeatureType);
+        }
     }
     // Route type.
     {
@@ -4339,9 +4622,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedRouteType < -128 || checkedRouteType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "routeType", checkedRouteType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.routeType = static_cast<i8>(checkedRouteType);
+        else
+        {
+            out.routeType = static_cast<i8>(checkedRouteType);
+        }
     }
     // Team of the player responsible for an unowned route, or NO_TEAM.
     {
@@ -4349,9 +4635,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedRouteOwnerTeam < -128 || checkedRouteOwnerTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "routeOwnerTeam", checkedRouteOwnerTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.routeOwnerTeam = static_cast<i8>(checkedRouteOwnerTeam);
+        else
+        {
+            out.routeOwnerTeam = static_cast<i8>(checkedRouteOwnerTeam);
+        }
     }
     // Team of the player that built the improvement, or NO_TEAM.
     {
@@ -4359,9 +4648,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedImprovementBuilderTeam < -128 || checkedImprovementBuilderTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "improvementBuilderTeam", checkedImprovementBuilderTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.improvementBuilderTeam = static_cast<i8>(checkedImprovementBuilderTeam);
+        else
+        {
+            out.improvementBuilderTeam = static_cast<i8>(checkedImprovementBuilderTeam);
+        }
     }
     // First owner-qualified owning-city reference component; the border-obstacle rule resolves the working city. Encoded with the identity as one city reference token.
     {
@@ -4369,9 +4661,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
         if (checkedOwningCityOwner < -128 || checkedOwningCityOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "PlotCaptureRecord", "owningCityOwner", checkedOwningCityOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.owningCityOwner = static_cast<i8>(checkedOwningCityOwner);
+        else
+        {
+            out.owningCityOwner = static_cast<i8>(checkedOwningCityOwner);
+        }
     }
     // Worked state used by adjacent city deep-water damage.
     out.beingWorked = (plot.isBeingWorked()) ? 1 : 0;
@@ -4389,11 +4684,12 @@ bool CollectPlotCaptureRecord(CvPlot& plot, PlotCaptureRecord& out)
     out.restoreMoves = (plot.IsRestoreMoves()) ? 1 : 0;
     // Free movement edge flag.
     out.freeMoveAcross = (plot.IsFreeMoveAcross()) ? 1 : 0;
-    return true;
+    return valid;
 }
 
 bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
 {
+    bool valid = true;
     // First observed unit identity in this lineage.
     // lineageUnitId has no generated assignment because its capture mode is builder.
     // Transport unit identity or -1.
@@ -4410,9 +4706,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedUnitType < 0 || checkedUnitType > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "unitType", checkedUnitType, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.unitType = static_cast<i32>(checkedUnitType);
+        else
+        {
+            out.unitType = static_cast<i32>(checkedUnitType);
+        }
     }
     // Current portable plot index.
     {
@@ -4420,9 +4719,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedPlotIndex < 0 || checkedPlotIndex > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "plotIndex", checkedPlotIndex, 0, 32767);
-            return false;
+            valid = false;
         }
-        out.plotIndex = static_cast<i32>(checkedPlotIndex);
+        else
+        {
+            out.plotIndex = static_cast<i32>(checkedPlotIndex);
+        }
     }
     // Current damage.
     {
@@ -4430,9 +4732,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedDamage < 0 || checkedDamage > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "damage", checkedDamage, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.damage = static_cast<i32>(checkedDamage);
+        else
+        {
+            out.damage = static_cast<i32>(checkedDamage);
+        }
     }
     // Maximum hit points.
     {
@@ -4440,9 +4745,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedMaxHitPoints < 0 || static_cast<u32>(checkedMaxHitPoints) < 1u || checkedMaxHitPoints > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "maxHitPoints", checkedMaxHitPoints, 1, 65535);
-            return false;
+            valid = false;
         }
-        out.maxHitPoints = static_cast<i32>(checkedMaxHitPoints);
+        else
+        {
+            out.maxHitPoints = static_cast<i32>(checkedMaxHitPoints);
+        }
     }
     // Remaining fixed-point moves.
     {
@@ -4450,9 +4758,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedMoves < -32768 || checkedMoves > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "moves", checkedMoves, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.moves = static_cast<i32>(checkedMoves);
+        else
+        {
+            out.moves = static_cast<i32>(checkedMoves);
+        }
     }
     // This accessor takes no argument.
     {
@@ -4460,9 +4771,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedMaxMoves < 0 || checkedMaxMoves > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "maxMoves", checkedMaxMoves, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.maxMoves = static_cast<i32>(checkedMaxMoves);
+        else
+        {
+            out.maxMoves = static_cast<i32>(checkedMaxMoves);
+        }
     }
     // bPretendEmbarked is false.
     {
@@ -4470,9 +4784,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedBaseMoves < 0 || checkedBaseMoves > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "baseMoves", checkedBaseMoves, 0, 255);
-            return false;
+            valid = false;
         }
-        out.baseMoves = static_cast<i32>(checkedBaseMoves);
+        else
+        {
+            out.baseMoves = static_cast<i32>(checkedBaseMoves);
+        }
     }
     // Attack count used to derive attacks left.
     {
@@ -4480,9 +4797,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedNumAttacks < 0 || checkedNumAttacks > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "numAttacks", checkedNumAttacks, 0, 255);
-            return false;
+            valid = false;
         }
-        out.numAttacks = static_cast<i32>(checkedNumAttacks);
+        else
+        {
+            out.numAttacks = static_cast<i32>(checkedNumAttacks);
+        }
     }
     // Unit level.
     {
@@ -4490,9 +4810,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedLevel < 0 || checkedLevel > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "level", checkedLevel, 0, 255);
-            return false;
+            valid = false;
         }
-        out.level = static_cast<i32>(checkedLevel);
+        else
+        {
+            out.level = static_cast<i32>(checkedLevel);
+        }
     }
     // Experience scaled by 100.
     out.experienceTimes100 = static_cast<i32>(unit.getExperienceTimes100());
@@ -4504,9 +4827,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedRange < 0 || checkedRange > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "range", checkedRange, 0, 255);
-            return false;
+            valid = false;
         }
-        out.range = static_cast<i32>(checkedRange);
+        else
+        {
+            out.range = static_cast<i32>(checkedRange);
+        }
     }
     // Power score.
     {
@@ -4514,9 +4840,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedPower < 0 || checkedPower > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "power", checkedPower, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.power = static_cast<i32>(checkedPower);
+        else
+        {
+            out.power = static_cast<i32>(checkedPower);
+        }
     }
     // Base melee strength.
     {
@@ -4524,9 +4853,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedBaseCombatStrength < 0 || checkedBaseCombatStrength > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "baseCombatStrength", checkedBaseCombatStrength, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.baseCombatStrength = static_cast<i32>(checkedBaseCombatStrength);
+        else
+        {
+            out.baseCombatStrength = static_cast<i32>(checkedBaseCombatStrength);
+        }
     }
     // Unit visibility range.
     {
@@ -4534,9 +4866,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedVisibilityRange < 0 || checkedVisibilityRange > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "visibilityRange", checkedVisibilityRange, 0, 255);
-            return false;
+            valid = false;
         }
-        out.visibilityRange = static_cast<i32>(checkedVisibilityRange);
+        else
+        {
+            out.visibilityRange = static_cast<i32>(checkedVisibilityRange);
+        }
     }
     // Flanking input.
     {
@@ -4544,9 +4879,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedFlankAttackModifier < -32768 || checkedFlankAttackModifier > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "flankAttackModifier", checkedFlankAttackModifier, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.flankAttackModifier = static_cast<i32>(checkedFlankAttackModifier);
+        else
+        {
+            out.flankAttackModifier = static_cast<i32>(checkedFlankAttackModifier);
+        }
     }
     // Ranged modifier input.
     {
@@ -4554,9 +4892,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedRangedAttackModifier < -32768 || checkedRangedAttackModifier > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "rangedAttackModifier", checkedRangedAttackModifier, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.rangedAttackModifier = static_cast<i32>(checkedRangedAttackModifier);
+        else
+        {
+            out.rangedAttackModifier = static_cast<i32>(checkedRangedAttackModifier);
+        }
     }
     // Flank power contributed when adjacent-enemy counting weighs flanking.
     {
@@ -4564,9 +4905,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedFlankPower < 0 || checkedFlankPower > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "flankPower", checkedFlankPower, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.flankPower = static_cast<i32>(checkedFlankPower);
+        else
+        {
+            out.flankPower = static_cast<i32>(checkedFlankPower);
+        }
     }
     // Nonzero per-terrain and per-feature extra-move counts, appended in unit order. An empty range leaves every count at zero.
     // movementCountRange has no generated assignment because its capture mode is builder.
@@ -4576,9 +4920,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedHpHealedIfDefeatEnemy < -32768 || checkedHpHealedIfDefeatEnemy > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "hpHealedIfDefeatEnemy", checkedHpHealedIfDefeatEnemy, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.hpHealedIfDefeatEnemy = static_cast<i32>(checkedHpHealedIfDefeatEnemy);
+        else
+        {
+            out.hpHealedIfDefeatEnemy = static_cast<i32>(checkedHpHealedIfDefeatEnemy);
+        }
     }
     // Attack modifier above half health.
     {
@@ -4586,9 +4933,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedAttackAbove50HealthModifier < -32768 || checkedAttackAbove50HealthModifier > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "attackAbove50HealthModifier", checkedAttackAbove50HealthModifier, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.attackAbove50HealthModifier = static_cast<i32>(checkedAttackAbove50HealthModifier);
+        else
+        {
+            out.attackAbove50HealthModifier = static_cast<i32>(checkedAttackAbove50HealthModifier);
+        }
     }
     // Flat addition to the global pillage heal amount.
     out.partialHealOnPillage = static_cast<i32>(unit.getPartialHealOnPillage());
@@ -4598,9 +4948,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedActualHealRate < -32768 || checkedActualHealRate > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "actualHealRate", checkedActualHealRate, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.actualHealRate = static_cast<i32>(checkedActualHealRate);
+        else
+        {
+            out.actualHealRate = static_cast<i32>(checkedActualHealRate);
+        }
     }
     // Stacked great-leader unit type for defender ties.
     out.leaderUnitType = static_cast<i32>(unit.getLeaderUnitType());
@@ -4610,9 +4963,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedUnitClassType < -1 || checkedUnitClassType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "unitClassType", checkedUnitClassType, -1, 127);
-            return false;
+            valid = false;
         }
-        out.unitClassType = static_cast<i32>(checkedUnitClassType);
+        else
+        {
+            out.unitClassType = static_cast<i32>(checkedUnitClassType);
+        }
     }
     // Pretend-embarked base moves; baseMoves(false) is the existing baseMoves field.
     {
@@ -4620,9 +4976,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedBaseMovesEmbarked < 0 || checkedBaseMovesEmbarked > 255)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "baseMovesEmbarked", checkedBaseMovesEmbarked, 0, 255);
-            return false;
+            valid = false;
         }
-        out.baseMovesEmbarked = static_cast<i32>(checkedBaseMovesEmbarked);
+        else
+        {
+            out.baseMovesEmbarked = static_cast<i32>(checkedBaseMovesEmbarked);
+        }
     }
     // Effective extra combat percent including player and handicap terms.
     {
@@ -4630,9 +4989,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedExtraCombatPercent < -32768 || checkedExtraCombatPercent > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "extraCombatPercent", checkedExtraCombatPercent, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.extraCombatPercent = static_cast<i32>(checkedExtraCombatPercent);
+        else
+        {
+            out.extraCombatPercent = static_cast<i32>(checkedExtraCombatPercent);
+        }
     }
     // Attack modifier against cities.
     {
@@ -4640,9 +5002,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedCityAttackModifier < -32768 || checkedCityAttackModifier > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "cityAttackModifier", checkedCityAttackModifier, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.cityAttackModifier = static_cast<i32>(checkedCityAttackModifier);
+        else
+        {
+            out.cityAttackModifier = static_cast<i32>(checkedCityAttackModifier);
+        }
     }
     // Defense modifier against ranged attacks.
     {
@@ -4650,9 +5015,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedRangedDefenseModifier < -32768 || checkedRangedDefenseModifier > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "rangedDefenseModifier", checkedRangedDefenseModifier, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.rangedDefenseModifier = static_cast<i32>(checkedRangedDefenseModifier);
+        else
+        {
+            out.rangedDefenseModifier = static_cast<i32>(checkedRangedDefenseModifier);
+        }
     }
     // Unit-level combat bonus against barbarians.
     {
@@ -4660,9 +5028,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedBarbarianCombatBonus < -32768 || checkedBarbarianCombatBonus > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "barbarianCombatBonus", checkedBarbarianCombatBonus, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.barbarianCombatBonus = static_cast<i32>(checkedBarbarianCombatBonus);
+        else
+        {
+            out.barbarianCombatBonus = static_cast<i32>(checkedBarbarianCombatBonus);
+        }
     }
     // Value of the nearby-unit-class combat bonus.
     out.nearbyUnitClassBonus = static_cast<i32>(unit.getNearbyUnitClassBonus());
@@ -4674,9 +5045,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedBaseRangedCombatStrength < 0 || checkedBaseRangedCombatStrength > 65535)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "baseRangedCombatStrength", checkedBaseRangedCombatStrength, 0, 65535);
-            return false;
+            valid = false;
         }
-        out.baseRangedCombatStrength = static_cast<i32>(checkedBaseRangedCombatStrength);
+        else
+        {
+            out.baseRangedCombatStrength = static_cast<i32>(checkedBaseRangedCombatStrength);
+        }
     }
     // Unit combat class; -1 when the type has none.
     {
@@ -4684,9 +5058,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedUnitCombatType < -1 || checkedUnitCombatType > 63)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "unitCombatType", checkedUnitCombatType, -1, 63);
-            return false;
+            valid = false;
         }
-        out.unitCombatType = static_cast<i32>(checkedUnitCombatType);
+        else
+        {
+            out.unitCombatType = static_cast<i32>(checkedUnitCombatType);
+        }
     }
     // Give-modifier aura counter; membership of the promotion-unit candidate list requires it to be positive.
     out.nearbyPromotion = static_cast<i32>(unit.GetNearbyPromotion());
@@ -4696,9 +5073,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedOpenDefenseModifier < -32768 || checkedOpenDefenseModifier > 32767)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "openDefenseModifier", checkedOpenDefenseModifier, -32768, 32767);
-            return false;
+            valid = false;
         }
-        out.openDefenseModifier = static_cast<i32>(checkedOpenDefenseModifier);
+        else
+        {
+            out.openDefenseModifier = static_cast<i32>(checkedOpenDefenseModifier);
+        }
     }
     // Last operation deployment turn, or -100 before any deployment. The recent-deployment check adds AI_TACTICAL_MAP_TEMP_ZONE_TURNS to this turn.
     // deployFromOperationTurn has no generated assignment because its capture mode is builder.
@@ -5329,9 +5709,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedOwner < -128 || checkedOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "owner", checkedOwner, -128, 127);
-            return false;
+            valid = false;
         }
-        out.owner = static_cast<i8>(checkedOwner);
+        else
+        {
+            out.owner = static_cast<i8>(checkedOwner);
+        }
     }
     // Owner team.
     {
@@ -5339,9 +5722,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedTeam < -128 || checkedTeam > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "team", checkedTeam, -128, 127);
-            return false;
+            valid = false;
         }
-        out.team = static_cast<i8>(checkedTeam);
+        else
+        {
+            out.team = static_cast<i8>(checkedTeam);
+        }
     }
     // Current unit AI type.
     {
@@ -5349,9 +5735,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedUnitAiType < -128 || checkedUnitAiType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "unitAiType", checkedUnitAiType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.unitAiType = static_cast<i8>(checkedUnitAiType);
+        else
+        {
+            out.unitAiType = static_cast<i8>(checkedUnitAiType);
+        }
     }
     // The required checkLineOfSightProperty argument is false.
     {
@@ -5359,9 +5748,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedFacing < -128 || checkedFacing > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "facing", checkedFacing, -128, 127);
-            return false;
+            valid = false;
         }
-        out.facing = static_cast<i8>(checkedFacing);
+        else
+        {
+            out.facing = static_cast<i8>(checkedFacing);
+        }
     }
     // Moved this turn.
     out.setHasMoved((unit.hasMoved()) != 0);
@@ -5394,9 +5786,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedDomainType < -128 || checkedDomainType > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "domainType", checkedDomainType, -128, 127);
-            return false;
+            valid = false;
         }
-        out.domainType = static_cast<i8>(checkedDomainType);
+        else
+        {
+            out.domainType = static_cast<i8>(checkedDomainType);
+        }
     }
     // Combat-unit flag.
     out.setCombatUnit((unit.IsCombatUnit()) != 0);
@@ -5700,9 +6095,12 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (checkedGiveDomain < -128 || checkedGiveDomain > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "UnitRecord", "giveDomain", checkedGiveDomain, -128, 127);
-            return false;
+            valid = false;
         }
-        out.giveDomain = static_cast<i8>(checkedGiveDomain);
+        else
+        {
+            out.giveDomain = static_cast<i8>(checkedGiveDomain);
+        }
     }
     // The aura applies only while the source unit has not moved.
     out.setGiveOnlyOnStartingTurn((unit.isGiveOnlyOnStartingTurn()) != 0);
@@ -5722,5 +6120,5 @@ bool CollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& out)
         if (clampedGreatAdmiralCount > 255) clampedGreatAdmiralCount = 255;
         out.greatAdmiralCount = static_cast<u8>(clampedGreatAdmiralCount);
     }
-    return true;
+    return valid;
 }
