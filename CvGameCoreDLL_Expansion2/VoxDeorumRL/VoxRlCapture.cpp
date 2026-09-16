@@ -362,6 +362,15 @@ struct VoxRlCapture::OperationCaptureState
 	std::map<VoxRlEntityKey, int> operationAbortReasons;
 	std::map<VoxRlEntityKey, int> operationCauses;
 	std::map<VoxRlEntityKey, PlayerTypes> operationInitiators;
+	// Retains the first stop context through later validation and deferred removal.
+	void RememberOperationCause(const VoxRlEntityKey& key, int cause,
+		PlayerTypes initiatingPlayer, int abortReason)
+	{
+		if (operationAbortReasons.count(key) != 0 && operationAbortReasons[key] != NO_ABORT_REASON) return;
+		operationAbortReasons[key] = abortReason;
+		operationCauses[key] = cause;
+		operationInitiators[key] = initiatingPlayer;
+	}
 	std::map<int, VoxRlRequestData> pendingRowsByOwner;
 	std::vector<RequestZoneChoiceRecord> pendingZoneChoices;
 	bool stanceAssessmentValid;
@@ -479,6 +488,13 @@ namespace
 		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
 		data.requestBarbarianCampCreations.size();
 }
+
+	// Successful completion is terminal before Kill assigns its final native reason.
+	int OperationRemovalReason(CvAIOperation& operation)
+	{
+		return operation.GetOperationState() == AI_OPERATION_STATE_SUCCESSFUL_FINISH
+			? AI_ABORT_SUCCESS : operation.GetAbortReason();
+	}
 
 	// Produces a stable native fingerprint for one operation and all child armies.
 	std::string OperationFingerprint(CvAIOperation& operation)
@@ -871,16 +887,13 @@ void VoxRlCapture::NoteOperationChangedInternal(PlayerTypes eOwner, int operatio
 	CvAIOperation* operation = GET_PLAYER(eOwner).getAIOperation(operationId);
 	if (operation == NULL) return;
 	PlayerTypes initiatingPlayer = eOwner;
-	int cause = VOX_RL_OPERATION_CHANGE_UNCLASSIFIED;
+	int cause = VOX_RL_OPERATION_CHANGE_FORCED;
 	const OperationCauseContext* context = FindOperationCause(eOwner, false);
 	if (context != NULL)
 	{
 		initiatingPlayer = context->initiatingPlayer;
 		cause = context->cause;
 	}
-	// Invocation reconciliation owns execution records so direct setters and
-	// scope teardown cannot consume the before-state or create duplicate rows.
-	if (cause == VOX_RL_OPERATION_CHANGE_EXECUTION) return;
 	const VoxRlEntityKey key(static_cast<int>(eOwner), operationId);
 	std::map<VoxRlEntityKey, std::string>::const_iterator previous =
 		m_operationState->operationFingerprints.find(key);
@@ -888,9 +901,19 @@ void VoxRlCapture::NoteOperationChangedInternal(PlayerTypes eOwner, int operatio
 	// decides whether to keep it. Only the explicit accepted-creation hook may
 	// admit an identity that is not already in the captured inventory.
 	if (previous == m_operationState->operationFingerprints.end() && !allowNew) return;
+	const int removalReason = OperationRemovalReason(*operation);
+	// Execution retains its stop context immediately; invocation reconciliation
+	// owns version collection and fingerprinting for its other mutations.
+	if (cause == VOX_RL_OPERATION_CHANGE_EXECUTION)
+	{
+		if (removalReason != NO_ABORT_REASON)
+			m_operationState->RememberOperationCause(key, cause, initiatingPlayer, removalReason);
+		return;
+	}
 	const std::string fingerprint = OperationFingerprint(*operation);
 	if (previous != m_operationState->operationFingerprints.end() && previous->second == fingerprint)
 		return;
+	m_operationState->RememberOperationCause(key, cause, initiatingPlayer, removalReason);
 	const int kind = cause == VOX_RL_OPERATION_CHANGE_CHOICE ||
 		cause == VOX_RL_OPERATION_CHANGE_UNIT_ASSIGNMENT
 		? VOX_RL_OPERATION_RECORD_CHOICE : VOX_RL_OPERATION_RECORD_MAINTENANCE;
@@ -903,9 +926,6 @@ void VoxRlCapture::NoteOperationChangedInternal(PlayerTypes eOwner, int operatio
 		return;
 	}
 	m_operationState->operationFingerprints[key] = fingerprint;
-	m_operationState->operationAbortReasons[key] = static_cast<int>(operation->GetAbortReason());
-	m_operationState->operationCauses[key] = cause;
-	m_operationState->operationInitiators[key] = initiatingPlayer;
 }
 
 void VoxRlCapture::NoteOperationRemoved(PlayerTypes eOwner, int operationId, int abortReason)
@@ -914,14 +934,16 @@ void VoxRlCapture::NoteOperationRemoved(PlayerTypes eOwner, int operationId, int
 	const VoxRlEntityKey key(static_cast<int>(eOwner), operationId);
 	if (m_operationState->operationFingerprints.count(key) == 0) return;
 	PlayerTypes initiatingPlayer = eOwner;
-	int cause = VOX_RL_OPERATION_CHANGE_UNCLASSIFIED;
-	std::map<VoxRlEntityKey, PlayerTypes>::const_iterator savedInitiator =
-		m_operationState->operationInitiators.find(key);
-	if (savedInitiator != m_operationState->operationInitiators.end()) initiatingPlayer = savedInitiator->second;
-	std::map<VoxRlEntityKey, int>::const_iterator savedCause = m_operationState->operationCauses.find(key);
-	if (savedCause != m_operationState->operationCauses.end()) cause = savedCause->second;
+	int cause = VOX_RL_OPERATION_CHANGE_FORCED;
 	const OperationCauseContext* context = FindOperationCause(eOwner, false);
-	if (context != NULL)
+	// Cleanup describes when removal happens, not why stopping began.
+	if (m_operationState->operationAbortReasons.count(key) != 0 &&
+		m_operationState->operationAbortReasons[key] != NO_ABORT_REASON)
+	{
+		initiatingPlayer = m_operationState->operationInitiators[key];
+		cause = m_operationState->operationCauses[key];
+	}
+	else if (context != NULL)
 	{
 		initiatingPlayer = context->initiatingPlayer;
 		cause = context->cause;
@@ -980,8 +1002,8 @@ bool VoxRlCapture::ReconcileOperations(PlayerTypes eOwner, int recordKind,
 				row.abortReason = static_cast<i8>(operation->GetAbortReason());
 				m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)].requestOperations.push_back(row);
 			}
-			m_operationState->operationCauses[key] = VOX_RL_OPERATION_CHANGE_EXECUTION;
-			m_operationState->operationInitiators[key] = eOwner;
+			m_operationState->RememberOperationCause(key, VOX_RL_OPERATION_CHANGE_EXECUTION,
+				eOwner, OperationRemovalReason(*operation));
 		}
 		else if (changed)
 		{
@@ -991,11 +1013,10 @@ bool VoxRlCapture::ReconcileOperations(PlayerTypes eOwner, int recordKind,
 				static_cast<u8>(cause), static_cast<u8>(VOX_RL_OPERATION_RESULT_NONE),
 				static_cast<i8>(operation->GetAbortReason()),
 				m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)])) return false;
-			m_operationState->operationCauses[key] = cause;
-			m_operationState->operationInitiators[key] = eOwner;
+			m_operationState->RememberOperationCause(key, cause, eOwner,
+				OperationRemovalReason(*operation));
 		}
 		m_operationState->operationFingerprints[key] = fingerprint;
-		m_operationState->operationAbortReasons[key] = static_cast<int>(operation->GetAbortReason());
 	}
 	if (operationId < 0)
 	{
@@ -1646,9 +1667,8 @@ bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn,
 		if (m_operationState->operationFingerprints.count(key) == 0)
 		{
 			m_operationState->operationFingerprints[key] = OperationFingerprint(*operation);
-			m_operationState->operationAbortReasons[key] = static_cast<int>(operation->GetAbortReason());
-			m_operationState->operationCauses[key] = VOX_RL_OPERATION_CHANGE_UNCLASSIFIED;
-			m_operationState->operationInitiators[key] = ePlayer;
+			m_operationState->RememberOperationCause(key, VOX_RL_OPERATION_CHANGE_FORCED,
+				ePlayer, OperationRemovalReason(*operation));
 		}
 	}
 	return true;

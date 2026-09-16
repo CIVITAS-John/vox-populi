@@ -529,14 +529,10 @@ void CvMilitaryAI::DoTurn()
 
 	if(!m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 	{
-		// Vox Deorum: operation selection is an owner-qualified choice context.
+		// Vox Deorum: selection labels are scoped to the choices inside UpdateOperations.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 			VoxRlCapture::GetInstance().SetMilitaryPhase(m_pPlayer->GetID(), VOX_RL_MILITARY_PHASE_OPERATION_SELECTION);
-		{
-			VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
-				m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
-			UpdateOperations();
-		}
+		UpdateOperations();
 		// Vox Deorum: retain the completed selection batch, including an empty batch.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 			VoxRlCapture::GetInstance().OnOperationSelectionComplete(m_pPlayer->GetID());
@@ -2454,9 +2450,6 @@ void CvMilitaryAI::UpdateOperations()
 			// If we've made peace, abort all operations
 			if(GET_TEAM(m_pPlayer->getTeam()).isForcePeace(GET_PLAYER(eLoopPlayer).getTeam()))
 			{
-				// Vox Deorum: forced peace overrides the enclosing selection cause.
-				VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
-					m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_FORCED);
 				m_pPlayer->StopAllLandOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_WAR_STATE_CHANGE);
 				m_pPlayer->StopAllSeaOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_WAR_STATE_CHANGE);
 				m_pPlayer->StopAllLandDefensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_WAR_STATE_CHANGE);
@@ -2466,9 +2459,6 @@ void CvMilitaryAI::UpdateOperations()
 			// If we cannot declare war on this player, abort all offensive operations related to him
 			if(!m_pPlayer->IsAtWarWith(eLoopPlayer) && !GET_TEAM(m_pPlayer->getTeam()).canDeclareWar(GET_PLAYER(eLoopPlayer).getTeam()))
 			{
-				// Vox Deorum: legality cancellation overrides the enclosing selection cause.
-				VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
-					m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_FORCED);
 				m_pPlayer->StopAllLandOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_TARGET_NOT_VALID);
 				m_pPlayer->StopAllSeaOffensiveOperationsAgainstPlayer(eLoopPlayer,AI_ABORT_TARGET_NOT_VALID);
 			}
@@ -2476,6 +2466,9 @@ void CvMilitaryAI::UpdateOperations()
 			// if we're at war with this player
 			if (m_pPlayer->IsAtWarWith(eLoopPlayer))
 			{
+				// Vox Deorum: defense removal and offensive changes are choices; diplomacy above uses the default cause.
+				VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+					m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 				//Defense check.
 				if (pThreatenedCoastalCityA == NULL)
 					m_pPlayer->StopAllSeaDefensiveOperationsAgainstPlayer(eLoopPlayer, AI_ABORT_WAR_STATE_CHANGE);
@@ -2507,6 +2500,9 @@ void CvMilitaryAI::UpdateOperations()
 	{
 		if(pLoopUnit->AI_getUnitAIType() == UNITAI_CARRIER_SEA && pLoopUnit->getArmyID() == -1 && !pLoopUnit->shouldHeal(false))
 		{
+			// Vox Deorum: accepting an idle carrier is an operation choice.
+			VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+				m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_CHOICE);
 			//the operation will find it's own target and remain active until indefinitely.
 			//the airplanes rebase independently, they are not part of the operation.
 			m_pPlayer->addAIOperation(AI_OPERATION_CARRIER_GROUP, 0, NO_PLAYER, NULL, NULL);
