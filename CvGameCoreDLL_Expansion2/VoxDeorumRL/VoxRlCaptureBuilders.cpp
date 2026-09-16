@@ -1898,15 +1898,56 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 	return valid;
 }
 
+// Reports the failed REQUEST build step with enough context to locate its input.
+static bool NoteRequestBuildFailure(const VoxRlBlockIdentity& identity,
+	const VoxRlRequestData& data, const char* stage, const char* section,
+	const char* check, size_t rowIndex, u32 requiredBytes = 0)
+{
+	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+	if (log != NULL)
+	{
+		log->Msg("Capture REQUEST build failed: stage=%s player=%d turn=%d delta=%u decision=%u phase=%u section=%s check=%s row=%d requiredBytes=%u operations=%u operationVersions=%u armyVersions=%u formationVersions=%u interceptorReplacements=%u interceptorEntries=%u.\n",
+			stage, identity.player, identity.turn, identity.deltaSequence, identity.decisionId,
+			static_cast<unsigned int>(data.requestHeader.phase), section, check,
+			rowIndex == static_cast<size_t>(-1) ? -1 : static_cast<int>(rowIndex), requiredBytes,
+			static_cast<unsigned int>(data.requestOperations.size()),
+			static_cast<unsigned int>(data.requestOperationVersions.size()),
+			static_cast<unsigned int>(data.requestArmyVersions.size()),
+			static_cast<unsigned int>(data.requestFormationEntryVersions.size()),
+			static_cast<unsigned int>(data.requestInterceptorReplacements.size()),
+			static_cast<unsigned int>(data.requestInterceptorEntries.size()));
+	}
+	return false;
+}
+
 // Binds staged request children through their declared generated range helpers.
 bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData& data,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
-	bool valid = true;
+	length = 0;
 	// Preserve every section, including parent rows and their request-local children.
 	// Section row counts now replace the header helpers that used to copy these rows.
 	VoxRlRequestData output = data;
 	output.requestHeader.decisionId = static_cast<u32>(identity.decisionId);
+	// Removal and unchanged-invocation rows have no children and arrive with
+	// zeroed ranges. Bind their empty ranges at the preceding snapshot's end
+	// so they tile the child sections alongside rows that do carry versions.
+	u32 operationCursor = 0;
+	u32 armyCursor = 0;
+	u32 formationCursor = 0;
+	for (size_t index = 0; index < output.requestOperations.size(); ++index)
+	{
+		RequestOperationRecord& operation = output.requestOperations[index];
+		if (operation.operationVersionRangeCount == 0)
+			operation.operationVersionRangeFirst = operationCursor;
+		if (operation.armyVersionRangeCount == 0)
+			operation.armyVersionRangeFirst = armyCursor;
+		if (operation.formationEntryVersionRangeCount == 0)
+			operation.formationEntryVersionRangeFirst = formationCursor;
+		operationCursor = operation.operationVersionRangeFirst + operation.operationVersionRangeCount;
+		armyCursor = operation.armyVersionRangeFirst + operation.armyVersionRangeCount;
+		formationCursor = operation.formationEntryVersionRangeFirst + operation.formationEntryVersionRangeCount;
+	}
 	// Interceptor ranges are bound below from the collected entries in player order.
 	output.requestInterceptorEntries.clear();
 	size_t entryCursor = 0;
@@ -1920,11 +1961,30 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 			entries.push_back(data.requestInterceptorEntries[entryCursor]);
 			++entryCursor;
 		}
-		if (!AppendRequestInterceptorReplacementRecordEntryRange(&replacement, &output, entries)) valid = false;
+		if (!AppendRequestInterceptorReplacementRecordEntryRange(&replacement, &output, entries))
+			return NoteRequestBuildFailure(identity, data, "interceptorBinding",
+				"requestInterceptorReplacements", "entryRange append", index);
 	}
-	if (entryCursor != data.requestInterceptorEntries.size()) return false;
+	if (entryCursor != data.requestInterceptorEntries.size())
+		return NoteRequestBuildFailure(identity, data, "interceptorBinding",
+			"requestInterceptorEntries", "unmatched owner", entryCursor);
 	// The sparse replacement tiling and identity consistency are enforced by the
-	// generated request validator, which runs inside Write.
-	if (!valid) return false;
-	return output.Write(identity, storage, length);
+	// generated request validator. Diagnose only failures to keep successful builds cheap.
+	u32 requiredBytes = 0;
+	if (!output.ByteLength(&requiredBytes))
+	{
+		VoxRlBuilderValidationFailure failure;
+		if (!VoxRlValidateRequestData(output, &failure))
+			return NoteRequestBuildFailure(identity, output, "dataValidation",
+				failure.section, failure.check, failure.rowIndex);
+		return NoteRequestBuildFailure(identity, output, "byteLength",
+			"request", "payload size limit or overflow", static_cast<size_t>(-1));
+	}
+	if (!storage.Allocate(requiredBytes))
+		return NoteRequestBuildFailure(identity, output, "allocation",
+			"request", "storage allocation", static_cast<size_t>(-1), requiredBytes);
+	if (!output.Write(identity, storage.MutableBytes(), storage.ByteLength(), &length))
+		return NoteRequestBuildFailure(identity, output, "serialization",
+			"request", "writer rejected block", static_cast<size_t>(-1), requiredBytes);
+	return true;
 }

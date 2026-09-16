@@ -64,6 +64,23 @@ inline bool VoxRlFailFieldRange(VoxRlFieldRangeFailure* failure, const char* rea
     return false;
 }
 
+// Describes the first generated builder validation rule that failed.
+struct VoxRlBuilderValidationFailure
+{
+    const char* section;
+    const char* check;
+    size_t rowIndex;
+    // Starts with no failure and no applicable row.
+    VoxRlBuilderValidationFailure() : section(0), check(0), rowIndex(static_cast<size_t>(-1)) {}
+};
+
+// Records the first failed rule when diagnostics were requested.
+inline bool VoxRlBuilderValidationFail(VoxRlBuilderValidationFailure* failure, const char* section, const char* check, size_t rowIndex)
+{
+    if (failure != 0 && failure->check == 0) { failure->section = section; failure->check = check; failure->rowIndex = rowIndex; }
+    return false;
+}
+
 // Splits one full UnitRecord into its UnitWireRecord wire row and sparse rows.
 // Dense wire bounds are validated before the narrowing cast; every sparse
 // field whose value differs from its default appends one row.
@@ -2634,36 +2651,42 @@ inline bool AppendFormationInfoRecordSlotRange(FormationInfoRecord* parent, VoxR
     parent->slotRangeFirst = first; parent->slotRangeCount = count; return true;
 }
 
-inline bool VoxRlValidateStaticData(const VoxRlStaticData& data)
+inline bool VoxRlValidateStaticData(const VoxRlStaticData& data, VoxRlBuilderValidationFailure* failure)
 {
-    if (true && !VoxRlIsValidStaticRulesRecord(data.staticRules)) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticTerrainInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticFeatureInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticRouteInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticImprovementInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticResourceInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticUnitEntryInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticPlotTopology.size())) return false;
-    if (!data.staticPlotTopology.empty() && !VoxRlAreValidPlotTopologyRecordRows(&data.staticPlotTopology[0], static_cast<u32>(data.staticPlotTopology.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticPromotionInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticProcessInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticCityEventChoiceInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticUnitClassInfos.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticFormationInfos.size())) return false;
+    if (failure != 0) *failure = VoxRlBuilderValidationFailure();
+    if (true && !VoxRlIsValidStaticRulesRecord(data.staticRules)) return VoxRlBuilderValidationFail(failure, "staticRules", "record", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticTerrainInfos.size())) return VoxRlBuilderValidationFail(failure, "staticTerrainInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticFeatureInfos.size())) return VoxRlBuilderValidationFail(failure, "staticFeatureInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticRouteInfos.size())) return VoxRlBuilderValidationFail(failure, "staticRouteInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticImprovementInfos.size())) return VoxRlBuilderValidationFail(failure, "staticImprovementInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticResourceInfos.size())) return VoxRlBuilderValidationFail(failure, "staticResourceInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticUnitEntryInfos.size())) return VoxRlBuilderValidationFail(failure, "staticUnitEntryInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticPlotTopology.size())) return VoxRlBuilderValidationFail(failure, "staticPlotTopology", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.staticPlotTopology.size(); ++rowIndex) if (!VoxRlIsValidPlotTopologyRecord(data.staticPlotTopology[rowIndex])) return VoxRlBuilderValidationFail(failure, "staticPlotTopology", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.staticPromotionInfos.size())) return VoxRlBuilderValidationFail(failure, "staticPromotionInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticProcessInfos.size())) return VoxRlBuilderValidationFail(failure, "staticProcessInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticCityEventChoiceInfos.size())) return VoxRlBuilderValidationFail(failure, "staticCityEventChoiceInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticUnitClassInfos.size())) return VoxRlBuilderValidationFail(failure, "staticUnitClassInfos", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticFormationInfos.size())) return VoxRlBuilderValidationFail(failure, "staticFormationInfos", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.staticFormationInfos.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.staticFormationInfos[index].slotRangeFirst, data.staticFormationInfos[index].slotRangeCount, data.staticFormationSlotInfos.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.staticFormationInfos[index].slotRangeFirst, data.staticFormationInfos[index].slotRangeCount, data.staticFormationSlotInfos.size())) return VoxRlBuilderValidationFail(failure, "staticFormationInfos", "slotRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.staticFormationSlotInfos.size())) return false;
-    if (!data.staticFormationSlotInfos.empty() && !VoxRlAreValidFormationSlotInfoRecordRows(&data.staticFormationSlotInfos[0], static_cast<u32>(data.staticFormationSlotInfos.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticUnitResourceRequirements.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.staticImprovementResourceCompatibilities.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.staticFormationSlotInfos.size())) return VoxRlBuilderValidationFail(failure, "staticFormationSlotInfos", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.staticFormationSlotInfos.size(); ++rowIndex) if (!VoxRlIsValidFormationSlotInfoRecord(data.staticFormationSlotInfos[rowIndex])) return VoxRlBuilderValidationFail(failure, "staticFormationSlotInfos", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.staticUnitResourceRequirements.size())) return VoxRlBuilderValidationFail(failure, "staticUnitResourceRequirements", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.staticImprovementResourceCompatibilities.size())) return VoxRlBuilderValidationFail(failure, "staticImprovementResourceCompatibilities", "size", static_cast<size_t>(-1));
     u32 staticFormationSlotInfosCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.staticFormationInfos.size(); ++parentIndex) {
         const FormationInfoRecord& parent = data.staticFormationInfos[parentIndex];
-        if (parent.slotRangeFirst != staticFormationSlotInfosCursor || !VoxRlAddU32(staticFormationSlotInfosCursor, parent.slotRangeCount, staticFormationSlotInfosCursor)) return false;
+        if (parent.slotRangeFirst != staticFormationSlotInfosCursor || !VoxRlAddU32(staticFormationSlotInfosCursor, parent.slotRangeCount, staticFormationSlotInfosCursor)) return VoxRlBuilderValidationFail(failure, "staticFormationInfos", "slotRange partition", parentIndex);
     }
-    if (staticFormationSlotInfosCursor != static_cast<u32>(data.staticFormationSlotInfos.size())) return false;
+    if (staticFormationSlotInfosCursor != static_cast<u32>(data.staticFormationSlotInfos.size())) return VoxRlBuilderValidationFail(failure, "staticFormationSlotInfos", "partition tail", static_cast<size_t>(-1));
     return true;
+}
+
+inline bool VoxRlValidateStaticData(const VoxRlStaticData& data)
+{
+    return VoxRlValidateStaticData(data, 0);
 }
 
 inline void VoxRlStaticData::Clear()
@@ -3013,69 +3036,76 @@ inline bool AppendCampaignHeaderRecordExposedCityRange(VoxRlCampaignData* data, 
     return data != 0 && AppendCampaignHeaderRecordExposedCityRange(&data->campaignHeader, data, rows);
 }
 
-inline bool VoxRlValidateCampaignData(const VoxRlCampaignData& data)
+inline bool VoxRlValidateCampaignData(const VoxRlCampaignData& data, VoxRlBuilderValidationFailure* failure)
 {
-    if (true && !VoxRlIsValidCampaignHeaderRecord(data.campaignHeader)) return false;
-    if (true && !VoxRlBuilderRangeFits(data.campaignHeader.threatenedCityRangeFirst, data.campaignHeader.threatenedCityRangeCount, data.campaignThreatenedCities.size())) return false;
-    if (true && !VoxRlBuilderRangeFits(data.campaignHeader.coastalThreatenedCityRangeFirst, data.campaignHeader.coastalThreatenedCityRangeCount, data.campaignCoastalThreatenedCities.size())) return false;
-    if (true && !VoxRlBuilderRangeFits(data.campaignHeader.exposedCityRangeFirst, data.campaignHeader.exposedCityRangeCount, data.campaignExposedCities.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignEnemies.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignAttackTargets.size())) return false;
-    if (!data.campaignAttackTargets.empty() && !VoxRlAreValidCampaignAttackTargetRecordRows(&data.campaignAttackTargets[0], static_cast<u32>(data.campaignAttackTargets.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignExposedCities.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignOperations.size())) return false;
-    if (!data.campaignOperations.empty() && !VoxRlAreValidCampaignOperationRecordRows(&data.campaignOperations[0], static_cast<u32>(data.campaignOperations.size()))) return false;
+    if (failure != 0) *failure = VoxRlBuilderValidationFailure();
+    if (true && !VoxRlIsValidCampaignHeaderRecord(data.campaignHeader)) return VoxRlBuilderValidationFail(failure, "campaignHeader", "record", static_cast<size_t>(-1));
+    if (true && !VoxRlBuilderRangeFits(data.campaignHeader.threatenedCityRangeFirst, data.campaignHeader.threatenedCityRangeCount, data.campaignThreatenedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignHeader", "threatenedCityRange range", static_cast<size_t>(-1));
+    if (true && !VoxRlBuilderRangeFits(data.campaignHeader.coastalThreatenedCityRangeFirst, data.campaignHeader.coastalThreatenedCityRangeCount, data.campaignCoastalThreatenedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignHeader", "coastalThreatenedCityRange range", static_cast<size_t>(-1));
+    if (true && !VoxRlBuilderRangeFits(data.campaignHeader.exposedCityRangeFirst, data.campaignHeader.exposedCityRangeCount, data.campaignExposedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignHeader", "exposedCityRange range", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignEnemies.size())) return VoxRlBuilderValidationFail(failure, "campaignEnemies", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignAttackTargets.size())) return VoxRlBuilderValidationFail(failure, "campaignAttackTargets", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.campaignAttackTargets.size(); ++rowIndex) if (!VoxRlIsValidCampaignAttackTargetRecord(data.campaignAttackTargets[rowIndex])) return VoxRlBuilderValidationFail(failure, "campaignAttackTargets", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.campaignExposedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignExposedCities", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignOperations.size())) return VoxRlBuilderValidationFail(failure, "campaignOperations", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.campaignOperations.size(); ++rowIndex) if (!VoxRlIsValidCampaignOperationRecord(data.campaignOperations[rowIndex])) return VoxRlBuilderValidationFail(failure, "campaignOperations", "record", rowIndex);
     for (size_t index = 0; index < data.campaignOperations.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.campaignOperations[index].armyIdRangeFirst, data.campaignOperations[index].armyIdRangeCount, data.campaignOperationArmyIds.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.campaignOperations[index].armyIdRangeFirst, data.campaignOperations[index].armyIdRangeCount, data.campaignOperationArmyIds.size())) return VoxRlBuilderValidationFail(failure, "campaignOperations", "armyIdRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.campaignOperationArmyIds.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignArmies.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.campaignOperationArmyIds.size())) return VoxRlBuilderValidationFail(failure, "campaignOperationArmyIds", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignArmies.size())) return VoxRlBuilderValidationFail(failure, "campaignArmies", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.campaignArmies.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.campaignArmies[index].formationRangeFirst, data.campaignArmies[index].formationRangeCount, data.campaignFormationEntries.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.campaignArmies[index].formationRangeFirst, data.campaignArmies[index].formationRangeCount, data.campaignFormationEntries.size())) return VoxRlBuilderValidationFail(failure, "campaignArmies", "formationRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.campaignFormationEntries.size())) return false;
-    if (!data.campaignFormationEntries.empty() && !VoxRlAreValidCampaignFormationEntryRecordRows(&data.campaignFormationEntries[0], static_cast<u32>(data.campaignFormationEntries.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignThreatenedCities.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignCoastalThreatenedCities.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignZones.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.campaignFormationEntries.size())) return VoxRlBuilderValidationFail(failure, "campaignFormationEntries", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.campaignFormationEntries.size(); ++rowIndex) if (!VoxRlIsValidCampaignFormationEntryRecord(data.campaignFormationEntries[rowIndex])) return VoxRlBuilderValidationFail(failure, "campaignFormationEntries", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.campaignThreatenedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignThreatenedCities", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignCoastalThreatenedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignCoastalThreatenedCities", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignZones.size())) return VoxRlBuilderValidationFail(failure, "campaignZones", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.campaignZones.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.campaignZones[index].neighborRangeFirst, data.campaignZones[index].neighborRangeCount, data.campaignZoneNeighbors.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.campaignZones[index].neighborRangeFirst, data.campaignZones[index].neighborRangeCount, data.campaignZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "campaignZones", "neighborRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.campaignZoneNeighbors.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignMilitaryFlavorOverrides.size())) return false;
-    if (!data.campaignMilitaryFlavorOverrides.empty() && !VoxRlAreValidCampaignMilitaryFlavorOverrideRecordRows(&data.campaignMilitaryFlavorOverrides[0], static_cast<u32>(data.campaignMilitaryFlavorOverrides.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignFocusAreas.size())) return false;
-    if (!data.campaignFocusAreas.empty() && !VoxRlAreValidCampaignFocusAreaRecordRows(&data.campaignFocusAreas[0], static_cast<u32>(data.campaignFocusAreas.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.campaignPendingTransfers.size())) return false;
-    if (!data.campaignPendingTransfers.empty() && !VoxRlAreValidCampaignPendingTransferRecordRows(&data.campaignPendingTransfers[0], static_cast<u32>(data.campaignPendingTransfers.size()))) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.campaignZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "campaignZoneNeighbors", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignMilitaryFlavorOverrides.size())) return VoxRlBuilderValidationFail(failure, "campaignMilitaryFlavorOverrides", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.campaignMilitaryFlavorOverrides.size(); ++rowIndex) if (!VoxRlIsValidCampaignMilitaryFlavorOverrideRecord(data.campaignMilitaryFlavorOverrides[rowIndex])) return VoxRlBuilderValidationFail(failure, "campaignMilitaryFlavorOverrides", "record", rowIndex);
+    if (!data.campaignMilitaryFlavorOverrides.empty() && !VoxRlAreValidCampaignMilitaryFlavorOverrideRecordRows(&data.campaignMilitaryFlavorOverrides[0], static_cast<u32>(data.campaignMilitaryFlavorOverrides.size()))) return VoxRlBuilderValidationFail(failure, "campaignMilitaryFlavorOverrides", "unique", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.campaignFocusAreas.size())) return VoxRlBuilderValidationFail(failure, "campaignFocusAreas", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.campaignFocusAreas.size(); ++rowIndex) if (!VoxRlIsValidCampaignFocusAreaRecord(data.campaignFocusAreas[rowIndex])) return VoxRlBuilderValidationFail(failure, "campaignFocusAreas", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.campaignPendingTransfers.size())) return VoxRlBuilderValidationFail(failure, "campaignPendingTransfers", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.campaignPendingTransfers.size(); ++rowIndex) if (!VoxRlIsValidCampaignPendingTransferRecord(data.campaignPendingTransfers[rowIndex])) return VoxRlBuilderValidationFail(failure, "campaignPendingTransfers", "record", rowIndex);
     u32 campaignThreatenedCitiesCursor = 0;
-    if (true && (data.campaignHeader.threatenedCityRangeFirst != campaignThreatenedCitiesCursor || !VoxRlAddU32(campaignThreatenedCitiesCursor, data.campaignHeader.threatenedCityRangeCount, campaignThreatenedCitiesCursor))) return false;
-    if (campaignThreatenedCitiesCursor != static_cast<u32>(data.campaignThreatenedCities.size())) return false;
+    if (true && (data.campaignHeader.threatenedCityRangeFirst != campaignThreatenedCitiesCursor || !VoxRlAddU32(campaignThreatenedCitiesCursor, data.campaignHeader.threatenedCityRangeCount, campaignThreatenedCitiesCursor))) return VoxRlBuilderValidationFail(failure, "campaignHeader", "threatenedCityRange partition", static_cast<size_t>(-1));
+    if (campaignThreatenedCitiesCursor != static_cast<u32>(data.campaignThreatenedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignThreatenedCities", "partition tail", static_cast<size_t>(-1));
     u32 campaignCoastalThreatenedCitiesCursor = 0;
-    if (true && (data.campaignHeader.coastalThreatenedCityRangeFirst != campaignCoastalThreatenedCitiesCursor || !VoxRlAddU32(campaignCoastalThreatenedCitiesCursor, data.campaignHeader.coastalThreatenedCityRangeCount, campaignCoastalThreatenedCitiesCursor))) return false;
-    if (campaignCoastalThreatenedCitiesCursor != static_cast<u32>(data.campaignCoastalThreatenedCities.size())) return false;
+    if (true && (data.campaignHeader.coastalThreatenedCityRangeFirst != campaignCoastalThreatenedCitiesCursor || !VoxRlAddU32(campaignCoastalThreatenedCitiesCursor, data.campaignHeader.coastalThreatenedCityRangeCount, campaignCoastalThreatenedCitiesCursor))) return VoxRlBuilderValidationFail(failure, "campaignHeader", "coastalThreatenedCityRange partition", static_cast<size_t>(-1));
+    if (campaignCoastalThreatenedCitiesCursor != static_cast<u32>(data.campaignCoastalThreatenedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignCoastalThreatenedCities", "partition tail", static_cast<size_t>(-1));
     u32 campaignExposedCitiesCursor = 0;
-    if (true && (data.campaignHeader.exposedCityRangeFirst != campaignExposedCitiesCursor || !VoxRlAddU32(campaignExposedCitiesCursor, data.campaignHeader.exposedCityRangeCount, campaignExposedCitiesCursor))) return false;
-    if (campaignExposedCitiesCursor != static_cast<u32>(data.campaignExposedCities.size())) return false;
+    if (true && (data.campaignHeader.exposedCityRangeFirst != campaignExposedCitiesCursor || !VoxRlAddU32(campaignExposedCitiesCursor, data.campaignHeader.exposedCityRangeCount, campaignExposedCitiesCursor))) return VoxRlBuilderValidationFail(failure, "campaignHeader", "exposedCityRange partition", static_cast<size_t>(-1));
+    if (campaignExposedCitiesCursor != static_cast<u32>(data.campaignExposedCities.size())) return VoxRlBuilderValidationFail(failure, "campaignExposedCities", "partition tail", static_cast<size_t>(-1));
     u32 campaignOperationArmyIdsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.campaignOperations.size(); ++parentIndex) {
         const CampaignOperationRecord& parent = data.campaignOperations[parentIndex];
-        if (parent.armyIdRangeFirst != campaignOperationArmyIdsCursor || !VoxRlAddU32(campaignOperationArmyIdsCursor, parent.armyIdRangeCount, campaignOperationArmyIdsCursor)) return false;
+        if (parent.armyIdRangeFirst != campaignOperationArmyIdsCursor || !VoxRlAddU32(campaignOperationArmyIdsCursor, parent.armyIdRangeCount, campaignOperationArmyIdsCursor)) return VoxRlBuilderValidationFail(failure, "campaignOperations", "armyIdRange partition", parentIndex);
     }
-    if (campaignOperationArmyIdsCursor != static_cast<u32>(data.campaignOperationArmyIds.size())) return false;
+    if (campaignOperationArmyIdsCursor != static_cast<u32>(data.campaignOperationArmyIds.size())) return VoxRlBuilderValidationFail(failure, "campaignOperationArmyIds", "partition tail", static_cast<size_t>(-1));
     u32 campaignFormationEntriesCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.campaignArmies.size(); ++parentIndex) {
         const CampaignArmyRecord& parent = data.campaignArmies[parentIndex];
-        if (parent.formationRangeFirst != campaignFormationEntriesCursor || !VoxRlAddU32(campaignFormationEntriesCursor, parent.formationRangeCount, campaignFormationEntriesCursor)) return false;
+        if (parent.formationRangeFirst != campaignFormationEntriesCursor || !VoxRlAddU32(campaignFormationEntriesCursor, parent.formationRangeCount, campaignFormationEntriesCursor)) return VoxRlBuilderValidationFail(failure, "campaignArmies", "formationRange partition", parentIndex);
     }
-    if (campaignFormationEntriesCursor != static_cast<u32>(data.campaignFormationEntries.size())) return false;
+    if (campaignFormationEntriesCursor != static_cast<u32>(data.campaignFormationEntries.size())) return VoxRlBuilderValidationFail(failure, "campaignFormationEntries", "partition tail", static_cast<size_t>(-1));
     u32 campaignZoneNeighborsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.campaignZones.size(); ++parentIndex) {
         const CampaignZoneRecord& parent = data.campaignZones[parentIndex];
-        if (parent.neighborRangeFirst != campaignZoneNeighborsCursor || !VoxRlAddU32(campaignZoneNeighborsCursor, parent.neighborRangeCount, campaignZoneNeighborsCursor)) return false;
+        if (parent.neighborRangeFirst != campaignZoneNeighborsCursor || !VoxRlAddU32(campaignZoneNeighborsCursor, parent.neighborRangeCount, campaignZoneNeighborsCursor)) return VoxRlBuilderValidationFail(failure, "campaignZones", "neighborRange partition", parentIndex);
     }
-    if (campaignZoneNeighborsCursor != static_cast<u32>(data.campaignZoneNeighbors.size())) return false;
+    if (campaignZoneNeighborsCursor != static_cast<u32>(data.campaignZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "campaignZoneNeighbors", "partition tail", static_cast<size_t>(-1));
     return true;
+}
+
+inline bool VoxRlValidateCampaignData(const VoxRlCampaignData& data)
+{
+    return VoxRlValidateCampaignData(data, 0);
 }
 
 inline void VoxRlCampaignData::Clear()
@@ -3371,119 +3401,126 @@ inline bool AppendInterceptorCacheRecordEntryRange(InterceptorCacheRecord* paren
     parent->entryRangeFirst = first; parent->entryRangeCount = count; return true;
 }
 
-inline bool VoxRlValidateWorldData(const VoxRlWorldData& data)
+inline bool VoxRlValidateWorldData(const VoxRlWorldData& data, VoxRlBuilderValidationFailure* failure)
 {
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlotCore.size())) return false;
-    if (!data.worldPlotCore.empty() && !VoxRlAreValidPlotCoreRecordRows(&data.worldPlotCore[0], static_cast<u32>(data.worldPlotCore.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlotTeams.size())) return false;
+    if (failure != 0) *failure = VoxRlBuilderValidationFailure();
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlotCore.size())) return VoxRlBuilderValidationFail(failure, "worldPlotCore", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldPlotCore.size(); ++rowIndex) if (!VoxRlIsValidPlotCoreRecord(data.worldPlotCore[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldPlotCore", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlotTeams.size())) return VoxRlBuilderValidationFail(failure, "worldPlotTeams", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.worldPlotTeams.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldPlotTeams[index].revealedOverrideRangeFirst, data.worldPlotTeams[index].revealedOverrideRangeCount, data.worldRevealedOverrides.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldPlotTeams[index].revealedOverrideRangeFirst, data.worldPlotTeams[index].revealedOverrideRangeCount, data.worldRevealedOverrides.size())) return VoxRlBuilderValidationFail(failure, "worldPlotTeams", "revealedOverrideRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.worldRevealedBits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldVisibleBits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldKnownVisibleBits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldInvisibleVisibleBits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldRevealedOverrides.size())) return false;
-    if (!data.worldRevealedOverrides.empty() && !VoxRlAreValidRevealedOverrideRecordRows(&data.worldRevealedOverrides[0], static_cast<u32>(data.worldRevealedOverrides.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnits.size())) return false;
-    if (!data.worldUnits.empty() && !VoxRlAreValidUnitWireRecordRows(&data.worldUnits[0], static_cast<u32>(data.worldUnits.size()))) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.worldRevealedBits.size())) return VoxRlBuilderValidationFail(failure, "worldRevealedBits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldVisibleBits.size())) return VoxRlBuilderValidationFail(failure, "worldVisibleBits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldKnownVisibleBits.size())) return VoxRlBuilderValidationFail(failure, "worldKnownVisibleBits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldInvisibleVisibleBits.size())) return VoxRlBuilderValidationFail(failure, "worldInvisibleVisibleBits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldRevealedOverrides.size())) return VoxRlBuilderValidationFail(failure, "worldRevealedOverrides", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldRevealedOverrides.size(); ++rowIndex) if (!VoxRlIsValidRevealedOverrideRecord(data.worldRevealedOverrides[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldRevealedOverrides", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnits.size())) return VoxRlBuilderValidationFail(failure, "worldUnits", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldUnits.size(); ++rowIndex) if (!VoxRlIsValidUnitWireRecord(data.worldUnits[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldUnits", "record", rowIndex);
     for (size_t index = 0; index < data.worldUnits.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldUnits[index].movementCountRangeFirst, data.worldUnits[index].movementCountRangeCount, data.worldUnitMovementCounts.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldUnits[index].movementCountRangeFirst, data.worldUnits[index].movementCountRangeCount, data.worldUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "worldUnits", "movementCountRange range", index);
     }
     for (size_t index = 0; index < data.worldUnits.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldUnits[index].sparseFieldRangeFirst, data.worldUnits[index].sparseFieldRangeCount, data.worldUnitSparseFields.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldUnits[index].sparseFieldRangeFirst, data.worldUnits[index].sparseFieldRangeCount, data.worldUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "worldUnits", "sparseFieldRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.worldCities.size())) return false;
-    if (!data.worldCities.empty() && !VoxRlAreValidCityRecordRows(&data.worldCities[0], static_cast<u32>(data.worldCities.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldTeamRelations.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldTeams.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlayers.size())) return false;
-    if (!data.worldPlayers.empty() && !VoxRlAreValidPlayerRecordRows(&data.worldPlayers[0], static_cast<u32>(data.worldPlayers.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldMinorRelations.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldZones.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.worldCities.size())) return VoxRlBuilderValidationFail(failure, "worldCities", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldCities.size(); ++rowIndex) if (!VoxRlIsValidCityRecord(data.worldCities[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldCities", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.worldTeamRelations.size())) return VoxRlBuilderValidationFail(failure, "worldTeamRelations", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldTeams.size())) return VoxRlBuilderValidationFail(failure, "worldTeams", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlayers.size())) return VoxRlBuilderValidationFail(failure, "worldPlayers", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldPlayers.size(); ++rowIndex) if (!VoxRlIsValidPlayerRecord(data.worldPlayers[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldPlayers", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.worldMinorRelations.size())) return VoxRlBuilderValidationFail(failure, "worldMinorRelations", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldZones.size())) return VoxRlBuilderValidationFail(failure, "worldZones", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.worldZones.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldZones[index].neighborRangeFirst, data.worldZones[index].neighborRangeCount, data.worldZoneNeighbors.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldZones[index].neighborRangeFirst, data.worldZones[index].neighborRangeCount, data.worldZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "worldZones", "neighborRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.worldZoneNeighbors.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldDangerPlayers.size())) return false;
-    if (!data.worldDangerPlayers.empty() && !VoxRlAreValidDangerPlayerRecordRows(&data.worldDangerPlayers[0], static_cast<u32>(data.worldDangerPlayers.size()))) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.worldZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "worldZoneNeighbors", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldDangerPlayers.size())) return VoxRlBuilderValidationFail(failure, "worldDangerPlayers", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldDangerPlayers.size(); ++rowIndex) if (!VoxRlIsValidDangerPlayerRecord(data.worldDangerPlayers[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldDangerPlayers", "record", rowIndex);
     for (size_t index = 0; index < data.worldDangerPlayers.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldDangerPlayers[index].knownUnitRangeFirst, data.worldDangerPlayers[index].knownUnitRangeCount, data.worldKnownAttackers.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldDangerPlayers[index].knownUnitRangeFirst, data.worldDangerPlayers[index].knownUnitRangeCount, data.worldKnownAttackers.size())) return VoxRlBuilderValidationFail(failure, "worldDangerPlayers", "knownUnitRange range", index);
     }
     for (size_t index = 0; index < data.worldDangerPlayers.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldDangerPlayers[index].vanishedUnitRangeFirst, data.worldDangerPlayers[index].vanishedUnitRangeCount, data.worldVanishedAttackers.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldDangerPlayers[index].vanishedUnitRangeFirst, data.worldDangerPlayers[index].vanishedUnitRangeCount, data.worldVanishedAttackers.size())) return VoxRlBuilderValidationFail(failure, "worldDangerPlayers", "vanishedUnitRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.worldKnownAttackers.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldVanishedAttackers.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldTeamPassability.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldInterceptorCaches.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.worldKnownAttackers.size())) return VoxRlBuilderValidationFail(failure, "worldKnownAttackers", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldVanishedAttackers.size())) return VoxRlBuilderValidationFail(failure, "worldVanishedAttackers", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldTeamPassability.size())) return VoxRlBuilderValidationFail(failure, "worldTeamPassability", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldInterceptorCaches.size())) return VoxRlBuilderValidationFail(failure, "worldInterceptorCaches", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.worldInterceptorCaches.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.worldInterceptorCaches[index].entryRangeFirst, data.worldInterceptorCaches[index].entryRangeCount, data.worldInterceptorEntries.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.worldInterceptorCaches[index].entryRangeFirst, data.worldInterceptorCaches[index].entryRangeCount, data.worldInterceptorEntries.size())) return VoxRlBuilderValidationFail(failure, "worldInterceptorCaches", "entryRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.worldInterceptorEntries.size())) return false;
-    if (!data.worldInterceptorEntries.empty() && !VoxRlAreValidInterceptorCacheEntryRecordRows(&data.worldInterceptorEntries[0], static_cast<u32>(data.worldInterceptorEntries.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldRevealedNoneOverrideBits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnitModifiers.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnitPlagues.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnitBlockedPromotions.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnitAttackCounts.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlayerResistances.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldCityAttackCounts.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlotZones.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlotZonesWide.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnitMovementCounts.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldUnitSparseFields.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlotSparseCounters.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldCityReferences.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldCityResources.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlayerResources.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldPlayerEconomics.size())) return false;
-    if (!data.worldPlayerEconomics.empty() && !VoxRlAreValidPlayerEconomicsRecordRows(&data.worldPlayerEconomics[0], static_cast<u32>(data.worldPlayerEconomics.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.worldTeamResources.size())) return false;
-    if (!data.worldTeamResources.empty() && !VoxRlAreValidTeamResourceRecordRows(&data.worldTeamResources[0], static_cast<u32>(data.worldTeamResources.size()))) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.worldInterceptorEntries.size())) return VoxRlBuilderValidationFail(failure, "worldInterceptorEntries", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldInterceptorEntries.size(); ++rowIndex) if (!VoxRlIsValidInterceptorCacheEntryRecord(data.worldInterceptorEntries[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldInterceptorEntries", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.worldRevealedNoneOverrideBits.size())) return VoxRlBuilderValidationFail(failure, "worldRevealedNoneOverrideBits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnitModifiers.size())) return VoxRlBuilderValidationFail(failure, "worldUnitModifiers", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnitPlagues.size())) return VoxRlBuilderValidationFail(failure, "worldUnitPlagues", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnitBlockedPromotions.size())) return VoxRlBuilderValidationFail(failure, "worldUnitBlockedPromotions", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnitAttackCounts.size())) return VoxRlBuilderValidationFail(failure, "worldUnitAttackCounts", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlayerResistances.size())) return VoxRlBuilderValidationFail(failure, "worldPlayerResistances", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldCityAttackCounts.size())) return VoxRlBuilderValidationFail(failure, "worldCityAttackCounts", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlotZones.size())) return VoxRlBuilderValidationFail(failure, "worldPlotZones", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlotZonesWide.size())) return VoxRlBuilderValidationFail(failure, "worldPlotZonesWide", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "worldUnitMovementCounts", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "worldUnitSparseFields", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlotSparseCounters.size())) return VoxRlBuilderValidationFail(failure, "worldPlotSparseCounters", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldCityReferences.size())) return VoxRlBuilderValidationFail(failure, "worldCityReferences", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldCityResources.size())) return VoxRlBuilderValidationFail(failure, "worldCityResources", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlayerResources.size())) return VoxRlBuilderValidationFail(failure, "worldPlayerResources", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.worldPlayerEconomics.size())) return VoxRlBuilderValidationFail(failure, "worldPlayerEconomics", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldPlayerEconomics.size(); ++rowIndex) if (!VoxRlIsValidPlayerEconomicsRecord(data.worldPlayerEconomics[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldPlayerEconomics", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.worldTeamResources.size())) return VoxRlBuilderValidationFail(failure, "worldTeamResources", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.worldTeamResources.size(); ++rowIndex) if (!VoxRlIsValidTeamResourceRecord(data.worldTeamResources[rowIndex])) return VoxRlBuilderValidationFail(failure, "worldTeamResources", "record", rowIndex);
+    if (!data.worldTeamResources.empty() && !VoxRlAreValidTeamResourceRecordRows(&data.worldTeamResources[0], static_cast<u32>(data.worldTeamResources.size()))) return VoxRlBuilderValidationFail(failure, "worldTeamResources", "unique", static_cast<size_t>(-1));
     u32 worldRevealedOverridesCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldPlotTeams.size(); ++parentIndex) {
         const PlotTeamRecord& parent = data.worldPlotTeams[parentIndex];
-        if (parent.revealedOverrideRangeFirst != worldRevealedOverridesCursor || !VoxRlAddU32(worldRevealedOverridesCursor, parent.revealedOverrideRangeCount, worldRevealedOverridesCursor)) return false;
+        if (parent.revealedOverrideRangeFirst != worldRevealedOverridesCursor || !VoxRlAddU32(worldRevealedOverridesCursor, parent.revealedOverrideRangeCount, worldRevealedOverridesCursor)) return VoxRlBuilderValidationFail(failure, "worldPlotTeams", "revealedOverrideRange partition", parentIndex);
     }
-    if (worldRevealedOverridesCursor != static_cast<u32>(data.worldRevealedOverrides.size())) return false;
+    if (worldRevealedOverridesCursor != static_cast<u32>(data.worldRevealedOverrides.size())) return VoxRlBuilderValidationFail(failure, "worldRevealedOverrides", "partition tail", static_cast<size_t>(-1));
     u32 worldUnitMovementCountsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldUnits.size(); ++parentIndex) {
         const UnitWireRecord& parent = data.worldUnits[parentIndex];
-        if (parent.movementCountRangeFirst != worldUnitMovementCountsCursor || !VoxRlAddU32(worldUnitMovementCountsCursor, parent.movementCountRangeCount, worldUnitMovementCountsCursor)) return false;
+        if (parent.movementCountRangeFirst != worldUnitMovementCountsCursor || !VoxRlAddU32(worldUnitMovementCountsCursor, parent.movementCountRangeCount, worldUnitMovementCountsCursor)) return VoxRlBuilderValidationFail(failure, "worldUnits", "movementCountRange partition", parentIndex);
     }
-    if (worldUnitMovementCountsCursor != static_cast<u32>(data.worldUnitMovementCounts.size())) return false;
+    if (worldUnitMovementCountsCursor != static_cast<u32>(data.worldUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "worldUnitMovementCounts", "partition tail", static_cast<size_t>(-1));
     u32 worldUnitSparseFieldsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldUnits.size(); ++parentIndex) {
         const UnitWireRecord& parent = data.worldUnits[parentIndex];
-        if (parent.sparseFieldRangeFirst != worldUnitSparseFieldsCursor || !VoxRlAddU32(worldUnitSparseFieldsCursor, parent.sparseFieldRangeCount, worldUnitSparseFieldsCursor)) return false;
+        if (parent.sparseFieldRangeFirst != worldUnitSparseFieldsCursor || !VoxRlAddU32(worldUnitSparseFieldsCursor, parent.sparseFieldRangeCount, worldUnitSparseFieldsCursor)) return VoxRlBuilderValidationFail(failure, "worldUnits", "sparseFieldRange partition", parentIndex);
     }
-    if (worldUnitSparseFieldsCursor != static_cast<u32>(data.worldUnitSparseFields.size())) return false;
+    if (worldUnitSparseFieldsCursor != static_cast<u32>(data.worldUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "worldUnitSparseFields", "partition tail", static_cast<size_t>(-1));
     u32 worldZoneNeighborsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldZones.size(); ++parentIndex) {
         const ZoneRecord& parent = data.worldZones[parentIndex];
-        if (parent.neighborRangeFirst != worldZoneNeighborsCursor || !VoxRlAddU32(worldZoneNeighborsCursor, parent.neighborRangeCount, worldZoneNeighborsCursor)) return false;
+        if (parent.neighborRangeFirst != worldZoneNeighborsCursor || !VoxRlAddU32(worldZoneNeighborsCursor, parent.neighborRangeCount, worldZoneNeighborsCursor)) return VoxRlBuilderValidationFail(failure, "worldZones", "neighborRange partition", parentIndex);
     }
-    if (worldZoneNeighborsCursor != static_cast<u32>(data.worldZoneNeighbors.size())) return false;
+    if (worldZoneNeighborsCursor != static_cast<u32>(data.worldZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "worldZoneNeighbors", "partition tail", static_cast<size_t>(-1));
     u32 worldKnownAttackersCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldDangerPlayers.size(); ++parentIndex) {
         const DangerPlayerRecord& parent = data.worldDangerPlayers[parentIndex];
-        if (parent.knownUnitRangeFirst != worldKnownAttackersCursor || !VoxRlAddU32(worldKnownAttackersCursor, parent.knownUnitRangeCount, worldKnownAttackersCursor)) return false;
+        if (parent.knownUnitRangeFirst != worldKnownAttackersCursor || !VoxRlAddU32(worldKnownAttackersCursor, parent.knownUnitRangeCount, worldKnownAttackersCursor)) return VoxRlBuilderValidationFail(failure, "worldDangerPlayers", "knownUnitRange partition", parentIndex);
     }
-    if (worldKnownAttackersCursor != static_cast<u32>(data.worldKnownAttackers.size())) return false;
+    if (worldKnownAttackersCursor != static_cast<u32>(data.worldKnownAttackers.size())) return VoxRlBuilderValidationFail(failure, "worldKnownAttackers", "partition tail", static_cast<size_t>(-1));
     u32 worldVanishedAttackersCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldDangerPlayers.size(); ++parentIndex) {
         const DangerPlayerRecord& parent = data.worldDangerPlayers[parentIndex];
-        if (parent.vanishedUnitRangeFirst != worldVanishedAttackersCursor || !VoxRlAddU32(worldVanishedAttackersCursor, parent.vanishedUnitRangeCount, worldVanishedAttackersCursor)) return false;
+        if (parent.vanishedUnitRangeFirst != worldVanishedAttackersCursor || !VoxRlAddU32(worldVanishedAttackersCursor, parent.vanishedUnitRangeCount, worldVanishedAttackersCursor)) return VoxRlBuilderValidationFail(failure, "worldDangerPlayers", "vanishedUnitRange partition", parentIndex);
     }
-    if (worldVanishedAttackersCursor != static_cast<u32>(data.worldVanishedAttackers.size())) return false;
+    if (worldVanishedAttackersCursor != static_cast<u32>(data.worldVanishedAttackers.size())) return VoxRlBuilderValidationFail(failure, "worldVanishedAttackers", "partition tail", static_cast<size_t>(-1));
     u32 worldInterceptorEntriesCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.worldInterceptorCaches.size(); ++parentIndex) {
         const InterceptorCacheRecord& parent = data.worldInterceptorCaches[parentIndex];
-        if (parent.entryRangeFirst != worldInterceptorEntriesCursor || !VoxRlAddU32(worldInterceptorEntriesCursor, parent.entryRangeCount, worldInterceptorEntriesCursor)) return false;
+        if (parent.entryRangeFirst != worldInterceptorEntriesCursor || !VoxRlAddU32(worldInterceptorEntriesCursor, parent.entryRangeCount, worldInterceptorEntriesCursor)) return VoxRlBuilderValidationFail(failure, "worldInterceptorCaches", "entryRange partition", parentIndex);
     }
-    if (worldInterceptorEntriesCursor != static_cast<u32>(data.worldInterceptorEntries.size())) return false;
+    if (worldInterceptorEntriesCursor != static_cast<u32>(data.worldInterceptorEntries.size())) return VoxRlBuilderValidationFail(failure, "worldInterceptorEntries", "partition tail", static_cast<size_t>(-1));
     return true;
+}
+
+inline bool VoxRlValidateWorldData(const VoxRlWorldData& data)
+{
+    return VoxRlValidateWorldData(data, 0);
 }
 
 inline void VoxRlWorldData::Clear()
@@ -4237,253 +4274,260 @@ inline bool AppendRequestMilitaryDepartureRecordAttackCountRange(RequestMilitary
     parent->attackCountRangeFirst = first; parent->attackCountRangeCount = count; return true;
 }
 
-inline bool VoxRlValidateRequestData(const VoxRlRequestData& data)
+inline bool VoxRlValidateRequestData(const VoxRlRequestData& data, VoxRlBuilderValidationFailure* failure)
 {
-    if (true && !VoxRlIsValidRequestHeaderRecord(data.requestHeader)) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaUnits.size())) return false;
-    if (!data.requestDeltaUnits.empty() && !VoxRlAreValidRequestDeltaUnitRecordRows(&data.requestDeltaUnits[0], static_cast<u32>(data.requestDeltaUnits.size()))) return false;
+    if (failure != 0) *failure = VoxRlBuilderValidationFailure();
+    if (true && !VoxRlIsValidRequestHeaderRecord(data.requestHeader)) return VoxRlBuilderValidationFail(failure, "requestHeader", "record", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaUnits.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnits", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDeltaUnits.size(); ++rowIndex) if (!VoxRlIsValidRequestDeltaUnitRecord(data.requestDeltaUnits[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDeltaUnits", "record", rowIndex);
     for (size_t index = 0; index < data.requestDeltaUnits.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestDeltaUnits[index].movementCountRangeFirst, data.requestDeltaUnits[index].movementCountRangeCount, data.requestDeltaUnitMovementCounts.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestDeltaUnits[index].movementCountRangeFirst, data.requestDeltaUnits[index].movementCountRangeCount, data.requestDeltaUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnits", "movementCountRange range", index);
     }
     for (size_t index = 0; index < data.requestDeltaUnits.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestDeltaUnits[index].sparseFieldRangeFirst, data.requestDeltaUnits[index].sparseFieldRangeCount, data.requestDeltaUnitSparseFields.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestDeltaUnits[index].sparseFieldRangeFirst, data.requestDeltaUnits[index].sparseFieldRangeCount, data.requestDeltaUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnits", "sparseFieldRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlots.size())) return false;
-    if (!data.requestDeltaPlots.empty() && !VoxRlAreValidRequestDeltaPlotCoreRecordRows(&data.requestDeltaPlots[0], static_cast<u32>(data.requestDeltaPlots.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaCities.size())) return false;
-    if (!data.requestDeltaCities.empty() && !VoxRlAreValidRequestDeltaCityRecordRows(&data.requestDeltaCities[0], static_cast<u32>(data.requestDeltaCities.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestRemovedUnits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestKnownAttackers.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestParticipants.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDroppedUnits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestRemovedCities.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestTeamPassability.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestVisibilityWords.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestRevealedOverrideUpserts.size())) return false;
-    if (!data.requestRevealedOverrideUpserts.empty() && !VoxRlAreValidRequestRevealedOverrideUpsertRecordRows(&data.requestRevealedOverrideUpserts[0], static_cast<u32>(data.requestRevealedOverrideUpserts.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestRemovedRevealedOverrides.size())) return false;
-    if (!data.requestRemovedRevealedOverrides.empty() && !VoxRlAreValidRequestRemovedRevealedOverrideRecordRows(&data.requestRemovedRevealedOverrides[0], static_cast<u32>(data.requestRemovedRevealedOverrides.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestInterceptorReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlots.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaPlots", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDeltaPlots.size(); ++rowIndex) if (!VoxRlIsValidRequestDeltaPlotCoreRecord(data.requestDeltaPlots[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDeltaPlots", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaCities.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaCities", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDeltaCities.size(); ++rowIndex) if (!VoxRlIsValidRequestDeltaCityRecord(data.requestDeltaCities[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDeltaCities", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestRemovedUnits.size())) return VoxRlBuilderValidationFail(failure, "requestRemovedUnits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestKnownAttackers.size())) return VoxRlBuilderValidationFail(failure, "requestKnownAttackers", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestParticipants.size())) return VoxRlBuilderValidationFail(failure, "requestParticipants", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestDroppedUnits.size())) return VoxRlBuilderValidationFail(failure, "requestDroppedUnits", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestRemovedCities.size())) return VoxRlBuilderValidationFail(failure, "requestRemovedCities", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestTeamPassability.size())) return VoxRlBuilderValidationFail(failure, "requestTeamPassability", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestVisibilityWords.size())) return VoxRlBuilderValidationFail(failure, "requestVisibilityWords", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestRevealedOverrideUpserts.size())) return VoxRlBuilderValidationFail(failure, "requestRevealedOverrideUpserts", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestRevealedOverrideUpserts.size(); ++rowIndex) if (!VoxRlIsValidRequestRevealedOverrideUpsertRecord(data.requestRevealedOverrideUpserts[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestRevealedOverrideUpserts", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestRemovedRevealedOverrides.size())) return VoxRlBuilderValidationFail(failure, "requestRemovedRevealedOverrides", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestRemovedRevealedOverrides.size(); ++rowIndex) if (!VoxRlIsValidRequestRemovedRevealedOverrideRecord(data.requestRemovedRevealedOverrides[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestRemovedRevealedOverrides", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestInterceptorReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestInterceptorReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestInterceptorReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestInterceptorReplacements[index].entryRangeFirst, data.requestInterceptorReplacements[index].entryRangeCount, data.requestInterceptorEntries.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestInterceptorReplacements[index].entryRangeFirst, data.requestInterceptorReplacements[index].entryRangeCount, data.requestInterceptorEntries.size())) return VoxRlBuilderValidationFail(failure, "requestInterceptorReplacements", "entryRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestInterceptorEntries.size())) return false;
-    if (!data.requestInterceptorEntries.empty() && !VoxRlAreValidRequestInterceptorEntryRecordRows(&data.requestInterceptorEntries[0], static_cast<u32>(data.requestInterceptorEntries.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDangerEvents.size())) return false;
-    if (!data.requestDangerEvents.empty() && !VoxRlAreValidRequestDangerEventRecordRows(&data.requestDangerEvents[0], static_cast<u32>(data.requestDangerEvents.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestTeamRelations.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestZoneReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestInterceptorEntries.size())) return VoxRlBuilderValidationFail(failure, "requestInterceptorEntries", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestInterceptorEntries.size(); ++rowIndex) if (!VoxRlIsValidRequestInterceptorEntryRecord(data.requestInterceptorEntries[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestInterceptorEntries", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestDangerEvents.size())) return VoxRlBuilderValidationFail(failure, "requestDangerEvents", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDangerEvents.size(); ++rowIndex) if (!VoxRlIsValidRequestDangerEventRecord(data.requestDangerEvents[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDangerEvents", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestTeamRelations.size())) return VoxRlBuilderValidationFail(failure, "requestTeamRelations", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestZoneReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestZoneReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestZoneReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestZoneReplacements[index].neighborRangeFirst, data.requestZoneReplacements[index].neighborRangeCount, data.requestZoneNeighbors.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestZoneReplacements[index].neighborRangeFirst, data.requestZoneReplacements[index].neighborRangeCount, data.requestZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "requestZoneReplacements", "neighborRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestZoneNeighbors.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlotZones.size())) return false;
-    if (!data.requestDeltaPlotZones.empty() && !VoxRlAreValidRequestDeltaPlotZoneRecordRows(&data.requestDeltaPlotZones[0], static_cast<u32>(data.requestDeltaPlotZones.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlotZonesWide.size())) return false;
-    if (!data.requestDeltaPlotZonesWide.empty() && !VoxRlAreValidRequestDeltaPlotZoneWideRecordRows(&data.requestDeltaPlotZonesWide[0], static_cast<u32>(data.requestDeltaPlotZonesWide.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaUnitMovementCounts.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitModifierReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "requestZoneNeighbors", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlotZones.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaPlotZones", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDeltaPlotZones.size(); ++rowIndex) if (!VoxRlIsValidRequestDeltaPlotZoneRecord(data.requestDeltaPlotZones[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDeltaPlotZones", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlotZonesWide.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaPlotZonesWide", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDeltaPlotZonesWide.size(); ++rowIndex) if (!VoxRlIsValidRequestDeltaPlotZoneWideRecord(data.requestDeltaPlotZonesWide[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDeltaPlotZonesWide", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnitMovementCounts", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitModifierReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestUnitModifierReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestUnitModifierReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestUnitModifierReplacements[index].rowRangeFirst, data.requestUnitModifierReplacements[index].rowRangeCount, data.requestUnitModifierRows.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestUnitModifierReplacements[index].rowRangeFirst, data.requestUnitModifierReplacements[index].rowRangeCount, data.requestUnitModifierRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitModifierReplacements", "rowRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitModifierRows.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitPlagueReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitModifierRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitModifierRows", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitPlagueReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestUnitPlagueReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestUnitPlagueReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestUnitPlagueReplacements[index].rowRangeFirst, data.requestUnitPlagueReplacements[index].rowRangeCount, data.requestUnitPlagueRows.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestUnitPlagueReplacements[index].rowRangeFirst, data.requestUnitPlagueReplacements[index].rowRangeCount, data.requestUnitPlagueRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitPlagueReplacements", "rowRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitPlagueRows.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitBlockedPromotionReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitPlagueRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitPlagueRows", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitBlockedPromotionReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestUnitBlockedPromotionReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestUnitBlockedPromotionReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestUnitBlockedPromotionReplacements[index].rowRangeFirst, data.requestUnitBlockedPromotionReplacements[index].rowRangeCount, data.requestUnitBlockedPromotionRows.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestUnitBlockedPromotionReplacements[index].rowRangeFirst, data.requestUnitBlockedPromotionReplacements[index].rowRangeCount, data.requestUnitBlockedPromotionRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitBlockedPromotionReplacements", "rowRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitBlockedPromotionRows.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitAttackCountReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitBlockedPromotionRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitBlockedPromotionRows", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitAttackCountReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestUnitAttackCountReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestUnitAttackCountReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestUnitAttackCountReplacements[index].rowRangeFirst, data.requestUnitAttackCountReplacements[index].rowRangeCount, data.requestUnitAttackCountRows.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestUnitAttackCountReplacements[index].rowRangeFirst, data.requestUnitAttackCountReplacements[index].rowRangeCount, data.requestUnitAttackCountRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitAttackCountReplacements", "rowRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestUnitAttackCountRows.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerResistanceReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestUnitAttackCountRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitAttackCountRows", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerResistanceReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestPlayerResistanceReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestPlayerResistanceReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestPlayerResistanceReplacements[index].rowRangeFirst, data.requestPlayerResistanceReplacements[index].rowRangeCount, data.requestPlayerResistanceRows.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestPlayerResistanceReplacements[index].rowRangeFirst, data.requestPlayerResistanceReplacements[index].rowRangeCount, data.requestPlayerResistanceRows.size())) return VoxRlBuilderValidationFail(failure, "requestPlayerResistanceReplacements", "rowRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerResistanceRows.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestCityAttackCountReplacements.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerResistanceRows.size())) return VoxRlBuilderValidationFail(failure, "requestPlayerResistanceRows", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestCityAttackCountReplacements.size())) return VoxRlBuilderValidationFail(failure, "requestCityAttackCountReplacements", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.requestCityAttackCountReplacements.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestCityAttackCountReplacements[index].rowRangeFirst, data.requestCityAttackCountReplacements[index].rowRangeCount, data.requestCityAttackCountRows.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestCityAttackCountReplacements[index].rowRangeFirst, data.requestCityAttackCountReplacements[index].rowRangeCount, data.requestCityAttackCountRows.size())) return VoxRlBuilderValidationFail(failure, "requestCityAttackCountReplacements", "rowRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestCityAttackCountRows.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestVisibilityResets.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaUnitSparseFields.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlotSparseCounters.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestCityReferences.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlayers.size())) return false;
-    if (!data.requestDeltaPlayers.empty() && !VoxRlAreValidRequestDeltaPlayerRecordRows(&data.requestDeltaPlayers[0], static_cast<u32>(data.requestDeltaPlayers.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestOperations.size())) return false;
-    if (!data.requestOperations.empty() && !VoxRlAreValidRequestOperationRecordRows(&data.requestOperations[0], static_cast<u32>(data.requestOperations.size()))) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestCityAttackCountRows.size())) return VoxRlBuilderValidationFail(failure, "requestCityAttackCountRows", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestVisibilityResets.size())) return VoxRlBuilderValidationFail(failure, "requestVisibilityResets", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnitSparseFields", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlotSparseCounters.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaPlotSparseCounters", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestCityReferences.size())) return VoxRlBuilderValidationFail(failure, "requestCityReferences", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestDeltaPlayers.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaPlayers", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestDeltaPlayers.size(); ++rowIndex) if (!VoxRlIsValidRequestDeltaPlayerRecord(data.requestDeltaPlayers[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestDeltaPlayers", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestOperations.size())) return VoxRlBuilderValidationFail(failure, "requestOperations", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestOperations.size(); ++rowIndex) if (!VoxRlIsValidRequestOperationRecord(data.requestOperations[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestOperations", "record", rowIndex);
     for (size_t index = 0; index < data.requestOperations.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestOperations[index].operationVersionRangeFirst, data.requestOperations[index].operationVersionRangeCount, data.requestOperationVersions.size())) return false;
-    }
-    for (size_t index = 0; index < data.requestOperations.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestOperations[index].armyVersionRangeFirst, data.requestOperations[index].armyVersionRangeCount, data.requestArmyVersions.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestOperations[index].operationVersionRangeFirst, data.requestOperations[index].operationVersionRangeCount, data.requestOperationVersions.size())) return VoxRlBuilderValidationFail(failure, "requestOperations", "operationVersionRange range", index);
     }
     for (size_t index = 0; index < data.requestOperations.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestOperations[index].formationEntryVersionRangeFirst, data.requestOperations[index].formationEntryVersionRangeCount, data.requestFormationEntryVersions.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestOperations[index].armyVersionRangeFirst, data.requestOperations[index].armyVersionRangeCount, data.requestArmyVersions.size())) return VoxRlBuilderValidationFail(failure, "requestOperations", "armyVersionRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestOperationVersions.size())) return false;
-    if (!data.requestOperationVersions.empty() && !VoxRlAreValidRequestOperationVersionRecordRows(&data.requestOperationVersions[0], static_cast<u32>(data.requestOperationVersions.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestArmyVersions.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestFormationEntryVersions.size())) return false;
-    if (!data.requestFormationEntryVersions.empty() && !VoxRlAreValidRequestFormationEntryVersionRecordRows(&data.requestFormationEntryVersions[0], static_cast<u32>(data.requestFormationEntryVersions.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestCampaignBoundaries.size())) return false;
-    if (!data.requestCampaignBoundaries.empty() && !VoxRlAreValidRequestCampaignBoundaryRecordRows(&data.requestCampaignBoundaries[0], static_cast<u32>(data.requestCampaignBoundaries.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestZoneChoices.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestFocusAreas.size())) return false;
-    if (!data.requestFocusAreas.empty() && !VoxRlAreValidRequestFocusAreaRecordRows(&data.requestFocusAreas[0], static_cast<u32>(data.requestFocusAreas.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestCityResources.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerResources.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerEconomics.size())) return false;
-    if (!data.requestPlayerEconomics.empty() && !VoxRlAreValidRequestPlayerEconomicsRecordRows(&data.requestPlayerEconomics[0], static_cast<u32>(data.requestPlayerEconomics.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEconomicBatches.size())) return false;
-    if (!data.requestEconomicBatches.empty() && !VoxRlAreValidRequestEconomicBatchRecordRows(&data.requestEconomicBatches[0], static_cast<u32>(data.requestEconomicBatches.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestMilitaryGoldTransactions.size())) return false;
-    if (!data.requestMilitaryGoldTransactions.empty() && !VoxRlAreValidRequestMilitaryGoldTransactionRecordRows(&data.requestMilitaryGoldTransactions[0], static_cast<u32>(data.requestMilitaryGoldTransactions.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnits.size())) return false;
-    if (!data.requestEventUnits.empty() && !VoxRlAreValidRequestEventUnitRecordRows(&data.requestEventUnits[0], static_cast<u32>(data.requestEventUnits.size()))) return false;
+    for (size_t index = 0; index < data.requestOperations.size(); ++index) {
+        if (!VoxRlBuilderRangeFits(data.requestOperations[index].formationEntryVersionRangeFirst, data.requestOperations[index].formationEntryVersionRangeCount, data.requestFormationEntryVersions.size())) return VoxRlBuilderValidationFail(failure, "requestOperations", "formationEntryVersionRange range", index);
+    }
+    if (!VoxRlBuilderSizeFitsU32(data.requestOperationVersions.size())) return VoxRlBuilderValidationFail(failure, "requestOperationVersions", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestOperationVersions.size(); ++rowIndex) if (!VoxRlIsValidRequestOperationVersionRecord(data.requestOperationVersions[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestOperationVersions", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestArmyVersions.size())) return VoxRlBuilderValidationFail(failure, "requestArmyVersions", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestFormationEntryVersions.size())) return VoxRlBuilderValidationFail(failure, "requestFormationEntryVersions", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestFormationEntryVersions.size(); ++rowIndex) if (!VoxRlIsValidRequestFormationEntryVersionRecord(data.requestFormationEntryVersions[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestFormationEntryVersions", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestCampaignBoundaries.size())) return VoxRlBuilderValidationFail(failure, "requestCampaignBoundaries", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestCampaignBoundaries.size(); ++rowIndex) if (!VoxRlIsValidRequestCampaignBoundaryRecord(data.requestCampaignBoundaries[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestCampaignBoundaries", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestZoneChoices.size())) return VoxRlBuilderValidationFail(failure, "requestZoneChoices", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestFocusAreas.size())) return VoxRlBuilderValidationFail(failure, "requestFocusAreas", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestFocusAreas.size(); ++rowIndex) if (!VoxRlIsValidRequestFocusAreaRecord(data.requestFocusAreas[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestFocusAreas", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestCityResources.size())) return VoxRlBuilderValidationFail(failure, "requestCityResources", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerResources.size())) return VoxRlBuilderValidationFail(failure, "requestPlayerResources", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestPlayerEconomics.size())) return VoxRlBuilderValidationFail(failure, "requestPlayerEconomics", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestPlayerEconomics.size(); ++rowIndex) if (!VoxRlIsValidRequestPlayerEconomicsRecord(data.requestPlayerEconomics[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestPlayerEconomics", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestEconomicBatches.size())) return VoxRlBuilderValidationFail(failure, "requestEconomicBatches", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestEconomicBatches.size(); ++rowIndex) if (!VoxRlIsValidRequestEconomicBatchRecord(data.requestEconomicBatches[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestEconomicBatches", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestMilitaryGoldTransactions.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryGoldTransactions", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestMilitaryGoldTransactions.size(); ++rowIndex) if (!VoxRlIsValidRequestMilitaryGoldTransactionRecord(data.requestMilitaryGoldTransactions[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestMilitaryGoldTransactions", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnits.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnits", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestEventUnits.size(); ++rowIndex) if (!VoxRlIsValidRequestEventUnitRecord(data.requestEventUnits[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestEventUnits", "record", rowIndex);
     for (size_t index = 0; index < data.requestEventUnits.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestEventUnits[index].movementCountRangeFirst, data.requestEventUnits[index].movementCountRangeCount, data.requestEventUnitMovementCounts.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestEventUnits[index].movementCountRangeFirst, data.requestEventUnits[index].movementCountRangeCount, data.requestEventUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnits", "movementCountRange range", index);
     }
     for (size_t index = 0; index < data.requestEventUnits.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestEventUnits[index].sparseFieldRangeFirst, data.requestEventUnits[index].sparseFieldRangeCount, data.requestEventUnitSparseFields.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestEventUnits[index].sparseFieldRangeFirst, data.requestEventUnits[index].sparseFieldRangeCount, data.requestEventUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnits", "sparseFieldRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitMovementCounts.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitSparseFields.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitModifiers.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitPlagues.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitBlockedPromotions.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitAttackCounts.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestMilitaryArrivals.size())) return false;
-    if (!data.requestMilitaryArrivals.empty() && !VoxRlAreValidRequestMilitaryArrivalRecordRows(&data.requestMilitaryArrivals[0], static_cast<u32>(data.requestMilitaryArrivals.size()))) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitMovementCounts", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitSparseFields", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitModifiers.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitModifiers", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitPlagues.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitPlagues", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitBlockedPromotions.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitBlockedPromotions", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestEventUnitAttackCounts.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitAttackCounts", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.requestMilitaryArrivals.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryArrivals", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestMilitaryArrivals.size(); ++rowIndex) if (!VoxRlIsValidRequestMilitaryArrivalRecord(data.requestMilitaryArrivals[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestMilitaryArrivals", "record", rowIndex);
     for (size_t index = 0; index < data.requestMilitaryArrivals.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].modifierRangeFirst, data.requestMilitaryArrivals[index].modifierRangeCount, data.requestEventUnitModifiers.size())) return false;
-    }
-    for (size_t index = 0; index < data.requestMilitaryArrivals.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].plagueRangeFirst, data.requestMilitaryArrivals[index].plagueRangeCount, data.requestEventUnitPlagues.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].modifierRangeFirst, data.requestMilitaryArrivals[index].modifierRangeCount, data.requestEventUnitModifiers.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryArrivals", "modifierRange range", index);
     }
     for (size_t index = 0; index < data.requestMilitaryArrivals.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].blockedPromotionRangeFirst, data.requestMilitaryArrivals[index].blockedPromotionRangeCount, data.requestEventUnitBlockedPromotions.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].plagueRangeFirst, data.requestMilitaryArrivals[index].plagueRangeCount, data.requestEventUnitPlagues.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryArrivals", "plagueRange range", index);
     }
     for (size_t index = 0; index < data.requestMilitaryArrivals.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].attackCountRangeFirst, data.requestMilitaryArrivals[index].attackCountRangeCount, data.requestEventUnitAttackCounts.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].blockedPromotionRangeFirst, data.requestMilitaryArrivals[index].blockedPromotionRangeCount, data.requestEventUnitBlockedPromotions.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryArrivals", "blockedPromotionRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestMilitaryDepartures.size())) return false;
-    if (!data.requestMilitaryDepartures.empty() && !VoxRlAreValidRequestMilitaryDepartureRecordRows(&data.requestMilitaryDepartures[0], static_cast<u32>(data.requestMilitaryDepartures.size()))) return false;
-    for (size_t index = 0; index < data.requestMilitaryDepartures.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].modifierRangeFirst, data.requestMilitaryDepartures[index].modifierRangeCount, data.requestEventUnitModifiers.size())) return false;
+    for (size_t index = 0; index < data.requestMilitaryArrivals.size(); ++index) {
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryArrivals[index].attackCountRangeFirst, data.requestMilitaryArrivals[index].attackCountRangeCount, data.requestEventUnitAttackCounts.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryArrivals", "attackCountRange range", index);
     }
+    if (!VoxRlBuilderSizeFitsU32(data.requestMilitaryDepartures.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryDepartures", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestMilitaryDepartures.size(); ++rowIndex) if (!VoxRlIsValidRequestMilitaryDepartureRecord(data.requestMilitaryDepartures[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestMilitaryDepartures", "record", rowIndex);
     for (size_t index = 0; index < data.requestMilitaryDepartures.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].plagueRangeFirst, data.requestMilitaryDepartures[index].plagueRangeCount, data.requestEventUnitPlagues.size())) return false;
-    }
-    for (size_t index = 0; index < data.requestMilitaryDepartures.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].blockedPromotionRangeFirst, data.requestMilitaryDepartures[index].blockedPromotionRangeCount, data.requestEventUnitBlockedPromotions.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].modifierRangeFirst, data.requestMilitaryDepartures[index].modifierRangeCount, data.requestEventUnitModifiers.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryDepartures", "modifierRange range", index);
     }
     for (size_t index = 0; index < data.requestMilitaryDepartures.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].attackCountRangeFirst, data.requestMilitaryDepartures[index].attackCountRangeCount, data.requestEventUnitAttackCounts.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].plagueRangeFirst, data.requestMilitaryDepartures[index].plagueRangeCount, data.requestEventUnitPlagues.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryDepartures", "plagueRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.requestBarbarianCampCreations.size())) return false;
-    if (!data.requestBarbarianCampCreations.empty() && !VoxRlAreValidRequestBarbarianCampCreationRecordRows(&data.requestBarbarianCampCreations[0], static_cast<u32>(data.requestBarbarianCampCreations.size()))) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.requestTeamResources.size())) return false;
-    if (!data.requestTeamResources.empty() && !VoxRlAreValidRequestTeamResourceRecordRows(&data.requestTeamResources[0], static_cast<u32>(data.requestTeamResources.size()))) return false;
+    for (size_t index = 0; index < data.requestMilitaryDepartures.size(); ++index) {
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].blockedPromotionRangeFirst, data.requestMilitaryDepartures[index].blockedPromotionRangeCount, data.requestEventUnitBlockedPromotions.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryDepartures", "blockedPromotionRange range", index);
+    }
+    for (size_t index = 0; index < data.requestMilitaryDepartures.size(); ++index) {
+        if (!VoxRlBuilderRangeFits(data.requestMilitaryDepartures[index].attackCountRangeFirst, data.requestMilitaryDepartures[index].attackCountRangeCount, data.requestEventUnitAttackCounts.size())) return VoxRlBuilderValidationFail(failure, "requestMilitaryDepartures", "attackCountRange range", index);
+    }
+    if (!VoxRlBuilderSizeFitsU32(data.requestBarbarianCampCreations.size())) return VoxRlBuilderValidationFail(failure, "requestBarbarianCampCreations", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestBarbarianCampCreations.size(); ++rowIndex) if (!VoxRlIsValidRequestBarbarianCampCreationRecord(data.requestBarbarianCampCreations[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestBarbarianCampCreations", "record", rowIndex);
+    if (!VoxRlBuilderSizeFitsU32(data.requestTeamResources.size())) return VoxRlBuilderValidationFail(failure, "requestTeamResources", "size", static_cast<size_t>(-1));
+    for (size_t rowIndex = 0; rowIndex < data.requestTeamResources.size(); ++rowIndex) if (!VoxRlIsValidRequestTeamResourceRecord(data.requestTeamResources[rowIndex])) return VoxRlBuilderValidationFail(failure, "requestTeamResources", "record", rowIndex);
+    if (!data.requestTeamResources.empty() && !VoxRlAreValidRequestTeamResourceRecordRows(&data.requestTeamResources[0], static_cast<u32>(data.requestTeamResources.size()))) return VoxRlBuilderValidationFail(failure, "requestTeamResources", "unique", static_cast<size_t>(-1));
     u32 requestDeltaUnitMovementCountsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestDeltaUnits.size(); ++parentIndex) {
         const RequestDeltaUnitRecord& parent = data.requestDeltaUnits[parentIndex];
-        if (parent.movementCountRangeFirst != requestDeltaUnitMovementCountsCursor || !VoxRlAddU32(requestDeltaUnitMovementCountsCursor, parent.movementCountRangeCount, requestDeltaUnitMovementCountsCursor)) return false;
+        if (parent.movementCountRangeFirst != requestDeltaUnitMovementCountsCursor || !VoxRlAddU32(requestDeltaUnitMovementCountsCursor, parent.movementCountRangeCount, requestDeltaUnitMovementCountsCursor)) return VoxRlBuilderValidationFail(failure, "requestDeltaUnits", "movementCountRange partition", parentIndex);
     }
-    if (requestDeltaUnitMovementCountsCursor != static_cast<u32>(data.requestDeltaUnitMovementCounts.size())) return false;
+    if (requestDeltaUnitMovementCountsCursor != static_cast<u32>(data.requestDeltaUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnitMovementCounts", "partition tail", static_cast<size_t>(-1));
     u32 requestDeltaUnitSparseFieldsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestDeltaUnits.size(); ++parentIndex) {
         const RequestDeltaUnitRecord& parent = data.requestDeltaUnits[parentIndex];
-        if (parent.sparseFieldRangeFirst != requestDeltaUnitSparseFieldsCursor || !VoxRlAddU32(requestDeltaUnitSparseFieldsCursor, parent.sparseFieldRangeCount, requestDeltaUnitSparseFieldsCursor)) return false;
+        if (parent.sparseFieldRangeFirst != requestDeltaUnitSparseFieldsCursor || !VoxRlAddU32(requestDeltaUnitSparseFieldsCursor, parent.sparseFieldRangeCount, requestDeltaUnitSparseFieldsCursor)) return VoxRlBuilderValidationFail(failure, "requestDeltaUnits", "sparseFieldRange partition", parentIndex);
     }
-    if (requestDeltaUnitSparseFieldsCursor != static_cast<u32>(data.requestDeltaUnitSparseFields.size())) return false;
+    if (requestDeltaUnitSparseFieldsCursor != static_cast<u32>(data.requestDeltaUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "requestDeltaUnitSparseFields", "partition tail", static_cast<size_t>(-1));
     u32 requestInterceptorEntriesCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestInterceptorReplacements.size(); ++parentIndex) {
         const RequestInterceptorReplacementRecord& parent = data.requestInterceptorReplacements[parentIndex];
-        if (parent.entryRangeFirst != requestInterceptorEntriesCursor || !VoxRlAddU32(requestInterceptorEntriesCursor, parent.entryRangeCount, requestInterceptorEntriesCursor)) return false;
+        if (parent.entryRangeFirst != requestInterceptorEntriesCursor || !VoxRlAddU32(requestInterceptorEntriesCursor, parent.entryRangeCount, requestInterceptorEntriesCursor)) return VoxRlBuilderValidationFail(failure, "requestInterceptorReplacements", "entryRange partition", parentIndex);
     }
-    if (requestInterceptorEntriesCursor != static_cast<u32>(data.requestInterceptorEntries.size())) return false;
+    if (requestInterceptorEntriesCursor != static_cast<u32>(data.requestInterceptorEntries.size())) return VoxRlBuilderValidationFail(failure, "requestInterceptorEntries", "partition tail", static_cast<size_t>(-1));
     u32 requestZoneNeighborsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestZoneReplacements.size(); ++parentIndex) {
         const RequestZoneReplacementRecord& parent = data.requestZoneReplacements[parentIndex];
-        if (parent.neighborRangeFirst != requestZoneNeighborsCursor || !VoxRlAddU32(requestZoneNeighborsCursor, parent.neighborRangeCount, requestZoneNeighborsCursor)) return false;
+        if (parent.neighborRangeFirst != requestZoneNeighborsCursor || !VoxRlAddU32(requestZoneNeighborsCursor, parent.neighborRangeCount, requestZoneNeighborsCursor)) return VoxRlBuilderValidationFail(failure, "requestZoneReplacements", "neighborRange partition", parentIndex);
     }
-    if (requestZoneNeighborsCursor != static_cast<u32>(data.requestZoneNeighbors.size())) return false;
+    if (requestZoneNeighborsCursor != static_cast<u32>(data.requestZoneNeighbors.size())) return VoxRlBuilderValidationFail(failure, "requestZoneNeighbors", "partition tail", static_cast<size_t>(-1));
     u32 requestUnitModifierRowsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestUnitModifierReplacements.size(); ++parentIndex) {
         const RequestUnitModifierReplacementRecord& parent = data.requestUnitModifierReplacements[parentIndex];
-        if (parent.rowRangeFirst != requestUnitModifierRowsCursor || !VoxRlAddU32(requestUnitModifierRowsCursor, parent.rowRangeCount, requestUnitModifierRowsCursor)) return false;
+        if (parent.rowRangeFirst != requestUnitModifierRowsCursor || !VoxRlAddU32(requestUnitModifierRowsCursor, parent.rowRangeCount, requestUnitModifierRowsCursor)) return VoxRlBuilderValidationFail(failure, "requestUnitModifierReplacements", "rowRange partition", parentIndex);
     }
-    if (requestUnitModifierRowsCursor != static_cast<u32>(data.requestUnitModifierRows.size())) return false;
+    if (requestUnitModifierRowsCursor != static_cast<u32>(data.requestUnitModifierRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitModifierRows", "partition tail", static_cast<size_t>(-1));
     u32 requestUnitPlagueRowsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestUnitPlagueReplacements.size(); ++parentIndex) {
         const RequestUnitPlagueReplacementRecord& parent = data.requestUnitPlagueReplacements[parentIndex];
-        if (parent.rowRangeFirst != requestUnitPlagueRowsCursor || !VoxRlAddU32(requestUnitPlagueRowsCursor, parent.rowRangeCount, requestUnitPlagueRowsCursor)) return false;
+        if (parent.rowRangeFirst != requestUnitPlagueRowsCursor || !VoxRlAddU32(requestUnitPlagueRowsCursor, parent.rowRangeCount, requestUnitPlagueRowsCursor)) return VoxRlBuilderValidationFail(failure, "requestUnitPlagueReplacements", "rowRange partition", parentIndex);
     }
-    if (requestUnitPlagueRowsCursor != static_cast<u32>(data.requestUnitPlagueRows.size())) return false;
+    if (requestUnitPlagueRowsCursor != static_cast<u32>(data.requestUnitPlagueRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitPlagueRows", "partition tail", static_cast<size_t>(-1));
     u32 requestUnitBlockedPromotionRowsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestUnitBlockedPromotionReplacements.size(); ++parentIndex) {
         const RequestUnitBlockedPromotionReplacementRecord& parent = data.requestUnitBlockedPromotionReplacements[parentIndex];
-        if (parent.rowRangeFirst != requestUnitBlockedPromotionRowsCursor || !VoxRlAddU32(requestUnitBlockedPromotionRowsCursor, parent.rowRangeCount, requestUnitBlockedPromotionRowsCursor)) return false;
+        if (parent.rowRangeFirst != requestUnitBlockedPromotionRowsCursor || !VoxRlAddU32(requestUnitBlockedPromotionRowsCursor, parent.rowRangeCount, requestUnitBlockedPromotionRowsCursor)) return VoxRlBuilderValidationFail(failure, "requestUnitBlockedPromotionReplacements", "rowRange partition", parentIndex);
     }
-    if (requestUnitBlockedPromotionRowsCursor != static_cast<u32>(data.requestUnitBlockedPromotionRows.size())) return false;
+    if (requestUnitBlockedPromotionRowsCursor != static_cast<u32>(data.requestUnitBlockedPromotionRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitBlockedPromotionRows", "partition tail", static_cast<size_t>(-1));
     u32 requestUnitAttackCountRowsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestUnitAttackCountReplacements.size(); ++parentIndex) {
         const RequestUnitAttackCountReplacementRecord& parent = data.requestUnitAttackCountReplacements[parentIndex];
-        if (parent.rowRangeFirst != requestUnitAttackCountRowsCursor || !VoxRlAddU32(requestUnitAttackCountRowsCursor, parent.rowRangeCount, requestUnitAttackCountRowsCursor)) return false;
+        if (parent.rowRangeFirst != requestUnitAttackCountRowsCursor || !VoxRlAddU32(requestUnitAttackCountRowsCursor, parent.rowRangeCount, requestUnitAttackCountRowsCursor)) return VoxRlBuilderValidationFail(failure, "requestUnitAttackCountReplacements", "rowRange partition", parentIndex);
     }
-    if (requestUnitAttackCountRowsCursor != static_cast<u32>(data.requestUnitAttackCountRows.size())) return false;
+    if (requestUnitAttackCountRowsCursor != static_cast<u32>(data.requestUnitAttackCountRows.size())) return VoxRlBuilderValidationFail(failure, "requestUnitAttackCountRows", "partition tail", static_cast<size_t>(-1));
     u32 requestPlayerResistanceRowsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestPlayerResistanceReplacements.size(); ++parentIndex) {
         const RequestPlayerResistanceReplacementRecord& parent = data.requestPlayerResistanceReplacements[parentIndex];
-        if (parent.rowRangeFirst != requestPlayerResistanceRowsCursor || !VoxRlAddU32(requestPlayerResistanceRowsCursor, parent.rowRangeCount, requestPlayerResistanceRowsCursor)) return false;
+        if (parent.rowRangeFirst != requestPlayerResistanceRowsCursor || !VoxRlAddU32(requestPlayerResistanceRowsCursor, parent.rowRangeCount, requestPlayerResistanceRowsCursor)) return VoxRlBuilderValidationFail(failure, "requestPlayerResistanceReplacements", "rowRange partition", parentIndex);
     }
-    if (requestPlayerResistanceRowsCursor != static_cast<u32>(data.requestPlayerResistanceRows.size())) return false;
+    if (requestPlayerResistanceRowsCursor != static_cast<u32>(data.requestPlayerResistanceRows.size())) return VoxRlBuilderValidationFail(failure, "requestPlayerResistanceRows", "partition tail", static_cast<size_t>(-1));
     u32 requestCityAttackCountRowsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestCityAttackCountReplacements.size(); ++parentIndex) {
         const RequestCityAttackCountReplacementRecord& parent = data.requestCityAttackCountReplacements[parentIndex];
-        if (parent.rowRangeFirst != requestCityAttackCountRowsCursor || !VoxRlAddU32(requestCityAttackCountRowsCursor, parent.rowRangeCount, requestCityAttackCountRowsCursor)) return false;
+        if (parent.rowRangeFirst != requestCityAttackCountRowsCursor || !VoxRlAddU32(requestCityAttackCountRowsCursor, parent.rowRangeCount, requestCityAttackCountRowsCursor)) return VoxRlBuilderValidationFail(failure, "requestCityAttackCountReplacements", "rowRange partition", parentIndex);
     }
-    if (requestCityAttackCountRowsCursor != static_cast<u32>(data.requestCityAttackCountRows.size())) return false;
+    if (requestCityAttackCountRowsCursor != static_cast<u32>(data.requestCityAttackCountRows.size())) return VoxRlBuilderValidationFail(failure, "requestCityAttackCountRows", "partition tail", static_cast<size_t>(-1));
     u32 requestOperationVersionsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestOperations.size(); ++parentIndex) {
         const RequestOperationRecord& parent = data.requestOperations[parentIndex];
-        if (parent.operationVersionRangeFirst != requestOperationVersionsCursor || !VoxRlAddU32(requestOperationVersionsCursor, parent.operationVersionRangeCount, requestOperationVersionsCursor)) return false;
+        if (parent.operationVersionRangeFirst != requestOperationVersionsCursor || !VoxRlAddU32(requestOperationVersionsCursor, parent.operationVersionRangeCount, requestOperationVersionsCursor)) return VoxRlBuilderValidationFail(failure, "requestOperations", "operationVersionRange partition", parentIndex);
     }
-    if (requestOperationVersionsCursor != static_cast<u32>(data.requestOperationVersions.size())) return false;
+    if (requestOperationVersionsCursor != static_cast<u32>(data.requestOperationVersions.size())) return VoxRlBuilderValidationFail(failure, "requestOperationVersions", "partition tail", static_cast<size_t>(-1));
     u32 requestArmyVersionsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestOperations.size(); ++parentIndex) {
         const RequestOperationRecord& parent = data.requestOperations[parentIndex];
-        if (parent.armyVersionRangeFirst != requestArmyVersionsCursor || !VoxRlAddU32(requestArmyVersionsCursor, parent.armyVersionRangeCount, requestArmyVersionsCursor)) return false;
+        if (parent.armyVersionRangeFirst != requestArmyVersionsCursor || !VoxRlAddU32(requestArmyVersionsCursor, parent.armyVersionRangeCount, requestArmyVersionsCursor)) return VoxRlBuilderValidationFail(failure, "requestOperations", "armyVersionRange partition", parentIndex);
     }
-    if (requestArmyVersionsCursor != static_cast<u32>(data.requestArmyVersions.size())) return false;
+    if (requestArmyVersionsCursor != static_cast<u32>(data.requestArmyVersions.size())) return VoxRlBuilderValidationFail(failure, "requestArmyVersions", "partition tail", static_cast<size_t>(-1));
     u32 requestFormationEntryVersionsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestOperations.size(); ++parentIndex) {
         const RequestOperationRecord& parent = data.requestOperations[parentIndex];
-        if (parent.formationEntryVersionRangeFirst != requestFormationEntryVersionsCursor || !VoxRlAddU32(requestFormationEntryVersionsCursor, parent.formationEntryVersionRangeCount, requestFormationEntryVersionsCursor)) return false;
+        if (parent.formationEntryVersionRangeFirst != requestFormationEntryVersionsCursor || !VoxRlAddU32(requestFormationEntryVersionsCursor, parent.formationEntryVersionRangeCount, requestFormationEntryVersionsCursor)) return VoxRlBuilderValidationFail(failure, "requestOperations", "formationEntryVersionRange partition", parentIndex);
     }
-    if (requestFormationEntryVersionsCursor != static_cast<u32>(data.requestFormationEntryVersions.size())) return false;
+    if (requestFormationEntryVersionsCursor != static_cast<u32>(data.requestFormationEntryVersions.size())) return VoxRlBuilderValidationFail(failure, "requestFormationEntryVersions", "partition tail", static_cast<size_t>(-1));
     u32 requestEventUnitMovementCountsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestEventUnits.size(); ++parentIndex) {
         const RequestEventUnitRecord& parent = data.requestEventUnits[parentIndex];
-        if (parent.movementCountRangeFirst != requestEventUnitMovementCountsCursor || !VoxRlAddU32(requestEventUnitMovementCountsCursor, parent.movementCountRangeCount, requestEventUnitMovementCountsCursor)) return false;
+        if (parent.movementCountRangeFirst != requestEventUnitMovementCountsCursor || !VoxRlAddU32(requestEventUnitMovementCountsCursor, parent.movementCountRangeCount, requestEventUnitMovementCountsCursor)) return VoxRlBuilderValidationFail(failure, "requestEventUnits", "movementCountRange partition", parentIndex);
     }
-    if (requestEventUnitMovementCountsCursor != static_cast<u32>(data.requestEventUnitMovementCounts.size())) return false;
+    if (requestEventUnitMovementCountsCursor != static_cast<u32>(data.requestEventUnitMovementCounts.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitMovementCounts", "partition tail", static_cast<size_t>(-1));
     u32 requestEventUnitSparseFieldsCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.requestEventUnits.size(); ++parentIndex) {
         const RequestEventUnitRecord& parent = data.requestEventUnits[parentIndex];
-        if (parent.sparseFieldRangeFirst != requestEventUnitSparseFieldsCursor || !VoxRlAddU32(requestEventUnitSparseFieldsCursor, parent.sparseFieldRangeCount, requestEventUnitSparseFieldsCursor)) return false;
+        if (parent.sparseFieldRangeFirst != requestEventUnitSparseFieldsCursor || !VoxRlAddU32(requestEventUnitSparseFieldsCursor, parent.sparseFieldRangeCount, requestEventUnitSparseFieldsCursor)) return VoxRlBuilderValidationFail(failure, "requestEventUnits", "sparseFieldRange partition", parentIndex);
     }
-    if (requestEventUnitSparseFieldsCursor != static_cast<u32>(data.requestEventUnitSparseFields.size())) return false;
+    if (requestEventUnitSparseFieldsCursor != static_cast<u32>(data.requestEventUnitSparseFields.size())) return VoxRlBuilderValidationFail(failure, "requestEventUnitSparseFields", "partition tail", static_cast<size_t>(-1));
     return true;
+}
+
+inline bool VoxRlValidateRequestData(const VoxRlRequestData& data)
+{
+    return VoxRlValidateRequestData(data, 0);
 }
 
 inline void VoxRlRequestData::Clear()
@@ -5297,30 +5341,36 @@ inline bool AppendResultAssignmentRecordUnitHealingRange(ResultAssignmentRecord*
     parent->unitHealingRangeFirst = first; parent->unitHealingRangeCount = count; return true;
 }
 
-inline bool VoxRlValidateResultData(const VoxRlResultData& data)
+inline bool VoxRlValidateResultData(const VoxRlResultData& data, VoxRlBuilderValidationFailure* failure)
 {
-    if (!VoxRlBuilderSizeFitsU32(data.resultAssignments.size())) return false;
+    if (failure != 0) *failure = VoxRlBuilderValidationFailure();
+    if (!VoxRlBuilderSizeFitsU32(data.resultAssignments.size())) return VoxRlBuilderValidationFail(failure, "resultAssignments", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.resultAssignments.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.resultAssignments[index].unitDamageRangeFirst, data.resultAssignments[index].unitDamageRangeCount, data.resultAssignmentDamage.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.resultAssignments[index].unitDamageRangeFirst, data.resultAssignments[index].unitDamageRangeCount, data.resultAssignmentDamage.size())) return VoxRlBuilderValidationFail(failure, "resultAssignments", "unitDamageRange range", index);
     }
     for (size_t index = 0; index < data.resultAssignments.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.resultAssignments[index].unitHealingRangeFirst, data.resultAssignments[index].unitHealingRangeCount, data.resultAssignmentHealing.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.resultAssignments[index].unitHealingRangeFirst, data.resultAssignments[index].unitHealingRangeCount, data.resultAssignmentHealing.size())) return VoxRlBuilderValidationFail(failure, "resultAssignments", "unitHealingRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.resultAssignmentDamage.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.resultAssignmentHealing.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.resultAssignmentDamage.size())) return VoxRlBuilderValidationFail(failure, "resultAssignmentDamage", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.resultAssignmentHealing.size())) return VoxRlBuilderValidationFail(failure, "resultAssignmentHealing", "size", static_cast<size_t>(-1));
     u32 resultAssignmentDamageCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.resultAssignments.size(); ++parentIndex) {
         const ResultAssignmentRecord& parent = data.resultAssignments[parentIndex];
-        if (parent.unitDamageRangeFirst != resultAssignmentDamageCursor || !VoxRlAddU32(resultAssignmentDamageCursor, parent.unitDamageRangeCount, resultAssignmentDamageCursor)) return false;
+        if (parent.unitDamageRangeFirst != resultAssignmentDamageCursor || !VoxRlAddU32(resultAssignmentDamageCursor, parent.unitDamageRangeCount, resultAssignmentDamageCursor)) return VoxRlBuilderValidationFail(failure, "resultAssignments", "unitDamageRange partition", parentIndex);
     }
-    if (resultAssignmentDamageCursor != static_cast<u32>(data.resultAssignmentDamage.size())) return false;
+    if (resultAssignmentDamageCursor != static_cast<u32>(data.resultAssignmentDamage.size())) return VoxRlBuilderValidationFail(failure, "resultAssignmentDamage", "partition tail", static_cast<size_t>(-1));
     u32 resultAssignmentHealingCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.resultAssignments.size(); ++parentIndex) {
         const ResultAssignmentRecord& parent = data.resultAssignments[parentIndex];
-        if (parent.unitHealingRangeFirst != resultAssignmentHealingCursor || !VoxRlAddU32(resultAssignmentHealingCursor, parent.unitHealingRangeCount, resultAssignmentHealingCursor)) return false;
+        if (parent.unitHealingRangeFirst != resultAssignmentHealingCursor || !VoxRlAddU32(resultAssignmentHealingCursor, parent.unitHealingRangeCount, resultAssignmentHealingCursor)) return VoxRlBuilderValidationFail(failure, "resultAssignments", "unitHealingRange partition", parentIndex);
     }
-    if (resultAssignmentHealingCursor != static_cast<u32>(data.resultAssignmentHealing.size())) return false;
+    if (resultAssignmentHealingCursor != static_cast<u32>(data.resultAssignmentHealing.size())) return VoxRlBuilderValidationFail(failure, "resultAssignmentHealing", "partition tail", static_cast<size_t>(-1));
     return true;
+}
+
+inline bool VoxRlValidateResultData(const VoxRlResultData& data)
+{
+    return VoxRlValidateResultData(data, 0);
 }
 
 inline void VoxRlResultData::Clear()
@@ -5450,39 +5500,45 @@ inline bool AppendReplayHeaderRecordUnusableUnitRange(VoxRlReplayPlanData* data,
     return data != 0 && AppendReplayHeaderRecordUnusableUnitRange(&data->replayHeader, data, rows);
 }
 
-inline bool VoxRlValidateReplayPlanData(const VoxRlReplayPlanData& data)
+inline bool VoxRlValidateReplayPlanData(const VoxRlReplayPlanData& data, VoxRlBuilderValidationFailure* failure)
 {
-    if (true && !VoxRlBuilderRangeFits(data.replayHeader.assignmentRangeFirst, data.replayHeader.assignmentRangeCount, data.replayAssignments.size())) return false;
-    if (true && !VoxRlBuilderRangeFits(data.replayHeader.unusableUnitRangeFirst, data.replayHeader.unusableUnitRangeCount, data.replayUnusableUnits.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.replayAssignments.size())) return false;
+    if (failure != 0) *failure = VoxRlBuilderValidationFailure();
+    if (true && !VoxRlBuilderRangeFits(data.replayHeader.assignmentRangeFirst, data.replayHeader.assignmentRangeCount, data.replayAssignments.size())) return VoxRlBuilderValidationFail(failure, "replayHeader", "assignmentRange range", static_cast<size_t>(-1));
+    if (true && !VoxRlBuilderRangeFits(data.replayHeader.unusableUnitRangeFirst, data.replayHeader.unusableUnitRangeCount, data.replayUnusableUnits.size())) return VoxRlBuilderValidationFail(failure, "replayHeader", "unusableUnitRange range", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.replayAssignments.size())) return VoxRlBuilderValidationFail(failure, "replayAssignments", "size", static_cast<size_t>(-1));
     for (size_t index = 0; index < data.replayAssignments.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.replayAssignments[index].unitDamageRangeFirst, data.replayAssignments[index].unitDamageRangeCount, data.replayAssignmentDamage.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.replayAssignments[index].unitDamageRangeFirst, data.replayAssignments[index].unitDamageRangeCount, data.replayAssignmentDamage.size())) return VoxRlBuilderValidationFail(failure, "replayAssignments", "unitDamageRange range", index);
     }
     for (size_t index = 0; index < data.replayAssignments.size(); ++index) {
-        if (!VoxRlBuilderRangeFits(data.replayAssignments[index].unitHealingRangeFirst, data.replayAssignments[index].unitHealingRangeCount, data.replayAssignmentHealing.size())) return false;
+        if (!VoxRlBuilderRangeFits(data.replayAssignments[index].unitHealingRangeFirst, data.replayAssignments[index].unitHealingRangeCount, data.replayAssignmentHealing.size())) return VoxRlBuilderValidationFail(failure, "replayAssignments", "unitHealingRange range", index);
     }
-    if (!VoxRlBuilderSizeFitsU32(data.replayAssignmentDamage.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.replayAssignmentHealing.size())) return false;
-    if (!VoxRlBuilderSizeFitsU32(data.replayUnusableUnits.size())) return false;
+    if (!VoxRlBuilderSizeFitsU32(data.replayAssignmentDamage.size())) return VoxRlBuilderValidationFail(failure, "replayAssignmentDamage", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.replayAssignmentHealing.size())) return VoxRlBuilderValidationFail(failure, "replayAssignmentHealing", "size", static_cast<size_t>(-1));
+    if (!VoxRlBuilderSizeFitsU32(data.replayUnusableUnits.size())) return VoxRlBuilderValidationFail(failure, "replayUnusableUnits", "size", static_cast<size_t>(-1));
     u32 replayAssignmentsCursor = 0;
-    if (true && (data.replayHeader.assignmentRangeFirst != replayAssignmentsCursor || !VoxRlAddU32(replayAssignmentsCursor, data.replayHeader.assignmentRangeCount, replayAssignmentsCursor))) return false;
-    if (replayAssignmentsCursor != static_cast<u32>(data.replayAssignments.size())) return false;
+    if (true && (data.replayHeader.assignmentRangeFirst != replayAssignmentsCursor || !VoxRlAddU32(replayAssignmentsCursor, data.replayHeader.assignmentRangeCount, replayAssignmentsCursor))) return VoxRlBuilderValidationFail(failure, "replayHeader", "assignmentRange partition", static_cast<size_t>(-1));
+    if (replayAssignmentsCursor != static_cast<u32>(data.replayAssignments.size())) return VoxRlBuilderValidationFail(failure, "replayAssignments", "partition tail", static_cast<size_t>(-1));
     u32 replayUnusableUnitsCursor = 0;
-    if (true && (data.replayHeader.unusableUnitRangeFirst != replayUnusableUnitsCursor || !VoxRlAddU32(replayUnusableUnitsCursor, data.replayHeader.unusableUnitRangeCount, replayUnusableUnitsCursor))) return false;
-    if (replayUnusableUnitsCursor != static_cast<u32>(data.replayUnusableUnits.size())) return false;
+    if (true && (data.replayHeader.unusableUnitRangeFirst != replayUnusableUnitsCursor || !VoxRlAddU32(replayUnusableUnitsCursor, data.replayHeader.unusableUnitRangeCount, replayUnusableUnitsCursor))) return VoxRlBuilderValidationFail(failure, "replayHeader", "unusableUnitRange partition", static_cast<size_t>(-1));
+    if (replayUnusableUnitsCursor != static_cast<u32>(data.replayUnusableUnits.size())) return VoxRlBuilderValidationFail(failure, "replayUnusableUnits", "partition tail", static_cast<size_t>(-1));
     u32 replayAssignmentDamageCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.replayAssignments.size(); ++parentIndex) {
         const ReplayAssignmentRecord& parent = data.replayAssignments[parentIndex];
-        if (parent.unitDamageRangeFirst != replayAssignmentDamageCursor || !VoxRlAddU32(replayAssignmentDamageCursor, parent.unitDamageRangeCount, replayAssignmentDamageCursor)) return false;
+        if (parent.unitDamageRangeFirst != replayAssignmentDamageCursor || !VoxRlAddU32(replayAssignmentDamageCursor, parent.unitDamageRangeCount, replayAssignmentDamageCursor)) return VoxRlBuilderValidationFail(failure, "replayAssignments", "unitDamageRange partition", parentIndex);
     }
-    if (replayAssignmentDamageCursor != static_cast<u32>(data.replayAssignmentDamage.size())) return false;
+    if (replayAssignmentDamageCursor != static_cast<u32>(data.replayAssignmentDamage.size())) return VoxRlBuilderValidationFail(failure, "replayAssignmentDamage", "partition tail", static_cast<size_t>(-1));
     u32 replayAssignmentHealingCursor = 0;
     for (size_t parentIndex = 0; parentIndex < data.replayAssignments.size(); ++parentIndex) {
         const ReplayAssignmentRecord& parent = data.replayAssignments[parentIndex];
-        if (parent.unitHealingRangeFirst != replayAssignmentHealingCursor || !VoxRlAddU32(replayAssignmentHealingCursor, parent.unitHealingRangeCount, replayAssignmentHealingCursor)) return false;
+        if (parent.unitHealingRangeFirst != replayAssignmentHealingCursor || !VoxRlAddU32(replayAssignmentHealingCursor, parent.unitHealingRangeCount, replayAssignmentHealingCursor)) return VoxRlBuilderValidationFail(failure, "replayAssignments", "unitHealingRange partition", parentIndex);
     }
-    if (replayAssignmentHealingCursor != static_cast<u32>(data.replayAssignmentHealing.size())) return false;
+    if (replayAssignmentHealingCursor != static_cast<u32>(data.replayAssignmentHealing.size())) return VoxRlBuilderValidationFail(failure, "replayAssignmentHealing", "partition tail", static_cast<size_t>(-1));
     return true;
+}
+
+inline bool VoxRlValidateReplayPlanData(const VoxRlReplayPlanData& data)
+{
+    return VoxRlValidateReplayPlanData(data, 0);
 }
 
 inline void VoxRlReplayPlanData::Clear()
