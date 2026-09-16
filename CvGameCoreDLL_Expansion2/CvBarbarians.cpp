@@ -11,6 +11,9 @@
 #include "CvGameCoreUtils.h"
 #include "CvTypes.h"
 #include "CvSpanSerialization.h"
+// Vox Deorum: record successful barbarian camp and unit additions.
+#include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 
 //static 
 bool* CvBarbarians::m_abBarbSpawnerAttacked = NULL;
@@ -944,6 +947,9 @@ void CvBarbarians::DoCamps()
 		// Spawn a camp and units to defend it!
 		pPlot->setRouteType(NO_ROUTE);
 		pPlot->setImprovementType(eCamp);
+		// Vox Deorum: record the successful camp before its initial defenders.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlNoteBarbarianCampCreated(*pPlot, eCamp);
 		SpawnBarbarianUnits(pPlot, iNumInitialUnits, BARB_SPAWN_NEW_ENCAMPMENT);
 		ActivateBarbSpawner(pPlot);
 
@@ -1185,6 +1191,10 @@ void CvBarbarians::SpawnBarbarianUnits(CvPlot* pPlot, int iNumUnits, BarbSpawnRe
 				iNumUnitsSpawned++;
 				iNumUnits--;
 				pUnit->finishMoves();
+				// Vox Deorum: retain the initialized spawn and its camp source.
+				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+					VoxRlNoteBarbarianUnitCreated(*pUnit, *pPlot,
+						eReason == BARB_SPAWN_NEW_ENCAMPMENT || eReason == BARB_SPAWN_FROM_ENCAMPMENT);
 
 				if (MOD_EVENTS_BARBARIANS)
 					GAMEEVENTINVOKE_HOOK(GAMEEVENT_BarbariansSpawnedUnit, pPlot->getX(), pPlot->getY(), eUnit);
@@ -1301,6 +1311,10 @@ void CvBarbarians::SpawnBarbarianUnits(CvPlot* pPlot, int iNumUnits, BarbSpawnRe
 					iNumUnitsSpawned++;
 					iNumUnits--;
 					pUnit->finishMoves();
+					// Vox Deorum: retain the initialized spawn and its camp source.
+					if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+						VoxRlNoteBarbarianUnitCreated(*pUnit, *pPlot,
+							eReason == BARB_SPAWN_NEW_ENCAMPMENT || eReason == BARB_SPAWN_FROM_ENCAMPMENT);
 
 					// If this is a revolt, notify the player
 					if (iNumUnitsSpawned == 1 && eReason == BARB_SPAWN_UPRISING)

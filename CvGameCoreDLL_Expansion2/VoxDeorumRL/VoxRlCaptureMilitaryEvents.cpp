@@ -40,16 +40,13 @@ namespace
     {
         int kind;
         int receiver;
-        RequestMilitaryUpgradeRecord row;
+        RequestMilitaryArrivalRecord row;
         EventSnapshot snapshot;
         // Initializes optional references explicitly; zero is a valid native identity.
         MilitaryEvent() : kind(0), receiver(-1), row()
         {
             row.sourceOwner = row.lineageOwner = row.sourceCityOwner = row.donorPlayer = -1;
             row.sourceUnitId = row.lineageUnitId = row.sourceCityId = row.plotIndex = row.eventUnitIndex = -1;
-            row.replacementOwner = -1;
-            row.replacementUnitId = row.replacementUnitType = -1;
-            row.sourceUnitType = -1;
         }
     };
     // Totals over one observed economic interval, in hundredths of gold.
@@ -71,21 +68,33 @@ namespace
     };
     std::map<UnitKey, UnitKey> lineage;
     std::vector<MilitaryEvent> events;
+    std::vector<RequestBarbarianCampCreationRecord> campCreations;
+    std::map<int, unsigned int> campIds;
     std::vector<RequestMilitaryGoldTransactionRecord> goldTransactions;
     std::vector<RequestEconomicBatchRecord> economicBatches;
     std::map<int, EconomicInterval> economicIntervals;
     std::map<int, MaintenanceBaseline> maintenanceBaselines;
     std::map<UnitKey, CampaignPendingTransferRecord> pendingTransfers;
     size_t collectedEvents = 0;
+    size_t collectedCamps = 0;
     size_t collectedGold = 0;
     size_t collectedEconomics = 0;
     int eventActor = -1;
     int eventPhase = 0;
     unsigned int eventOrder = 0;
     unsigned int nextTransfer = 1;
+    unsigned int nextCreatedCamp = 0x80000001u;
     unsigned int goldDepth = 0;
     int goldCause = 0;
     bool captureFailed = false;
+
+    // Checks whether any configured major can carry shared barbarian evidence.
+    bool HasMajorCarrier()
+    {
+        for (int player = 0; player < MAX_MAJOR_CIVS; ++player)
+            if (VoxRlCapture::GetInstance().AdmitsMilitaryEvents(static_cast<PlayerTypes>(player))) return true;
+        return false;
+    }
 
     // Finds the latest provisional arrival that caller completion may still update.
     MilitaryEvent* PendingArrival(const CvUnit& unit)
@@ -107,21 +116,6 @@ namespace
             return;
         }
         target = static_cast<Target>(value);
-    }
-
-    // Purchase and upgrade records own their charges; retain only other action effects.
-    void ConsumeRecordedCharge(int owner, int costTimes100)
-    {
-        if (costTimes100 == 0) return;
-        for (size_t i = goldTransactions.size(); i > 0; --i)
-        {
-            const RequestMilitaryGoldTransactionRecord& row = goldTransactions[i - 1];
-            if (row.player == owner && row.amountTimes100 == -costTimes100)
-            {
-                goldTransactions.erase(goldTransactions.begin() + i - 1);
-                return;
-            }
-        }
     }
 
     // Fills the occurrence identity before any later observer receives the event.
@@ -170,7 +164,7 @@ namespace
 
     // Copies the common event contract without relying on different record layouts.
     template <typename Row>
-    Row EventRow(const RequestMilitaryUpgradeRecord& source)
+    Row EventRow(const RequestMilitaryArrivalRecord& source)
     {
         Row row = Row();
         row.occurrenceTurn = source.occurrenceTurn;
@@ -188,10 +182,19 @@ namespace
         row.donorPlayer = source.donorPlayer;
         row.plotIndex = source.plotIndex;
         row.eventUnitIndex = source.eventUnitIndex;
-        row.amountTimes100 = source.amountTimes100;
-        row.currency = source.currency;
         row.initializationComplete = source.initializationComplete;
         return row;
+    }
+
+    // Resolves a camp that existed when recording began from its initial plot.
+    unsigned int ExistingCampId(CvPlot& plot)
+    {
+        const int plotIndex = plot.GetPlotIndex();
+        std::map<int, unsigned int>::iterator found = campIds.find(plotIndex);
+        if (found != campIds.end()) return found->second;
+        const unsigned int id = static_cast<unsigned int>(plotIndex) + 1u;
+        campIds[plotIndex] = id;
+        return id;
     }
 
     // Appends snapshot children using the generated range ownership helpers.
@@ -210,9 +213,9 @@ namespace
 // Clears all evidence when the native attachment changes.
 void VoxRlResetMilitaryEvents()
 {
-    lineage.clear(); events.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
-    collectedEvents = collectedGold = collectedEconomics = 0;
-    eventActor = -1; eventPhase = 0; eventOrder = 0; nextTransfer = 1; goldDepth = 0; goldCause = 0; captureFailed = false;
+    lineage.clear(); events.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
+    collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
+    eventActor = -1; eventPhase = 0; eventOrder = 0; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; captureFailed = false;
 }
 
 // Uses the first observed owner-qualified unit identity within the source game.
@@ -239,11 +242,39 @@ void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source
         lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(owner, id);
     }
     else lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(unit.getOwner(), unit.GetID());
-    // Minor and barbarian arrivals have no receiving capture segment.
+    if (reason == REASON_BUY || reason == REASON_FAITH_BUY || reason == REASON_UPGRADE) return;
+    if (unit.getOwner() == BARBARIAN_PLAYER) return;
+    // Minor arrivals have no receiving capture segment.
     if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(unit.getOwner())) return;
-    const int cause = reason == REASON_TRAIN ? VOX_RL_EVENT_PRODUCTION : reason == REASON_BUY || reason == REASON_FAITH_BUY ? VOX_RL_EVENT_PURCHASE :
-        reason == REASON_GIFT ? VOX_RL_EVENT_GIFT : reason == REASON_CONVERT ? VOX_RL_EVENT_CONVERSION : reason == REASON_UPGRADE ? VOX_RL_EVENT_UPGRADE : VOX_RL_EVENT_UNKNOWN;
+    const int cause = reason == REASON_TRAIN ? VOX_RL_EVENT_PRODUCTION : reason == REASON_GIFT ? VOX_RL_EVENT_GIFT :
+        reason == REASON_CONVERT ? VOX_RL_EVENT_CONVERSION : VOX_RL_EVENT_UNKNOWN;
     events.push_back(MakeEvent(unit, 0, cause));
+}
+
+// Records a new camp with an identity distinct from every earlier camp at the plot.
+void VoxRlNoteBarbarianCampCreated(CvPlot& plot, int improvementType)
+{
+    if (!HasMajorCarrier()) return;
+    RequestBarbarianCampCreationRecord row = RequestBarbarianCampCreationRecord();
+    SetOccurrence(row);
+    row.campId = nextCreatedCamp++;
+    row.improvementType = improvementType;
+    row.plotIndex = static_cast<i16>(plot.GetPlotIndex());
+    campIds[plot.GetPlotIndex()] = row.campId;
+    campCreations.push_back(row);
+    ++eventOrder;
+}
+
+// Records a completed barbarian spawn for delivery by the next admitted major segment.
+void VoxRlNoteBarbarianUnitCreated(CvUnit& unit, CvPlot& source, bool fromCamp)
+{
+    if (!HasMajorCarrier()) return;
+    MilitaryEvent event = MakeEvent(unit, 0, VOX_RL_EVENT_BARBARIAN);
+    event.receiver = -1;
+    event.row.initializationComplete = 1;
+    event.row.sourceCampId = fromCamp ? ExistingCampId(source) : 0;
+    events.push_back(event);
+    ++eventOrder;
 }
 
 // Updates only the pending initialization for this unit, preserving its occurrence.
@@ -300,37 +331,6 @@ void VoxRlCompleteMilitaryCapture(CvUnit& unit, PlayerTypes sourceOwner, int sou
     MilitaryEvent* event = PendingArrival(unit);
     if (event == NULL) return;
     event->row.cause = VOX_RL_EVENT_CONVERSION; event->row.donorPlayer = static_cast<i8>(sourceOwner);
-}
-
-// Replaces the provisional upgrade arrival with a single replacement event.
-void VoxRlNoteMilitaryUpgrade(CvUnit& oldUnit, CvUnit& newUnit, int costTimes100)
-{
-    VoxRlCompleteMilitaryUnit(newUnit, &oldUnit);
-    MilitaryEvent* pending = PendingArrival(newUnit);
-    if (pending != NULL)
-    {
-        MilitaryEvent& event = *pending;
-        event.kind = 2; event.row.cause = VOX_RL_EVENT_UPGRADE;
-        event.row.sourceOwner = static_cast<i8>(oldUnit.getOwner()); event.row.sourceUnitId = oldUnit.GetID();
-        event.row.sourceUnitType = oldUnit.getUnitType();
-        event.row.replacementOwner = static_cast<i8>(newUnit.getOwner()); event.row.replacementUnitId = newUnit.GetID();
-        event.row.replacementUnitType = newUnit.getUnitType(); event.row.amountTimes100 = costTimes100; event.row.currency = VOX_RL_CURRENCY_GOLD;
-        ConsumeRecordedCharge(oldUnit.getOwner(), costTimes100);
-    }
-}
-
-// Completes the pending purchase with its source and actual currency charge.
-void VoxRlNoteMilitaryPurchase(CvUnit& unit, int cityOwner, int cityId, int currency, int costTimes100)
-{
-    VoxRlCompleteMilitaryUnit(unit);
-    MilitaryEvent* pending = PendingArrival(unit);
-    if (pending != NULL)
-    {
-        MilitaryEvent& event = *pending;
-        event.row.cause = VOX_RL_EVENT_PURCHASE; event.row.sourceCityOwner = static_cast<i8>(cityOwner); event.row.sourceCityId = cityId;
-        event.row.currency = static_cast<u8>(currency); event.row.amountTimes100 = costTimes100;
-        if (currency == VOX_RL_CURRENCY_GOLD) ConsumeRecordedCharge(unit.getOwner(), costTimes100);
-    }
 }
 
 // Captures a departure before the native unit is removed from its original owner.
@@ -487,19 +487,19 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
     // Their evidence becomes publishable only after the enclosing action completes.
     if (goldDepth != 0)
     {
-        collectedEvents = collectedGold = collectedEconomics = 0;
+        collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
         return true;
     }
-    collectedEvents = events.size(); collectedGold = goldTransactions.size(); collectedEconomics = economicBatches.size();
+    collectedEvents = events.size(); collectedCamps = campCreations.size(); collectedGold = goldTransactions.size(); collectedEconomics = economicBatches.size();
     for (size_t i = 0; i < collectedEvents; ++i)
     {
         const MilitaryEvent& event = events[i];
-        if (event.receiver != observer) continue;
-        RequestMilitaryUpgradeRecord row = event.row;
+        if (event.receiver >= 0 && event.receiver != observer) continue;
+        RequestMilitaryArrivalRecord row = event.row;
         if (!AppendSnapshot(event, data, row.eventUnitIndex)) return false;
         if (event.kind == 0)
         {
-            RequestMilitaryArrivalRecord arrival = EventRow<RequestMilitaryArrivalRecord>(row);
+            RequestMilitaryArrivalRecord arrival = row;
             if (!AppendRequestMilitaryArrivalRecordModifierRange(&arrival, &data, event.snapshot.requestEventUnitModifiers) ||
                 !AppendRequestMilitaryArrivalRecordPlagueRange(&arrival, &data, event.snapshot.requestEventUnitPlagues) ||
                 !AppendRequestMilitaryArrivalRecordBlockedPromotionRange(&arrival, &data, event.snapshot.requestEventUnitBlockedPromotions) ||
@@ -515,15 +515,8 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
                 !AppendRequestMilitaryDepartureRecordAttackCountRange(&departure, &data, event.snapshot.requestEventUnitAttackCounts)) return false;
             data.requestMilitaryDepartures.push_back(departure);
         }
-        else
-        {
-            if (!AppendRequestMilitaryUpgradeRecordModifierRange(&row, &data, event.snapshot.requestEventUnitModifiers) ||
-                !AppendRequestMilitaryUpgradeRecordPlagueRange(&row, &data, event.snapshot.requestEventUnitPlagues) ||
-                !AppendRequestMilitaryUpgradeRecordBlockedPromotionRange(&row, &data, event.snapshot.requestEventUnitBlockedPromotions) ||
-                !AppendRequestMilitaryUpgradeRecordAttackCountRange(&row, &data, event.snapshot.requestEventUnitAttackCounts)) return false;
-            data.requestMilitaryUpgrades.push_back(row);
-        }
     }
+    data.requestBarbarianCampCreations.insert(data.requestBarbarianCampCreations.end(), campCreations.begin(), campCreations.begin() + collectedCamps);
     // Economic evidence belongs to the shared game timeline. The next admitted
     // segment carries every player's rows; row.player identifies the affected treasury.
     // Unit arrivals and departures instead wait for their receiving observer above.
@@ -538,16 +531,17 @@ void VoxRlCommitMilitaryEvents(PlayerTypes observer)
     size_t retained = 0;
     for (size_t i = 0; i < events.size(); ++i)
     {
-        if (i < collectedEvents && events[i].receiver == observer) continue;
+        if (i < collectedEvents && (events[i].receiver < 0 || events[i].receiver == observer)) continue;
         if (retained != i) events[retained] = events[i];
         ++retained;
     }
     events.resize(retained);
+    campCreations.erase(campCreations.begin(), campCreations.begin() + collectedCamps);
     // This segment carried all players' economic prefixes, so consume each once
     // even when its treasury belongs to a different player from the segment.
     goldTransactions.erase(goldTransactions.begin(), goldTransactions.begin() + collectedGold);
     economicBatches.erase(economicBatches.begin(), economicBatches.begin() + collectedEconomics);
-    collectedEvents = collectedGold = collectedEconomics = 0;
+    collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
 }
 
 // Counts nested supported actions without duplicating their treasury changes.

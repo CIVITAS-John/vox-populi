@@ -479,7 +479,7 @@ namespace
 		data.requestEventUnitModifiers.size() + data.requestEventUnitPlagues.size() +
 		data.requestEventUnitBlockedPromotions.size() + data.requestEventUnitAttackCounts.size() +
 		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
-		data.requestMilitaryUpgrades.size();
+		data.requestBarbarianCampCreations.size();
 }
 
 	// Produces a stable native fingerprint for one operation and all child armies.

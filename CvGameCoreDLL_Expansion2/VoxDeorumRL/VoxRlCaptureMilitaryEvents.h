@@ -7,6 +7,7 @@
 #include "VoxDeorumRL/schema/VoxRlSchema.generated.h"
 
 class CvUnit;
+class CvPlot;
 struct VoxRlRequestData;
 struct VoxRlCampaignData;
 
@@ -18,6 +19,10 @@ void VoxRlGetUnitLineage(const CvUnit& unit, int& owner, int& unitId);
 void VoxRlSetMilitaryEventContext(PlayerTypes actor, int phase, unsigned int order);
 // Retains initialized creation capabilities and optional replacement lineage.
 void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source);
+// Buffers one successful camp placement before its defenders are created.
+void VoxRlNoteBarbarianCampCreated(CvPlot& plot, int improvementType);
+// Buffers one initialized barbarian spawn and its optional source camp.
+void VoxRlNoteBarbarianUnitCreated(CvUnit& unit, CvPlot& source, bool fromCamp);
 // Refreshes creation evidence after caller placement, conversion, and transport setup.
 void VoxRlCompleteMilitaryUnit(CvUnit& unit, const CvUnit* source = NULL);
 // Associates a completed city-created unit with its native source city.
@@ -26,10 +31,6 @@ void VoxRlNoteMilitaryCityArrival(CvUnit& unit, int cityOwner, int cityId);
 void VoxRlNoteMilitaryGiftArrival(CvUnit& unit, PlayerTypes donor);
 // Restores capture lineage when the original unit was removed before replacement.
 void VoxRlCompleteMilitaryCapture(CvUnit& unit, PlayerTypes sourceOwner, int sourceUnitId);
-// Records an accepted upgrade after its replacement has finished initialization.
-void VoxRlNoteMilitaryUpgrade(CvUnit& oldUnit, CvUnit& newUnit, int costTimes100);
-// Records a purchase's actual charge and city after successful unit creation.
-void VoxRlNoteMilitaryPurchase(CvUnit& unit, int cityOwner, int cityId, int currency, int costTimes100);
 // Retains the exiting unit's capabilities before an accepted gift or disband.
 void VoxRlNoteMilitaryDeparture(CvUnit& unit, int receiver, bool gift);
 // Retains an accepted distance gift's source identity through its travel interval.

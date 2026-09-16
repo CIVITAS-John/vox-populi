@@ -30734,11 +30734,7 @@ CvUnit* CvCity::PurchaseUnit(UnitTypes eUnitType, YieldTypes ePurchaseYield)
 		bool bCivilian = (pGameUnit->GetCombat() <= 0 && pGameUnit->GetRangedCombat() <= 0);
 		SetUnitPurchaseCooldown(bCivilian, pGameUnit->GetCooldown() - GetUnitPurchaseCooldownMod(bCivilian));
 
-		// Vox Deorum: record the charge before purchase rewards change the balance.
-		const int captureGoldBefore = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? kPlayer.GetTreasury()->GetGoldTimes100() : 0;
 		GET_PLAYER(getOwner()).GetTreasury()->ChangeGold(-iGoldCost);
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && pNewUnit != NULL)
-			VoxRlNoteMilitaryPurchase(*pNewUnit, getOwner(), GetID(), 1, captureGoldBefore - kPlayer.GetTreasury()->GetGoldTimes100());
 		if (iGoldCost > 0)
 		{
 			GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_PURCHASE, false, NO_GREATPERSON, NO_BUILDING, iGoldCost, false, NO_PLAYER, NULL, false, this);
@@ -30796,11 +30792,7 @@ CvUnit* CvCity::PurchaseUnit(UnitTypes eUnitType, YieldTypes ePurchaseYield)
 		ReligionTypes eReligion = pUnit->getUnitInfo().IsFoundReligion() ? kPlayer.GetReligions()->GetOwnedReligion() : GetCityReligions()->GetReligiousMajority();
 		pUnit->GetReligionDataMutable()->SetFullStrength(pUnit->getOwner(), pUnit->getUnitInfo(), eReligion);
 
-		// Vox Deorum: faith uses the same hundredths-based event cost contract.
-		const int captureFaithBefore = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? kPlayer.GetFaithTimes100() : 0;
 		kPlayer.ChangeFaith(-iFaithCost);
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-			VoxRlNoteMilitaryPurchase(*pUnit, getOwner(), GetID(), 2, captureFaithBefore - kPlayer.GetFaithTimes100());
 		if (iFaithCost > 0)
 		{
 			GET_PLAYER(getOwner()).doInstantYield(INSTANT_YIELD_TYPE_FAITH_PURCHASE, true, NO_GREATPERSON, NO_BUILDING, iFaithCost, false, NO_PLAYER, NULL, false, this);

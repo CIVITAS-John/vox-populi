@@ -10314,6 +10314,9 @@ void CvPlayer::doTurnPostDiplomacy()
 		}
 		else
 		{
+			// Vox Deorum: retain the barbarian actor and turn boundary for shared events.
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+				VoxRlCapture::GetInstance().SetMilitaryPhase(GetID(), VOX_RL_MILITARY_PHASE_TURN_PREPARATION);
 			CvBarbarians::DoCamps();
 		}
 

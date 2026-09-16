@@ -14212,9 +14212,8 @@ CvUnit* CvUnit::DoUpgrade(bool bFree)
 
 CvUnit* CvUnit::DoUpgradeTo(UnitTypes eUnitType, bool bFree)
 {
-	// Vox Deorum: retain the actual charge, including free upgrade outcomes.
+	// Vox Deorum: classify the actual upgrade charge.
 	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_UPGRADE);
-	const int captureGoldBefore = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? GET_PLAYER(getOwner()).GetTreasury()->GetGoldTimes100() : 0;
 	// Gold Cost
 	int iUpgradeCost = upgradePrice(eUnitType);
 	CvPlayerAI& thisPlayer = GET_PLAYER(getOwner());
@@ -14225,9 +14224,6 @@ CvUnit* CvUnit::DoUpgradeTo(UnitTypes eUnitType, bool bFree)
 		thisPlayer.GetTreasury()->LogExpenditure(getUnitInfo().GetText(), iUpgradeCost, 3);
 		thisPlayer.GetTreasury()->ChangeGold(-iUpgradeCost);
 	}
-	// Vox Deorum: subsequent upgrade yields do not alter the recorded purchase charge.
-	const int captureUpgradeCost = (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled) ? captureGoldBefore - thisPlayer.GetTreasury()->GetGoldTimes100() : 0;
-
 	// Add newly upgraded Unit & kill the old one
 	CvUnit* pNewUnit = thisPlayer.initUnit(eUnitType, getX(), getY(), NO_UNITAI, REASON_UPGRADE, false, false, 0, 0, NO_CONTRACT, true, this);
 
@@ -14314,9 +14310,6 @@ CvUnit* CvUnit::DoUpgradeTo(UnitTypes eUnitType, bool bFree)
 			pNewUnit->finishMoves();
 		}
 
-		// Vox Deorum: snapshot the final replacement after movement restrictions.
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-			VoxRlNoteMilitaryUpgrade(*this, *pNewUnit, captureUpgradeCost);
 		kill(true);
 	}
 
