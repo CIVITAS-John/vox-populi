@@ -4066,11 +4066,11 @@ void CvTeam::makeHasMet(TeamTypes eIndex, bool bSuppressMessages)
 	if (isHasMet(eIndex) || eIndex==NO_TEAM)
 		return;
 
-	// Vox Deorum: capture team relation change marking.
+	m_abHasMet[eIndex] = true;
+
+	// Vox Deorum: capture reads the relation when marked, so the hook follows the write.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
-
-	m_abHasMet[eIndex] = true;
 	SetTurnTeamMet(eIndex, GC.getGame().getGameTurn());
 
 	updateTechShare();
@@ -4323,12 +4323,13 @@ void CvTeam::setAtWar(TeamTypes eIndex, bool bNewValue, bool bAggressorPacifier)
 	if (eIndex == GetID())
 		return;
 
-	// Vox Deorum: capture war state change marking.
-	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_abAtWar[eIndex] != bNewValue)
-		VoxRlCapture::GetInstance().NoteWarStateChanged(GetID(), eIndex);
-
+	const bool bWarChanged = m_abAtWar[eIndex] != bNewValue;
 	m_abAggressorPacifier[eIndex] = bAggressorPacifier;
 	m_abAtWar[eIndex] = bNewValue;
+
+	// Vox Deorum: capture reads the relation when marked, so the hook follows the write.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && bWarChanged)
+		VoxRlCapture::GetInstance().NoteWarStateChanged(GetID(), eIndex);
 
 	vector<PlayerTypes> vOurTeam= getPlayers();
 	vector<PlayerTypes> vTheirTeam= GET_TEAM(eIndex).getPlayers();
@@ -4821,11 +4822,11 @@ void CvTeam::SetAllowsOpenBordersToTeam(TeamTypes eIndex, bool bNewValue)
 
 	if (IsAllowsOpenBordersToTeam(eIndex) != bNewValue)
 	{
-		// Vox Deorum: capture team relation change marking.
+		m_abOpenBorders[eIndex] = bNewValue;
+
+		// Vox Deorum: capture reads the relation when marked, so the hook follows the write.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 			VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
-
-		m_abOpenBorders[eIndex] = bNewValue;
 
 		for (int iPlayerLoop = 0; iPlayerLoop < MAX_PLAYERS; iPlayerLoop++)
 		{
@@ -5012,11 +5013,12 @@ void CvTeam::setForcePeace(TeamTypes eIndex, bool bNewValue)
 	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
 	PRECONDITION(eIndex < MAX_TEAMS, "eIndex is expected to be within maximum bounds (invalid Index)");
 
-	// Vox Deorum: capture team relation change marking.
-	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_abForcePeace[eIndex] != bNewValue)
-		VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
-
+	const bool bForcePeaceChanged = m_abForcePeace[eIndex] != bNewValue;
 	m_abForcePeace[eIndex] = bNewValue;
+
+	// Vox Deorum: capture reads the relation when marked, so the hook follows the write.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && bForcePeaceChanged)
+		VoxRlCapture::GetInstance().NoteTeamRelationChanged(GetID(), eIndex);
 }
 
 

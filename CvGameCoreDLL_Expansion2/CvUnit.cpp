@@ -2550,14 +2550,19 @@ void CvUnit::kill(bool bDelay, PlayerTypes ePlayer /*= NO_PLAYER*/)
 			GET_PLAYER(ePlayer).DoDifficultyBonus(DIFFICULTY_BONUS_KILLED_BARBARIAN_UNIT);
 	}
 
+	// Vox Deorum: capture treats a unit as gone from the moment its death starts,
+	// matching the native rules that skip delayed deaths. The final deletion of a
+	// delayed death marks again, which the capture ignores for a unit it no longer knows.
 	if (bDelay)
 	{
 		startDelayedDeath();
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			VoxRlCapture::GetInstance().NoteUnitRemoved(getOwner(), GetID());
+		}
 		return;
 	}
 
-	// Vox Deorum: capture marks the actual unit deletion; delayed deaths
-	// mark here only when the deletion finally runs.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 	{
 		VoxRlCapture::GetInstance().NoteUnitRemoved(getOwner(), GetID());

@@ -3576,8 +3576,12 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 void VoxRlCapture::NoteUnitChanged(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
-	m_segment->dirtyUnits.insert(VoxRlEntityKey(static_cast<int>(eOwner), iUnitId));
-	m_segment->removedUnits.erase(VoxRlEntityKey(static_cast<int>(eOwner), iUnitId));
+	// A pending removal outlives ordinary change marks: native deletion still moves
+	// the unit off its plot after the removal mark, and a delayed death may be touched
+	// again before it is deleted. Only a creation mark revives the key.
+	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
+	if (m_segment->removedUnits.count(key) != 0) return;
+	m_segment->dirtyUnits.insert(key);
 }
 
 void VoxRlCapture::NoteUnitPromotionsChanged(PlayerTypes eOwner, int iUnitId)
@@ -3603,8 +3607,9 @@ void VoxRlCapture::NoteUnitCreated(PlayerTypes eOwner, int iUnitId, int creation
 		VoxRlNoteMilitaryUnitCreated(*pUnit, creationReason, pSourceUnit);
 	}
 	if (m_segment == NULL || m_segment->failed) return;
-	NoteUnitChanged(eOwner, iUnitId);
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
+	m_segment->removedUnits.erase(key);
+	NoteUnitChanged(eOwner, iUnitId);
 	m_segment->dirtyUnitModifiers.insert(key);
 	m_segment->dirtyUnitPlagues.insert(key);
 	m_segment->dirtyUnitBlockedPromotions.insert(key);
@@ -3617,7 +3622,14 @@ void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
 	m_segment->lastUnitActualHealRates.erase(key);
 	m_segment->dirtyUnits.erase(key);
-	m_segment->removedUnits.insert(key);
+	// Only a unit the replica knows needs a removal row: one present since the WORLD
+	// build or already flushed as a creation. Forgetting it here makes the mark
+	// idempotent, so the final deletion of a delayed death emits nothing more, and a
+	// unit created and removed before any flush leaves no trace.
+	if (m_segment->unitIteration.erase(key) != 0)
+	{
+		m_segment->removedUnits.insert(key);
+	}
 	// Deletion removes the unit's associated sparse rows, so no family
 	// tombstone or collection work remains for it.
 	m_segment->dirtyUnitModifiers.erase(key);

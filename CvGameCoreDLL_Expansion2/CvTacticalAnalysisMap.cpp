@@ -632,9 +632,16 @@ void CvTacticalAnalysisMap::RefreshIfOutdated()
 	{
 		EstablishZoneNeighborhood();
 		CalculateMilitaryStrengths();
-		// Vox Deorum: bind the actor-visible observation before native posture selection.
+		// Vox Deorum: overall dominance follows from the measured strengths rather than
+		// from a native choice, so settle it before the assessment snapshot captures the
+		// zone table. Posture selection below recomputes the same value.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		{
+			for (size_t iI = 0; iI < m_vDominanceZones.size(); iI++)
+				m_vDominanceZones[iI].SetOverallDominance(GD_INT_GET(AI_TACTICAL_MAP_DOMINANCE_PERCENTAGE));
+			// Bind the actor-visible observation before native posture selection.
 			VoxRlCapture::GetInstance().OnStanceAssessmentReady(m_ePlayer);
+		}
 		UpdatePostures();
 		PrioritizeZones();
 		// Vox Deorum: retain labels only after priority order is final.
