@@ -10275,8 +10275,9 @@ void CvPlayer::doTurnPostDiplomacy()
 		UpdatePlots();
 		UpdateAreaEffectUnits();
 		UpdateAreaEffectPlots();
-		// Vox Deorum: Moved this so the capture stays together and true.
+		// Vox Deorum: Moved both here so the capture stays together and true.
 		UpdateMilitaryStats();
+		DoProcessGoldenAge();
 		// Vox Deorum: recording capture builds WORLD at this supported
 		// pre-refresh checkpoint, immediately before the danger refresh.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -10369,9 +10370,6 @@ void CvPlayer::doTurnPostDiplomacy()
 
 	DoChangeGreatGeneralRate();
 	DoChangeGreatAdmiralRate();
-
-	// Golden Age
-	DoProcessGoldenAge();
 
 	// Great People gifts from Allied City States (if we have that policy)
 	DoGreatPeopleSpawnTurn();
