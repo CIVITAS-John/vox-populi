@@ -1489,8 +1489,11 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 					overrides.push_back(entry);
 				}
 			}
+			// The stored estimate, not GetKnownVisibilityCount: at this checkpoint the game's
+			// current visibility team is still the previously processed player, and the accessor
+			// would substitute that team's actual sight for the actor's knowledge of it.
 			const bool bits[] = { plot->isRevealed(team), plot->isVisible(team),
-				plot->GetKnownVisibilityCount(team) > 0, plot->isInvisibleVisibleUnit(team) };
+				plot->GetKnownVisibilityEstimate(team) > 0, plot->isInvisibleVisibleUnit(team) };
 			hasInvisibleVisibility = hasInvisibleVisibility || bits[3];
 			for (int kind = 0; kind < 4; ++kind)
 				if (bits[kind]) (*bitsets[kind])[teamIndex * bitBytes + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));

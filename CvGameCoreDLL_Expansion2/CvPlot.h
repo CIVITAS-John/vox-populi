@@ -661,6 +661,8 @@ public:
 	void SetPlannedRouteState(PlayerTypes ePlayer, RoutePlanTypes eRoutePlanType);
 	void ChangeKnownAdjacentSight(TeamTypes eTeam, TeamTypes eMinorCivAlly, int iRange, DirectionTypes eFacingDirection);
 	int GetKnownVisibilityCount(TeamTypes eTeam) const;
+	// Vox Deorum: the stored estimate alone, without the current visibility team's actual count.
+	int GetKnownVisibilityEstimate(TeamTypes eTeam) const;
 	bool IsKnownVisibleToEnemy(PlayerTypes ePlayer) const;
 	bool IsKnownVisibleToTeam(TeamTypes eTeam) const;
 	void IncreaseKnownVisibilityCount(TeamTypes eTeam, TeamTypes eTeam2=NO_TEAM);

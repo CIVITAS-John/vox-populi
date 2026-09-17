@@ -12040,6 +12040,18 @@ int CvPlot::GetKnownVisibilityCount(TeamTypes eTeam) const
 }
 
 //	--------------------------------------------------------------------------------
+/// Vox Deorum: the estimate the tactical AI last built for eTeam, without the substitution
+/// GetKnownVisibilityCount makes for the current visibility team. Recording capture stores
+/// this value so a replay does not treat one team's actual sight as the actor's knowledge.
+int CvPlot::GetKnownVisibilityEstimate(TeamTypes eTeam) const
+{
+	PRECONDITION(eTeam >= 0, "eTeam is expected to be non-negative (invalid Index)");
+	PRECONDITION(eTeam < MAX_TEAMS, "eTeam is expected to be within maximum bounds (invalid Index)");
+
+	return m_aiKnownVisibilityCount[eTeam];
+}
+
+//	--------------------------------------------------------------------------------
 /// Is this plot visible to eTeam according to current player knowledge
 bool CvPlot::IsKnownVisibleToTeam(TeamTypes eTeam) const
 {
@@ -12088,7 +12100,7 @@ void CvPlot::ResetKnownVisibility()
 	{
 		for (int voxTeam = 0; voxTeam < MAX_TEAMS; ++voxTeam)
 		{
-			if (GetKnownVisibilityCount(static_cast<TeamTypes>(voxTeam)) > 0)
+			if (GetKnownVisibilityEstimate(static_cast<TeamTypes>(voxTeam)) > 0)
 				VoxRlCapture::GetInstance().NoteKnownVisibilityReset(static_cast<TeamTypes>(voxTeam));
 		}
 	}
