@@ -25397,15 +25397,22 @@ int CvUnit::getMadeInterceptionCount() const
 
 //	--------------------------------------------------------------------------------
 void CvUnit::increaseInterceptionCount()
-	{
-		m_iMadeInterceptionCount++;
-		m_bMovedThisTurn = true; //failsafe: intercepting means no more healing, no matter what happens with the moves
-	}
+{
+	m_iMadeInterceptionCount++;
+	m_bMovedThisTurn = true; //failsafe: intercepting means no more healing, no matter what happens with the moves
+	// Vox Deorum: an interception consumes readiness; capture the interceptor for HasAirCover.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+}
 
 void CvUnit::resetInterceptionCount()
-	{
-		m_iMadeInterceptionCount = 0;
-	}
+{
+	// Vox Deorum: capture readiness restoration; most units never intercepted, so mark only real resets.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_iMadeInterceptionCount != 0)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+
+	m_iMadeInterceptionCount = 0;
+}
 
 //	--------------------------------------------------------------------------------
 bool CvUnit::isPromotionReady() const
@@ -29841,6 +29848,11 @@ void CvUnit::SetActivityType(ActivityTypes eNewValue)
 		CvPlot* pPlot = plot();
 
 		m_eActivityType = eNewValue;
+
+		// Vox Deorum: capture intercept duty transitions; canInterceptNow feeds HasAirCover.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled &&
+			(eOldActivity == ACTIVITY_INTERCEPT || eNewValue == ACTIVITY_INTERCEPT))
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 
 		CvInterfacePtr<ICvPlot1> pDllSelectionPlot(DLLUI->getSelectionPlot());
 		int iSelectionPlotIndex = (pDllSelectionPlot.get() != NULL)? pDllSelectionPlot->GetPlotIndex() : -1;
