@@ -100,21 +100,6 @@ namespace
 		}
 	}
 
-	// Returns the largest value in a unit's yield-indexed kill bonus array,
-	// matching the reduced representation consumed by the replay facade.
-	int MaxYieldFromKills(const CvUnitEntry& source, bool barbarian)
-	{
-		int maximum = 0;
-		for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
-		{
-			const int value = barbarian
-				? source.GetYieldFromBarbarianKills(static_cast<YieldTypes>(yield))
-				: source.GetYieldFromKills(static_cast<YieldTypes>(yield));
-			if (value > maximum) maximum = value;
-		}
-		return maximum;
-	}
-
 	// Returns the largest value in a live unit's yield-indexed kill bonus
 	// array, using the lowercase native unit accessors.
 	int MaxYieldFromKills(const CvUnit& source, bool barbarian)
@@ -295,6 +280,21 @@ namespace
 		return true;
 	}
 
+}
+
+// Returns the largest value in an immutable unit entry's yield-indexed kill
+// bonus array for the generated native-info collector.
+int VoxRlMaxUnitEntryYieldFromKills(const CvUnitEntry& source, bool barbarian)
+{
+	int maximum = 0;
+	for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
+	{
+		const int value = barbarian
+			? source.GetYieldFromBarbarianKills(static_cast<YieldTypes>(yield))
+			: source.GetYieldFromKills(static_cast<YieldTypes>(yield));
+		if (value > maximum) maximum = value;
+	}
+	return maximum;
 }
 
 // Reports one capture conversion or row the wire contract rejected. The generated
@@ -987,64 +987,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	ZeroRecord(data.staticRules);
 	if (!CollectStaticRulesRecord(data.staticRules)) valid = false;
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
-	ZeroRecord(data.staticHandicapLimits);
-	if (!CollectStaticHandicapLimitsRecord(data.staticHandicapLimits)) valid = false;
-	// A mod can delete info-table rows, so the accessors return NULL for
-	// those indexes. The vectors stay index-aligned with the native tables:
-	// a missing row becomes a zeroed placeholder instead of a skip.
-	for (int index = 0; index < GC.getNumTerrainInfos(); ++index)
-	{
-		TerrainInfoRecord row;
-		ZeroRecord(row);
-		CvTerrainInfo* info = GC.getTerrainInfo(static_cast<TerrainTypes>(index));
-		if (info != NULL && !CollectTerrainInfoRecord(*info, row)) valid = false;
-		data.staticTerrainInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumFeatureInfos(); ++index)
-	{
-		FeatureInfoRecord row;
-		ZeroRecord(row);
-		CvFeatureInfo* info = GC.getFeatureInfo(static_cast<FeatureTypes>(index));
-		if (info != NULL && !CollectFeatureInfoRecord(*info, row)) valid = false;
-		data.staticFeatureInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumRouteInfos(); ++index)
-	{
-		RouteInfoRecord row;
-		ZeroRecord(row);
-		CvRouteInfo* info = GC.getRouteInfo(static_cast<RouteTypes>(index));
-		if (info != NULL && !CollectRouteInfoRecord(*info, row)) valid = false;
-		data.staticRouteInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumImprovementInfos(); ++index)
-	{
-		ImprovementInfoRecord row;
-		ZeroRecord(row);
-		CvImprovementEntry* info = GC.getImprovementInfo(static_cast<ImprovementTypes>(index));
-		if (info != NULL && !CollectImprovementInfoRecord(*info, row)) valid = false;
-		data.staticImprovementInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumResourceInfos(); ++index)
-	{
-		ResourceInfoRecord row;
-		ZeroRecord(row);
-		CvResourceInfo* info = GC.getResourceInfo(static_cast<ResourceTypes>(index));
-		if (info != NULL && !CollectResourceInfoRecord(*info, row)) valid = false;
-		data.staticResourceInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumUnitInfos(); ++index)
-	{
-		UnitEntryInfoRecord row;
-		ZeroRecord(row);
-		CvUnitEntry* entry = GC.getUnitInfo(static_cast<UnitTypes>(index));
-		if (entry != NULL)
-		{
-			if (!CollectUnitEntryInfoRecord(*entry, row)) valid = false;
-			VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(*entry, false));
-			VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(*entry, true));
-		}
-		data.staticUnitEntryInfos.push_back(row);
-	}
+	if (!VoxRlCollectNativeInfoTables(data)) valid = false;
 	ZeroRecord(data.staticBuildIds);
 	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) valid = false;
 	// Plot indices travel as signed sixteen-bit wire values, so only maps of one through
@@ -1066,37 +1009,6 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		ZeroRecord(row);
 		if (!CollectPlotTopologyRecord(*plot, row)) valid = false;
 		data.staticPlotTopology.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumPromotionInfos(); ++index)
-	{
-		PromotionInfoRecord row;
-		ZeroRecord(row);
-		CvPromotionEntry* info = GC.getPromotionInfo(static_cast<PromotionTypes>(index));
-		if (info != NULL && !CollectPromotionInfoRecord(*info, row)) valid = false;
-		data.staticPromotionInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumProcessInfos(); ++index)
-	{
-		ProcessInfoRecord row;
-		ZeroRecord(row);
-		CvProcessInfo* info = GC.getProcessInfo(static_cast<ProcessTypes>(index));
-		if (info != NULL && !CollectProcessInfoRecord(*info, row)) valid = false;
-		data.staticProcessInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumCityEventChoiceInfos(); ++index)
-	{
-		CityEventChoiceInfoRecord row;
-		ZeroRecord(row);
-		CvModEventCityChoiceInfo* info = GC.getCityEventChoiceInfo(static_cast<CityEventChoiceTypes>(index));
-		if (info != NULL && !CollectCityEventChoiceInfoRecord(*info, row)) valid = false;
-		data.staticCityEventChoiceInfos.push_back(row);
-	}
-	for (int index = 0; index < GC.getNumUnitClassInfos(); ++index)
-	{
-		StaticUnitClassInfoRecord row;
-		ZeroRecord(row);
-		if (!CollectStaticUnitClassInfoRecord(index, row)) valid = false;
-		data.staticUnitClassInfos.push_back(row);
 	}
 	for (int formationIndex = 0; formationIndex < GC.getNumMultiUnitFormationInfos(); ++formationIndex)
 	{

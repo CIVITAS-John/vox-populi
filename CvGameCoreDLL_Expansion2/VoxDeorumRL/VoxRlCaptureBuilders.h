@@ -15,6 +15,11 @@
 #include <utility>
 #include <vector>
 
+class CvUnitEntry;
+
+// Returns the largest yield-indexed kill bonus for one immutable unit entry.
+int VoxRlMaxUnitEntryYieldFromKills(const CvUnitEntry& source, bool barbarian);
+
 // Saturates a native integer to the destination schema field's storage range before
 // narrowing. Wide bounds keep signed inputs comparable with unsigned field limits.
 template <typename Target>

@@ -14,6 +14,7 @@
 #endif
 
 #include <stddef.h>
+#include <limits>
 
 typedef signed char i8;
 typedef unsigned char u8;
@@ -21,6 +22,11 @@ typedef signed short i16;
 typedef unsigned short u16;
 typedef signed int i32;
 typedef unsigned int u32;
+typedef float f32;
+
+// Capture stores native float defines as IEEE 754 binary32 without numeric conversion.
+typedef char VoxRlAssertF32[(sizeof(f32) == 4 && std::numeric_limits<f32>::is_iec559 &&
+    std::numeric_limits<f32>::digits == 24 && std::numeric_limits<f32>::max_exponent == 128) ? 1 : -1];
 
 enum { kVoxRlAlignment = 4 };
 
