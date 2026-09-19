@@ -30,6 +30,28 @@
 
 namespace
 {
+	// Keeps lazy native danger queries from reentering capture during collection.
+	class ScopedCaptureCollection
+	{
+	public:
+		// Preserve the enclosing collection state, including nested scopes.
+		explicit ScopedCaptureCollection(bool& collecting)
+			: m_collecting(collecting), m_previous(collecting)
+		{
+			m_collecting = true;
+		}
+		// Restore capture callbacks on every exit, including failed collection.
+		~ScopedCaptureCollection()
+		{
+			m_collecting = m_previous;
+		}
+	private:
+		bool& m_collecting;
+		bool m_previous;
+		ScopedCaptureCollection(const ScopedCaptureCollection&);
+		ScopedCaptureCollection& operator=(const ScopedCaptureCollection&);
+	};
+
 	// Reads the opt-in once at DLL load, before any game lifecycle hooks run.
 	bool ReadCaptureEnabled()
 	{
@@ -571,6 +593,7 @@ VoxRlCapture::VoxRlCapture()
 	m_operationState(NULL),
 	m_operationCauseStack(NULL),
 	m_searchActive(false),
+	m_collectingState(false),
 	m_shuttingDown(false),
 	m_concluded(false),
 	m_worldReplacementLogged(false)
@@ -1470,6 +1493,7 @@ bool VoxRlCapture::BuildAndWriteStatic()
 
 bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 {
+	ScopedCaptureCollection collecting(m_collectingState);
 	Segment& segment = *m_segment;
 	char folder[64];
 	sprintf_s(folder, 64, "baselines/world/player-%d/turn-%d", static_cast<int>(ePlayer), iTurn);
@@ -2356,6 +2380,7 @@ void VoxRlCapture::SeedWorldIterationIndices()
 // Checks independent dirty records before rejecting an incomplete request delta.
 bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 {
+	ScopedCaptureCollection collecting(m_collectingState);
 	bool valid = true;
 	Segment& segment = *m_segment;
 	const i32 gameState = static_cast<i32>(GC.getGame().getGameState());
@@ -3138,6 +3163,8 @@ bool VoxRlCapture::EmitSynchronizationRequest()
 // Stages the board before the complete native danger refresh.
 void VoxRlCapture::OnDangerRefreshBegin(const CvDangerPlots& danger)
 {
+	// City collectors can refresh danger before the outer request is staged.
+	if (m_collectingState) return;
 	if (m_searchActive)
 	{
 		// A decision request/result pair is in flight. Replay reexecutes its
@@ -3203,6 +3230,8 @@ void VoxRlCapture::OnDangerRefreshBegin(const CvDangerPlots& danger)
 // Publishes the staged inputs after all native refresh passes finish.
 void VoxRlCapture::OnDangerRefreshComplete(const CvDangerPlots& danger)
 {
+	// A refresh triggered by collection must not publish the enclosing request.
+	if (m_collectingState) return;
 	if (m_searchActive)
 	{
 		return;
@@ -3226,6 +3255,7 @@ void VoxRlCapture::OnDangerRefreshComplete(const CvDangerPlots& danger)
 // Stages a discovery after native eligibility and duplicate checks pass.
 void VoxRlCapture::OnDangerDiscoveryBegin(const CvDangerPlots& danger, const CvUnit* pUnit)
 {
+	if (m_collectingState) return;
 	if (m_segment == NULL || m_segment->failed || m_segment->stagingRequest)
 	{
 		return;
@@ -3258,6 +3288,7 @@ void VoxRlCapture::OnDangerDiscoveryBegin(const CvDangerPlots& danger, const CvU
 // Publishes inputs for the successful native discovery.
 void VoxRlCapture::OnDangerDiscoveryEnd(const CvDangerPlots& danger)
 {
+	if (m_collectingState) return;
 	if (m_segment == NULL || m_segment->failed || !m_segment->stagingRequest)
 	{
 		return;

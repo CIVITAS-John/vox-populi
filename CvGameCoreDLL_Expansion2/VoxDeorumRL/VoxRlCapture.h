@@ -410,6 +410,8 @@ private:
 	std::vector<OperationCauseContext>* m_operationCauseStack;
 	// Nested danger refreshes belong to the active search request.
 	bool m_searchActive;
+	// Native getters may refresh danger while WORLD or REQUEST rows are collected.
+	bool m_collectingState;
 	bool m_shuttingDown;
 	bool m_concluded;
 	bool m_worldReplacementLogged;
