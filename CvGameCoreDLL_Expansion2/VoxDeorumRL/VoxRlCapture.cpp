@@ -315,11 +315,12 @@ struct VoxRlCapture::Segment
 		: player(NO_PLAYER), turn(-1), staticGeneration(0), worldGeneration(0), campaignGeneration(0),
 		staticFramedLength(0), campaignFramedLength(0), worldFramedLength(0),
 		nextDeltaSequence(0), published(false), failed(false), closed(false), campaignSeamReached(false),
-		  worldReplacement(false), hasDecision(false), lastGameState(static_cast<i32>(GAMESTATE_ON)),
+		worldReplacement(false), hasDecision(false),
 		pendingCount(0), committedFrameCount(0), committedDecisionCount(0), committedCoverageCount(0),
 		commitId(0), firstRequestSequence(0), lastRequestSequence(0), hasRequests(false),
 		stagingRequest(false)
 	{
+		lastGameState = static_cast<i32>(GAMESTATE_ON);
 		closureReason[0] = '\0';
 	}
 };
@@ -460,7 +461,7 @@ namespace
 	unsigned __int64 CountRequestRows(const VoxRlRequestData& data)
 	{
 		return data.requestDangerEvents.size() + data.requestTeamRelations.size() +
-			data.requestGameState.size() +
+			(data.hasRequestGameState ? 1U : 0U) +
 			data.requestDeltaUnits.size() + data.requestDeltaPlots.size() +
 			data.requestDeltaPlotZones.size() + data.requestDeltaPlotZonesWide.size() +
 			data.requestZoneReplacements.size() + data.requestZoneNeighbors.size() +
@@ -2360,10 +2361,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	const i32 gameState = static_cast<i32>(GC.getGame().getGameState());
 	if (gameState != segment.lastGameState)
 	{
-		RequestGameStateRecord row;
-		ZeroRecord(row);
-		row.gameState = gameState;
-		data.requestGameState.push_back(row);
+		data.requestGameState.gameState = gameState;
+		data.hasRequestGameState = true;
 		segment.lastGameState = gameState;
 	}
 	ScopedTiming timing(m_config.timings, segment.timings.deltaCollectNs);

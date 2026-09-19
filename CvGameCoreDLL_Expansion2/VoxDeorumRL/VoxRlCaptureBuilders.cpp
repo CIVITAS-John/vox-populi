@@ -1219,10 +1219,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
 	const TeamTypes capturingTeam = capturing.getTeam();
 	VoxRlWorldData data;
-	WorldGameStateRecord gameState;
-	ZeroRecord(gameState);
-	gameState.gameState = static_cast<i32>(GC.getGame().getGameState());
-	data.worldGameState.push_back(gameState);
+	data.worldGameState.gameState = static_cast<i32>(GC.getGame().getGameState());
 	std::vector<TeamTypes> aliveTeams;
 	CollectAliveTeams(aliveTeams);
 	std::set<int> recordedTeams;
