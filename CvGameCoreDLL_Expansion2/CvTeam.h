@@ -644,4 +644,4 @@ protected:
 // helper for accessing static functions
 #define GET_TEAM CvTeam::getTeam
 
-#endif
+#endif

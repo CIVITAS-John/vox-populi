@@ -244,6 +244,8 @@ struct VoxRlCapture::Segment
 	std::map<VoxRlEntityKey, unsigned char> lastCityNeedsGarrison;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 	std::map<int, TeamResourceRecord> lastTeamResourceRows;
+	// Tracks the serialized WORLD value so REQUEST emits only native game-state changes.
+	i32 lastGameState;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
 	// Latest native healing result for each serialized unit. ActualHealRate depends on
@@ -313,7 +315,7 @@ struct VoxRlCapture::Segment
 		: player(NO_PLAYER), turn(-1), staticGeneration(0), worldGeneration(0), campaignGeneration(0),
 		staticFramedLength(0), campaignFramedLength(0), worldFramedLength(0),
 		nextDeltaSequence(0), published(false), failed(false), closed(false), campaignSeamReached(false),
-		worldReplacement(false), hasDecision(false),
+		  worldReplacement(false), hasDecision(false), lastGameState(static_cast<i32>(GAMESTATE_ON)),
 		pendingCount(0), committedFrameCount(0), committedDecisionCount(0), committedCoverageCount(0),
 		commitId(0), firstRequestSequence(0), lastRequestSequence(0), hasRequests(false),
 		stagingRequest(false)
@@ -458,6 +460,7 @@ namespace
 	unsigned __int64 CountRequestRows(const VoxRlRequestData& data)
 	{
 		return data.requestDangerEvents.size() + data.requestTeamRelations.size() +
+			data.requestGameState.size() +
 			data.requestDeltaUnits.size() + data.requestDeltaPlots.size() +
 			data.requestDeltaPlotZones.size() + data.requestDeltaPlotZonesWide.size() +
 			data.requestZoneReplacements.size() + data.requestZoneNeighbors.size() +
@@ -1558,6 +1561,7 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	segment.lastTeamResourceRows.clear();
 	for (size_t index = 0; index < teamResources.size(); ++index)
 		segment.lastTeamResourceRows[static_cast<int>(teamResources[index].team)] = teamResources[index];
+	segment.lastGameState = static_cast<i32>(GC.getGame().getGameState());
 	// The WORLD build accepts a fresh zone snapshot and the collected team
 	// passability table, so both dirty markers reset here.
 	m_zoneSnapshotDirty = false;
@@ -2353,6 +2357,15 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 {
 	bool valid = true;
 	Segment& segment = *m_segment;
+	const i32 gameState = static_cast<i32>(GC.getGame().getGameState());
+	if (gameState != segment.lastGameState)
+	{
+		RequestGameStateRecord row;
+		ZeroRecord(row);
+		row.gameState = gameState;
+		data.requestGameState.push_back(row);
+		segment.lastGameState = gameState;
+	}
 	ScopedTiming timing(m_config.timings, segment.timings.deltaCollectNs);
 	const PlayerTypes capturingPlayer = segment.player;
 	CvPlayerAI& capturing = GET_PLAYER(capturingPlayer);
