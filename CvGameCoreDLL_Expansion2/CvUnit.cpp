@@ -27929,6 +27929,9 @@ void CvUnit::setPromotionActive(PromotionTypes eIndex, bool bNewValue)
 		return;
 
 	m_Promotions.SetPromotionActive(eIndex, bNewValue);
+	// Vox Deorum: capture conditional promotion activity changes at turn start.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitPromotionsChanged(getOwner(), GetID());
 	int iChange = (bNewValue ? 1 : -1);
 
 	// Promotions will set Invisibility once but not change it later
