@@ -256,11 +256,6 @@ bool VoxRlCollectPlayerEconomicsRecord(class CvPlayer& player,
 bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData& data,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length);
 
-// Collects one unit's sparse indexed combat modifiers into the family
-// records. Shared by the WORLD builder and sparse replacement flushes.
-bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, class CvUnit* pUnit,
-	std::vector<UnitModifierRecord>& rows);
-
 // Collects one unit's plagues and blocked promotions into the sparse family
 // records.
 void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, class CvUnit* pUnit,
@@ -278,12 +273,8 @@ bool VoxRlCollectCityRecord(class CvCity& city, PlayerTypes capturingPlayer, Cit
 // Collects a plot's mutable physical fields.
 bool VoxRlCollectPlotRecord(class CvPlot& plot, PlotCaptureRecord& row);
 
-// Collects the generated unit fields and their builder-owned reduced values shared by
-// WORLD builds and sparse unit replacements. The movement-count vector receives the
-// unit's nonzero terrain and feature extra-move counts in table order; the caller binds
-// them into the owning section through the generated range helper.
-bool VoxRlCollectUnitRecord(class CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row,
-	std::vector<UnitMovementCountRecord>& movementCounts);
+// Collects the generated unit fields shared by WORLD builds and sparse unit replacements.
+bool VoxRlCollectUnitRecord(class CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row);
 
 // Collects terrain and feature impassability for every team, including the
 // barbarian team, from the info tables and each team's researched technology.
@@ -294,9 +285,6 @@ bool VoxRlCollectTeamPassabilityRows(std::vector<TeamPassabilityRecord>& rows);
 bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
 	std::vector<TeamResourceRecord>& rows);
 
-// Collects a complete sparse family across all live units or cities, used by
-// WORLD builds and complete-family replacement requests.
-bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows);
 void VoxRlCollectAllUnitPlagueRows(std::vector<UnitPlagueRecord>& plagues,
 	std::vector<UnitBlockedPromotionRecord>& blockedPromotions);
 void VoxRlCollectAllUnitAttackCountRows(std::vector<UnitAttackCountRecord>& rows);

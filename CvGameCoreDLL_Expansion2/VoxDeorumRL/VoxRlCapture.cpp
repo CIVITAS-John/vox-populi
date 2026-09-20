@@ -251,7 +251,6 @@ struct VoxRlCapture::Segment
 	std::vector<RequestDangerEventRecord> pendingDangerEvents;
 	// Sparse family dirty entity sets: creation, promotion, and counter hooks mark
 	// only the affected entities, and removals drop their keys from collection work.
-	std::set<VoxRlEntityKey> dirtyUnitModifiers;
 	std::set<VoxRlEntityKey> dirtyUnitPlagues;
 	std::set<VoxRlEntityKey> dirtyUnitBlockedPromotions;
 	std::set<VoxRlEntityKey> dirtyUnitAttackCounts;
@@ -493,13 +492,12 @@ namespace
 			data.requestRemovedRevealedOverrides.size() + data.requestKnownAttackers.size() +
 			data.requestInterceptorReplacements.size() + data.requestInterceptorEntries.size() +
 			data.requestParticipants.size() + data.requestDroppedUnits.size() +
-			data.requestUnitModifierReplacements.size() + data.requestUnitModifierRows.size() +
 			data.requestUnitPlagueReplacements.size() + data.requestUnitPlagueRows.size() +
 			data.requestUnitBlockedPromotionReplacements.size() + data.requestUnitBlockedPromotionRows.size() +
 			data.requestUnitAttackCountReplacements.size() + data.requestUnitAttackCountRows.size() +
 			data.requestPlayerResistanceReplacements.size() + data.requestPlayerResistanceRows.size() +
 		data.requestCityAttackCountReplacements.size() + data.requestCityAttackCountRows.size() +
-		data.requestDeltaUnitMovementCounts.size() + data.requestDeltaUnitSparseFields.size() +
+		data.requestDeltaUnitSparseFields.size() +
 		data.requestDeltaPlotSparseCounters.size() + data.requestCityReferences.size() +
 		data.requestDeltaPlayers.size() + data.requestOperations.size() +
 		data.requestOperationVersions.size() + data.requestArmyVersions.size() +
@@ -508,8 +506,7 @@ namespace
 		data.requestCityResources.size() + data.requestPlayerResources.size() +
 		data.requestPlayerEconomics.size() + data.requestEconomicBatches.size() +
 		data.requestMilitaryGoldTransactions.size() + data.requestEventUnits.size() +
-		data.requestEventUnitMovementCounts.size() + data.requestEventUnitSparseFields.size() +
-		data.requestEventUnitModifiers.size() + data.requestEventUnitPlagues.size() +
+		data.requestEventUnitSparseFields.size() + data.requestEventUnitPlagues.size() +
 		data.requestEventUnitBlockedPromotions.size() + data.requestEventUnitAttackCounts.size() +
 		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
 		data.requestBarbarianCampCreations.size();
@@ -2285,7 +2282,6 @@ void VoxRlCapture::ClearDirtyState()
 	segment.removedRevealedOverrides.clear();
 	segment.dirtyInterceptors.clear();
 	segment.pendingDangerEvents.clear();
-	segment.dirtyUnitModifiers.clear();
 	segment.dirtyUnitPlagues.clear();
 	segment.dirtyUnitBlockedPromotions.clear();
 	segment.dirtyUnitAttackCounts.clear();
@@ -2563,8 +2559,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		}
 		UnitRecord record;
 		std::memset(&record, 0, sizeof(record));
-		std::vector<UnitMovementCountRecord> movementCounts;
-		if (!VoxRlCollectUnitRecord(*pUnit, capturingTeam, record, movementCounts))
+		if (!VoxRlCollectUnitRecord(*pUnit, capturingTeam, record))
 		{
 			valid = false;
 			continue;
@@ -2583,12 +2578,9 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		std::memcpy(&delta, &wireRow, sizeof(wireRow));
 		// Each delta carries an independent range into the request-local section; the
 		// mirrored entries follow delta-row order and an empty range clears both tables.
-		std::vector<RequestUnitMovementCountRecord> requestCounts;
-		VoxRlMirrorSparseRows(movementCounts, requestCounts);
 		std::vector<RequestUnitSparseFieldRecord> requestSparseRows;
 		VoxRlMirrorSparseRows(sparseRows, requestSparseRows);
 		bool unitValid = true;
-		if (!AppendRequestDeltaUnitRecordMovementCountRange(&delta, &data, requestCounts)) unitValid = false;
 		if (!AppendRequestDeltaUnitRecordSparseFieldRange(&delta, &data, requestSparseRows)) unitValid = false;
 		if (!unitValid)
 		{
@@ -2854,41 +2846,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	}
 	m_operationState->stagedRelationCount = m_operationState->bufferedRelations.size();
 
-	// Sparse family replacements are entity-keyed: each replacement names one
-	// entity and carries that entity's complete current rows for its family.
-	// Only dirty entities are recollected; an absent replacement leaves that
-	// entity's rows unchanged.
-	for (std::set<VoxRlEntityKey>::const_iterator key = segment.dirtyUnitModifiers.begin();
-		key != segment.dirtyUnitModifiers.end(); ++key)
-	{
-		CvUnit* pUnit = GET_PLAYER(static_cast<PlayerTypes>((*key).owner)).getUnit((*key).id);
-		if (pUnit == NULL || pUnit->plot() == NULL || pUnit->isDelayedDeath())
-		{
-			// The unit died between the mark and the flush; its removal row
-			// removes the associated sparse rows as well.
-			continue;
-		}
-		std::vector<UnitModifierRecord> rows;
-		if (!VoxRlCollectUnitModifierRows(static_cast<PlayerTypes>((*key).owner), (*key).id, pUnit, rows))
-		{
-			valid = false;
-			continue;
-		}
-		RequestUnitModifierReplacementRecord replacement;
-		std::memset(&replacement, 0, sizeof(replacement));
-		replacement.owner = static_cast<i8>((*key).owner);
-		replacement.unitId = static_cast<i32>((*key).id);
-		std::vector<RequestUnitModifierRowRecord> requestRows;
-		requestRows.resize(rows.size());
-		for (size_t index = 0; index < rows.size(); ++index)
-		{
-			requestRows[index].family = rows[index].family;
-			requestRows[index].index = rows[index].index;
-			requestRows[index].value = rows[index].value;
-		}
-		if (!AppendRequestUnitModifierReplacementRecordRowRange(&replacement, &data, requestRows)) valid = false;
-		data.requestUnitModifierReplacements.push_back(replacement);
-	}
 	// Plagues and blocked promotions come from one native pass per unit, so the two
 	// families share a union walk and each emits only the replacements it marked.
 	std::set<VoxRlEntityKey> plagueOrBlocked;
@@ -3631,10 +3588,8 @@ void VoxRlCapture::NoteUnitPromotionsChanged(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	NoteUnitChanged(eOwner, iUnitId);
-	// Promotions change the sparse modifier, plague, and blocked-promotion rows
-	// of this unit only; other entities are not recollected.
+	// Promotions change the sparse plague and blocked-promotion rows of this unit.
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
-	m_segment->dirtyUnitModifiers.insert(key);
 	m_segment->dirtyUnitPlagues.insert(key);
 	m_segment->dirtyUnitBlockedPromotions.insert(key);
 }
@@ -3653,7 +3608,6 @@ void VoxRlCapture::NoteUnitCreated(PlayerTypes eOwner, int iUnitId, int creation
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
 	m_segment->removedUnits.erase(key);
 	NoteUnitChanged(eOwner, iUnitId);
-	m_segment->dirtyUnitModifiers.insert(key);
 	m_segment->dirtyUnitPlagues.insert(key);
 	m_segment->dirtyUnitBlockedPromotions.insert(key);
 	m_segment->dirtyUnitAttackCounts.insert(key);
@@ -3675,7 +3629,6 @@ void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
 	}
 	// Deletion removes the unit's associated sparse rows, so no family
 	// tombstone or collection work remains for it.
-	m_segment->dirtyUnitModifiers.erase(key);
 	m_segment->dirtyUnitPlagues.erase(key);
 	m_segment->dirtyUnitBlockedPromotions.erase(key);
 	m_segment->dirtyUnitAttackCounts.erase(key);

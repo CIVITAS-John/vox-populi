@@ -16,9 +16,7 @@ namespace
     struct EventSnapshot
     {
         std::vector<RequestEventUnitRecord> requestEventUnits;
-        std::vector<RequestEventUnitMovementCountRecord> requestEventUnitMovementCounts;
         std::vector<RequestEventUnitSparseFieldRecord> requestEventUnitSparseFields;
-        std::vector<RequestEventUnitModifierRecord> requestEventUnitModifiers;
         std::vector<RequestEventUnitPlagueRecord> requestEventUnitPlagues;
         std::vector<RequestEventUnitBlockedPromotionRecord> requestEventUnitBlockedPromotions;
         std::vector<RequestEventUnitAttackCountRecord> requestEventUnitAttackCounts;
@@ -27,9 +25,7 @@ namespace
         void Take(VoxRlRequestData& data)
         {
             requestEventUnits.swap(data.requestEventUnits);
-            requestEventUnitMovementCounts.swap(data.requestEventUnitMovementCounts);
             requestEventUnitSparseFields.swap(data.requestEventUnitSparseFields);
-            requestEventUnitModifiers.swap(data.requestEventUnitModifiers);
             requestEventUnitPlagues.swap(data.requestEventUnitPlagues);
             requestEventUnitBlockedPromotions.swap(data.requestEventUnitBlockedPromotions);
             requestEventUnitAttackCounts.swap(data.requestEventUnitAttackCounts);
@@ -249,8 +245,7 @@ namespace
     {
         if (event.snapshot.requestEventUnits.empty()) { unitIndex = -1; return true; }
         RequestEventUnitRecord row = event.snapshot.requestEventUnits.front();
-        if (!AppendRequestEventUnitRecordMovementCountRange(&row, &data, event.snapshot.requestEventUnitMovementCounts) ||
-            !AppendRequestEventUnitRecordSparseFieldRange(&row, &data, event.snapshot.requestEventUnitSparseFields)) return false;
+        if (!AppendRequestEventUnitRecordSparseFieldRange(&row, &data, event.snapshot.requestEventUnitSparseFields)) return false;
         unitIndex = static_cast<i32>(data.requestEventUnits.size());
         data.requestEventUnits.push_back(row);
         return true;
@@ -569,8 +564,7 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
         if (event.kind == 0)
         {
             RequestMilitaryArrivalRecord arrival = row;
-            if (!AppendRequestMilitaryArrivalRecordModifierRange(&arrival, &data, event.snapshot.requestEventUnitModifiers) ||
-                !AppendRequestMilitaryArrivalRecordPlagueRange(&arrival, &data, event.snapshot.requestEventUnitPlagues) ||
+            if (!AppendRequestMilitaryArrivalRecordPlagueRange(&arrival, &data, event.snapshot.requestEventUnitPlagues) ||
                 !AppendRequestMilitaryArrivalRecordBlockedPromotionRange(&arrival, &data, event.snapshot.requestEventUnitBlockedPromotions) ||
                 !AppendRequestMilitaryArrivalRecordAttackCountRange(&arrival, &data, event.snapshot.requestEventUnitAttackCounts)) return false;
             data.requestMilitaryArrivals.push_back(arrival);
@@ -578,8 +572,7 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
         else if (event.kind == 1)
         {
             RequestMilitaryDepartureRecord departure = EventRow<RequestMilitaryDepartureRecord>(row);
-            if (!AppendRequestMilitaryDepartureRecordModifierRange(&departure, &data, event.snapshot.requestEventUnitModifiers) ||
-                !AppendRequestMilitaryDepartureRecordPlagueRange(&departure, &data, event.snapshot.requestEventUnitPlagues) ||
+            if (!AppendRequestMilitaryDepartureRecordPlagueRange(&departure, &data, event.snapshot.requestEventUnitPlagues) ||
                 !AppendRequestMilitaryDepartureRecordBlockedPromotionRange(&departure, &data, event.snapshot.requestEventUnitBlockedPromotions) ||
                 !AppendRequestMilitaryDepartureRecordAttackCountRange(&departure, &data, event.snapshot.requestEventUnitAttackCounts)) return false;
             data.requestMilitaryDepartures.push_back(departure);

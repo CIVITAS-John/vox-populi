@@ -467,98 +467,6 @@ bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 	return valid;
 }
 
-// Collects one unit's modifiers and rejects schema capacities that cannot fit.
-bool VoxRlCollectUnitModifierRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
-	std::vector<UnitModifierRecord>& rows)
-{
-	if (pUnit == NULL) return true;
-	// Every family indexes a fixed-capacity record array on the reader side,
-	// so a live table larger than its capacity fails the build instead of
-	// emitting rows the loader would reject.
-	if (GC.getNumTerrainInfos() > VoxRlTerrainCapacity ||
-		GC.getNumFeatureInfos() > VoxRlFeatureCapacity ||
-		GC.getNumUnitClassInfos() > VoxRlUnitclassCapacity ||
-		GC.getNumUnitCombatClassInfos() > VoxRlUnitcombatCapacity ||
-		NUM_DOMAIN_TYPES > VoxRlDomainCapacity) return false;
-	UnitModifierRecord row;
-	ZeroRecord(row);
-	row.owner = static_cast<i8>(eOwner);
-	row.unitId = static_cast<i32>(iUnitId);
-
-	// Rows follow the manifest family order: terrain attack and defense,
-	// the VP terrain attack and defense, feature attack and defense.
-	const int terrainCount = GC.getNumTerrainInfos();
-	for (int index = 0; index < terrainCount; ++index)
-	{
-		const TerrainTypes terrain = static_cast<TerrainTypes>(index);
-		const int attack = pUnit->getExtraTerrainAttackPercent(terrain);
-		const int defense = pUnit->getExtraTerrainDefensePercent(terrain);
-		const int vpAttack = pUnit->GetTerrainModifierAttack(terrain);
-		const int vpDefense = pUnit->GetTerrainModifierDefense(terrain);
-		if (attack != 0) { row.family = 0; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
-		if (defense != 0) { row.family = 1; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
-		if (vpAttack != 0) { row.family = 2; row.index = index; VoxRlAssignClamped(row.value, vpAttack); rows.push_back(row); }
-		if (vpDefense != 0) { row.family = 3; row.index = index; VoxRlAssignClamped(row.value, vpDefense); rows.push_back(row); }
-	}
-	const int featureCount = GC.getNumFeatureInfos();
-	for (int index = 0; index < featureCount; ++index)
-	{
-		const FeatureTypes feature = static_cast<FeatureTypes>(index);
-		const int attack = pUnit->getExtraFeatureAttackPercent(feature);
-		const int defense = pUnit->getExtraFeatureDefensePercent(feature);
-		if (attack != 0) { row.family = 4; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
-		if (defense != 0) { row.family = 5; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
-	}
-	// Unit class, unit class attack and defense.
-	const int unitClassCount = GC.getNumUnitClassInfos();
-	for (int index = 0; index < unitClassCount; ++index)
-	{
-		const UnitClassTypes unitClass = static_cast<UnitClassTypes>(index);
-		const int generic = pUnit->getUnitClassModifier(unitClass);
-		const int attack = pUnit->getUnitClassAttackMod(unitClass);
-		const int defense = pUnit->getUnitClassDefenseMod(unitClass);
-		if (generic != 0) { row.family = 6; row.index = index; VoxRlAssignClamped(row.value, generic); rows.push_back(row); }
-		if (attack != 0) { row.family = 7; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
-		if (defense != 0) { row.family = 8; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
-	}
-	// Unit combat, unit combat attack and defense.
-	const int combatCount = GC.getNumUnitCombatClassInfos();
-	for (int index = 0; index < combatCount; ++index)
-	{
-		const UnitCombatTypes combat = static_cast<UnitCombatTypes>(index);
-		const int generic = pUnit->getExtraUnitCombatModifier(combat);
-		const int attack = pUnit->getExtraUnitCombatModifierAttack(combat);
-		const int defense = pUnit->getExtraUnitCombatModifierDefense(combat);
-		if (generic != 0) { row.family = 9; row.index = index; VoxRlAssignClamped(row.value, generic); rows.push_back(row); }
-		if (attack != 0) { row.family = 10; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
-		if (defense != 0) { row.family = 11; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
-	}
-	// Domain, domain attack and defense.
-	const int domainCount = NUM_DOMAIN_TYPES;
-	for (int index = 0; index < domainCount; ++index)
-	{
-		const DomainTypes domain = static_cast<DomainTypes>(index);
-		const int generic = pUnit->getExtraDomainModifier(domain);
-		const int attack = pUnit->getExtraDomainAttack(domain);
-		const int defense = pUnit->getExtraDomainDefense(domain);
-		if (generic != 0) { row.family = 12; row.index = index; VoxRlAssignClamped(row.value, generic); rows.push_back(row); }
-		if (attack != 0) { row.family = 13; row.index = index; VoxRlAssignClamped(row.value, attack); rows.push_back(row); }
-		if (defense != 0) { row.family = 14; row.index = index; VoxRlAssignClamped(row.value, defense); rows.push_back(row); }
-	}
-	// The three per-adjacent-combat-class families close the manifest order.
-	for (int index = 0; index < combatCount; ++index)
-	{
-		const UnitCombatTypes combat = static_cast<UnitCombatTypes>(index);
-		const int adjacent = pUnit->getCombatModPerAdjacentUnitCombatModifier(combat);
-		const int adjacentAttack = pUnit->getCombatModPerAdjacentUnitCombatAttackMod(combat);
-		const int adjacentDefense = pUnit->getCombatModPerAdjacentUnitCombatDefenseMod(combat);
-		if (adjacent != 0) { row.family = 15; row.index = index; VoxRlAssignClamped(row.value, adjacent); rows.push_back(row); }
-		if (adjacentAttack != 0) { row.family = 16; row.index = index; VoxRlAssignClamped(row.value, adjacentAttack); rows.push_back(row); }
-		if (adjacentDefense != 0) { row.family = 17; row.index = index; VoxRlAssignClamped(row.value, adjacentDefense); rows.push_back(row); }
-	}
-	return true;
-}
-
 // Collects a unit's plague and blocked-promotion rows for sparse capture.
 void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 	std::vector<UnitPlagueRecord>& plagues, std::vector<UnitBlockedPromotionRecord>& blockedPromotions)
@@ -675,8 +583,7 @@ bool VoxRlCollectPlotRecord(CvPlot& plot, PlotCaptureRecord& row)
 }
 
 // Collects one unit's mutable fields and movement-count capabilities.
-bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row,
-	std::vector<UnitMovementCountRecord>& movementCounts)
+bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& row)
 {
 	bool valid = true;
 	if (!CollectUnitRecord(unit, capturingTeam, row)) valid = false;
@@ -704,30 +611,6 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 	VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(unit, false));
 	VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(unit, true));
 	row.setPillageCapable(IsPillageCapable(unit));
-	// Sparse movement counts carry only the nonzero per-terrain and per-feature values.
-	movementCounts.clear();
-	for (int terrain = 0; terrain < GC.getNumTerrainInfos(); ++terrain)
-	{
-		const int count = unit.getTerrainExtraMoveCount(static_cast<TerrainTypes>(terrain));
-		if (count == 0) continue;
-		UnitMovementCountRecord entry;
-		ZeroRecord(entry);
-		entry.kind = 0;
-		entry.typeIndex = static_cast<u8>(terrain);
-		VoxRlAssignClamped(entry.count, count);
-		movementCounts.push_back(entry);
-	}
-	for (int feature = 0; feature < GC.getNumFeatureInfos(); ++feature)
-	{
-		const int count = unit.getFeatureExtraMoveCount(static_cast<FeatureTypes>(feature));
-		if (count == 0) continue;
-		UnitMovementCountRecord entry;
-		ZeroRecord(entry);
-		entry.kind = 1;
-		entry.typeIndex = static_cast<u8>(feature);
-		VoxRlAssignClamped(entry.count, count);
-		movementCounts.push_back(entry);
-	}
 	// The promotion passability tables pack one bit per terrain or feature index.
 	row.setHasAllowTerrainPassable(unit.GetPromotions().HasAllowTerrainPassable());
 	if (row.hasAllowTerrainPassable())
@@ -761,8 +644,7 @@ bool VoxRlAppendEventUnitSnapshot(CvUnit& unit, TeamTypes observingTeam,
 	if (eventUnitIndex == NULL) return false;
 	UnitRecord full;
 	ZeroRecord(full);
-	std::vector<UnitMovementCountRecord> movement;
-	if (!VoxRlCollectUnitRecord(unit, observingTeam, full, movement)) return false;
+	if (!VoxRlCollectUnitRecord(unit, observingTeam, full)) return false;
 	UnitWireRecord wire;
 	std::vector<UnitSparseFieldRecord> sparse;
 	VoxRlFieldRangeFailure failure;
@@ -773,16 +655,6 @@ bool VoxRlAppendEventUnitSnapshot(CvUnit& unit, TeamTypes observingTeam,
 	}
 	RequestEventUnitRecord row;
 	std::memcpy(&row, &wire, sizeof(row));
-	std::vector<RequestEventUnitMovementCountRecord> eventMovement;
-	for (size_t index = 0; index < movement.size(); ++index)
-	{
-		RequestEventUnitMovementCountRecord child;
-		ZeroRecord(child);
-		child.kind = movement[index].kind;
-		child.typeIndex = movement[index].typeIndex;
-		child.count = movement[index].count;
-		eventMovement.push_back(child);
-	}
 	std::vector<RequestEventUnitSparseFieldRecord> eventSparse;
 	for (size_t index = 0; index < sparse.size(); ++index)
 	{
@@ -793,20 +665,7 @@ bool VoxRlAppendEventUnitSnapshot(CvUnit& unit, TeamTypes observingTeam,
 		child.value = sparse[index].value;
 		eventSparse.push_back(child);
 	}
-	if (!AppendRequestEventUnitRecordMovementCountRange(&row, &data, eventMovement) ||
-		!AppendRequestEventUnitRecordSparseFieldRange(&row, &data, eventSparse)) return false;
-
-	std::vector<UnitModifierRecord> modifiers;
-	if (!VoxRlCollectUnitModifierRows(unit.getOwner(), unit.GetID(), &unit, modifiers)) return false;
-	for (size_t index = 0; index < modifiers.size(); ++index)
-	{
-		RequestEventUnitModifierRecord child;
-		ZeroRecord(child);
-		child.family = modifiers[index].family;
-		child.index = modifiers[index].index;
-		child.value = modifiers[index].value;
-		data.requestEventUnitModifiers.push_back(child);
-	}
+	if (!AppendRequestEventUnitRecordSparseFieldRange(&row, &data, eventSparse)) return false;
 	std::vector<UnitPlagueRecord> plagues;
 	std::vector<UnitBlockedPromotionRecord> blocked;
 	VoxRlCollectUnitPlagueRows(unit.getOwner(), unit.GetID(), &unit, plagues, blocked);
@@ -899,24 +758,6 @@ bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
 		ZeroRecord(row);
 		if (!CollectTeamResourceRecord(GET_TEAM(static_cast<TeamTypes>(*team)), row)) valid = false;
 		rows.push_back(row);
-	}
-	return valid;
-}
-
-// Collects every live unit's modifiers for a complete sparse replacement.
-bool VoxRlCollectAllUnitModifierRows(std::vector<UnitModifierRecord>& rows)
-{
-	bool valid = true;
-	int loop = 0;
-	for (int player = 0; player < MAX_PLAYERS; ++player)
-	{
-		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
-		loop = 0;
-		for (CvUnit* pUnit = owner.firstUnit(&loop); pUnit != NULL; pUnit = owner.nextUnit(&loop))
-		{
-			if (pUnit->isDelayedDeath()) continue;
-			if (!VoxRlCollectUnitModifierRows(owner.GetID(), pUnit->GetID(), pUnit, rows)) valid = false;
-		}
 	}
 	return valid;
 }
@@ -1195,7 +1036,6 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	if (!AppendDangerPlayerRecordVanishedUnitRange(&dangerRow, &data, vanished)) valid = false;
 	data.worldDangerPlayers.push_back(dangerRow);
 
-	if (!VoxRlCollectAllUnitModifierRows(data.worldUnitModifiers)) valid = false;
 	VoxRlCollectAllUnitPlagueRows(data.worldUnitPlagues, data.worldUnitBlockedPromotions);
 	VoxRlCollectAllUnitAttackCountRows(data.worldUnitAttackCounts);
 	VoxRlCollectAllCityAttackCountRows(data.worldCityAttackCounts);
@@ -1286,8 +1126,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			if (unit == NULL || unit->isDelayedDeath()) continue;
 			UnitRecord unitRow;
 			ZeroRecord(unitRow);
-			std::vector<UnitMovementCountRecord> movementCounts;
-			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow, movementCounts))
+			if (!VoxRlCollectUnitRecord(*unit, capturingTeam, unitRow))
 			{
 				valid = false;
 				continue;
@@ -1307,7 +1146,6 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 				valid = false;
 				continue;
 			}
-			if (!AppendUnitWireRecordMovementCountRange(&wireRow, &data, movementCounts)) valid = false;
 			if (!AppendUnitWireRecordSparseFieldRange(&wireRow, &data, sparseRows)) valid = false;
 			units.push_back(wireRow);
 		}
