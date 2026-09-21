@@ -415,6 +415,8 @@ public:
 
 	bool IsFreePromotionUnitCombat(const int promotionID, const int unitCombatID) const;
 	bool IsSpecialUpgradeUnitClass(const int unitClassesID, const int unitID) const;
+	// Vox Deorum: expose sparse immutable upgrade entries for exact capture enumeration.
+	const std::multimap<int, int>& VoxRlGetSpecialUnitUpgrades() const { return m_piUpgradeUnitClass; }
 	bool IsFreePromotionUnitClass(const int promotionID, const int unitClassID) const;
 	int GetGoldenAgeYieldModifier(const int iYield) const;
 	std::pair<int, bool> GetUnitCombatProductionCostModifier(const int unitCombatID) const;

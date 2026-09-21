@@ -936,18 +936,30 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 	{
 		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
 		if (!player.isAlive() && playerIndex != BARBARIAN_PLAYER) continue;
-		for (int classIndex = 0; classIndex < GC.getNumUnitClassInfos(); ++classIndex)
-			for (int unitIndex = 0; unitIndex < GC.getNumUnitInfos(); ++unitIndex)
-			{
-				if (!player.GetPlayerTraits()->HasSpecialUnitUpgrade(classIndex, unitIndex)) continue;
-				PlayerSpecialUpgradeRecord row;
-				ZeroRecord(row);
-				row.player = static_cast<i8>(playerIndex);
-				if (!AssignCheckedI16(row.unitClass, classIndex,
-					"PlayerSpecialUpgradeRecord", "unitClass", 0)) return false;
-				row.unitType = unitIndex;
-				snapshot.playerSpecialUpgrades.push_back(row);
-			}
+		// Match HasSpecialUnitUpgrade's active-trait union without probing every class/type pair.
+		// Activation remains live because beliefs, policies, and technologies can change it.
+		CvPlayerTraits* traits = player.GetPlayerTraits();
+		const std::vector<TraitTypes> potentialTraits = traits->GetPotentiallyActiveTraits();
+		std::set<std::pair<int, int> > upgrades;
+		for (size_t index = 0; index < potentialTraits.size(); ++index)
+		{
+			CvTraitEntry* trait = GC.getTraitInfo(potentialTraits[index]);
+			if (trait == NULL || !traits->HasTrait(potentialTraits[index])) continue;
+			const std::multimap<int, int>& entries = trait->VoxRlGetSpecialUnitUpgrades();
+			for (std::multimap<int, int>::const_iterator entry = entries.begin(); entry != entries.end(); ++entry)
+				if (entry->first >= 0 && entry->first < GC.getNumUnitClassInfos() &&
+					entry->second >= 0 && entry->second < GC.getNumUnitInfos()) upgrades.insert(*entry);
+		}
+		for (std::set<std::pair<int, int> >::const_iterator upgrade = upgrades.begin(); upgrade != upgrades.end(); ++upgrade)
+		{
+			PlayerSpecialUpgradeRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.unitClass, upgrade->first,
+				"PlayerSpecialUpgradeRecord", "unitClass", 0)) return false;
+			row.unitType = upgrade->second;
+			snapshot.playerSpecialUpgrades.push_back(row);
+		}
 		const std::vector<CvPurchaseRequest>& savings = player.GetEconomicAI()->VoxRlGetRequestedSavings();
 		for (size_t index = 0; index < savings.size(); ++index)
 		{

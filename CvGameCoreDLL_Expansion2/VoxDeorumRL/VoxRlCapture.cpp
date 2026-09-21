@@ -31,6 +31,22 @@
 
 namespace
 {
+	// REQUEST cannot add WORLD player identities or change their team membership.
+	bool HasCheckpointPlayerRoster(const std::map<int, PlayerRecord>& players)
+	{
+		for (int index = 0; index < MAX_PLAYERS; ++index)
+		{
+			CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(index));
+			const std::map<int, PlayerRecord>::const_iterator baseline = players.find(index);
+			if (baseline == players.end())
+			{
+				if (player.isAlive() || index == BARBARIAN_PLAYER) return false;
+			}
+			else if (baseline->second.team != player.getTeam()) return false;
+		}
+		return true;
+	}
+
 	// Tracks the city scalar inputs that can change without a city setter notification.
 	struct CityCheckpointScalars
 	{
@@ -2418,6 +2434,13 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	ScopedCaptureCollection collecting(m_collectingState);
 	bool valid = true;
 	Segment& segment = *m_segment;
+	// Reject unsupported roster changes before advancing any REQUEST baseline.
+	if (!HasCheckpointPlayerRoster(segment.lastPlayerRows))
+	{
+		FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+		if (log != NULL) log->Msg("Capture REQUEST rejected: player roster changed; a fresh WORLD is required.\n");
+		return false;
+	}
 	WorldGameStateRecord gameState;
 	std::memset(&gameState, 0, sizeof(gameState));
 	gameState.gameState = static_cast<i32>(GC.getGame().getGameState());
