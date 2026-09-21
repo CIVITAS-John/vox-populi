@@ -616,7 +616,8 @@ bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecor
 	if (!CollectCityRecord(city, capturingPlayer, row)) return false;
 	VoxRlAssignClamped(row.strengthValueRanged, city.getStrengthValueRanged());
 	VoxRlAssignClamped(row.cityBeliefRangeStrikeModifier, city.GetCityBeliefRangeStrikeModifier());
-	VoxRlAssignClamped(row.airCapacity, city.GetMaxAirUnits());
+	// CvCity reports its local capacity plus the current owner's global bonus.
+	VoxRlAssignClamped(row.airCapacity, city.GetMaxAirUnits() - GET_PLAYER(city.getOwner()).getMaxAirUnits());
 	const OperationSlot& promise = city.GetUnitBeingBuiltForOperation();
 	row.promisedOperationId = promise.m_iOperationID;
 	row.promisedArmyId = promise.m_iArmyID;
@@ -981,6 +982,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 				row.player = static_cast<i8>(playerIndex);
 				row.otherPlayer = static_cast<i8>(other);
 				row.approach = static_cast<i8>(player.GetDiplomacyAI()->GetCivApproach(static_cast<PlayerTypes>(other)));
+				row.visibleApproachTowardsUs = static_cast<i8>(player.GetDiplomacyAI()->GetVisibleApproachTowardsUs(static_cast<PlayerTypes>(other)));
+				row.opinion = static_cast<i8>(player.GetDiplomacyAI()->GetCivOpinion(static_cast<PlayerTypes>(other)));
 				row.potentialMilitaryTargetOrThreat =
 					player.GetDiplomacyAI()->IsPotentialMilitaryTargetOrThreat(static_cast<PlayerTypes>(other), false) ? 1 : 0;
 				snapshot.playerRelations.push_back(row);
@@ -1079,6 +1082,7 @@ namespace
 	// Copies a diplomatic assessment into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerRelationRecord& source, RequestPlayerRelationRowRecord& row)
 	{ row.otherPlayer = source.otherPlayer; row.approach = source.approach;
+		row.visibleApproachTowardsUs = source.visibleApproachTowardsUs; row.opinion = source.opinion;
 		row.potentialMilitaryTargetOrThreat = source.potentialMilitaryTargetOrThreat; }
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
