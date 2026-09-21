@@ -8926,10 +8926,8 @@ void CvTeam::SetCurrentEra(EraTypes eNewValue)
 				{
 					if(pLoopUnit->isUnitEraUpgrade())
 					{
-						if((GC.getUnitInfo(pLoopUnit->getUnitType())->GetEraCombatStrength(eNewValue) > 0) && (GET_TEAM(kPlayer.getTeam()).GetCurrentEra() >= eNewValue))
-						{
-							pLoopUnit->SetBaseCombatStrength(GC.getUnitInfo(pLoopUnit->getUnitType())->GetEraCombatStrength(eNewValue));
-						}
+						// Vox Deorum: Share the native era strength update with simulation.
+						pLoopUnit->UpdateEraCombatStrength(eNewValue);
 						UnitCombatTypes eUnitCombatClass;
 						for(int iI = 0; iI < GC.getNumUnitCombatClassInfos(); iI++)
 						{

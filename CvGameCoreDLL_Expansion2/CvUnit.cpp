@@ -859,10 +859,8 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 		for(int iEraLoop = 0; iEraLoop < iNumEraInfos; iEraLoop++)
 		{
 			eEra = (EraTypes) iEraLoop;
-			if((m_pUnitInfo->GetEraCombatStrength(eEra) > 0) && (GET_TEAM(kPlayer.getTeam()).GetCurrentEra() >= eEra))
-			{
-				SetBaseCombatStrength(m_pUnitInfo->GetEraCombatStrength(eEra));
-			}
+			// Vox Deorum: Share the native era strength update with simulation.
+			UpdateEraCombatStrength(eEra);
 			for(int iI = 0; iI < GC.getNumUnitCombatClassInfos(); iI++)
 			{
 				UnitCombatTypes eUnitCombatClass;
@@ -10591,10 +10589,8 @@ bool CvUnit::pillage()
 			changeExperienceTimes100(GetXPFromPillaging() * 100);
 		}
 
-		if (getPillageBonusStrengthPercent() != 0)
-		{
-			SetBaseCombatStrength(getUnitInfo().GetCombat() + ((getPillageBonusStrengthPercent() * getUnitInfo().GetCombat()) / 100));			
-		}
+		// Vox Deorum: Share the native successful-pillage strength update.
+		UpdatePillageCombatStrength(true);
 
 		DoAdjacentPlotDamage(pPlot, getAOEDamageOnPillage(), "TXT_KEY_MISC_YOU_UNIT_WAS_DAMAGED_AOE_STRIKE_PILLAGE");
 
@@ -16063,6 +16059,9 @@ int CvUnit::GetUnhappinessCombatPenalty() const
 void CvUnit::SetBaseCombatStrength(int iCombat)
 {
 	VALIDATE_OBJECT();
+	// Vox Deorum: retain engine and Lua strength changes in the next capture update.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && m_iBaseCombat != iCombat)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 	m_iBaseCombat = iCombat;
 }
 
@@ -24392,17 +24391,8 @@ void CvUnit::DoNearbyUnitPromotion(const CvPlot* pPlot)
 				}
 			}
 		}
-		if (getPillageBonusStrengthPercent() != 0)
-		{
-			if (pPlot->IsImprovementPillaged())
-			{
-				SetBaseCombatStrength(getUnitInfo().GetCombat() + ((getPillageBonusStrengthPercent() * getUnitInfo().GetCombat()) / 100));
-			}
-			else
-			{
-				SetBaseCombatStrength(getUnitInfo().GetCombat());
-			}
-		}
+		// Vox Deorum: Share the native location-dependent strength update.
+		UpdatePillageCombatStrength(pPlot->IsImprovementPillaged());
 	}
 }
 void CvUnit::DoImprovementExperience(const CvPlot* pPlot)
@@ -34370,6 +34360,31 @@ void CvUnit::DoGreatPersonSpawnBonus(CvCity* pSpawnCity)
 			Localization::String strSummary = Localization::Lookup("TXT_KEY_NOTIFICATION_SUMMARY_CULTURE_UNIT");
 			strSummary << getNameKey();
 			pNotifications->Add(NOTIFICATION_GENERIC, strText.toUTF8(), strSummary.toUTF8(), getX(), getY(), -1);
+		}
+	}
+}
+
+// Vox Deorum: Applies one eligible era's native base combat strength.
+void CvUnit::UpdateEraCombatStrength(EraTypes eEra)
+{
+	if (isUnitEraUpgrade() && m_pUnitInfo->GetEraCombatStrength(eEra) > 0 && GET_TEAM(getTeam()).GetCurrentEra() >= eEra)
+	{
+		SetBaseCombatStrength(m_pUnitInfo->GetEraCombatStrength(eEra));
+	}
+}
+
+// Vox Deorum: Applies the native strength overwrite for pillaged improvements.
+void CvUnit::UpdatePillageCombatStrength(bool bPillaged)
+{
+	if (getPillageBonusStrengthPercent() != 0)
+	{
+		if (bPillaged)
+		{
+			SetBaseCombatStrength(getUnitInfo().GetCombat() + ((getPillageBonusStrengthPercent() * getUnitInfo().GetCombat()) / 100));
+		}
+		else
+		{
+			SetBaseCombatStrength(getUnitInfo().GetCombat());
 		}
 	}
 }

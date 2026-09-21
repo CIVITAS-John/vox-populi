@@ -922,6 +922,10 @@ public:
 	void SetBaseCombatStrength(int iCombat);
 	void ChangeBaseCombatStrength(int iValue);
 	int GetBaseCombatStrength() const;
+	// Vox Deorum: Shares the native era strength update with simulation.
+	void UpdateEraCombatStrength(EraTypes eEra);
+	// Vox Deorum: Shares the native pillaged-improvement strength overwrite.
+	void UpdatePillageCombatStrength(bool bPillaged);
 	int GetBestAttackStrength() const; //ranged or melee, whichever is greater
 	int GetDamageCombatModifier(bool bForDefenseAgainstRanged = false, int iAssumeSelfDamage = 0) const;
 
