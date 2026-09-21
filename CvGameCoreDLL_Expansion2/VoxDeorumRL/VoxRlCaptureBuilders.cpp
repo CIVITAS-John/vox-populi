@@ -1016,6 +1016,9 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.value = player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor));
 			snapshot.playerFlavors.push_back(row);
 		}
+		// Healing uses the actor's state religion and qualifies each owned origin city.
+		const CvReligion* religion = GC.getGame().GetGameReligions()->GetReligion(
+			player.GetReligions()->GetStateReligion(), player.GetID());
 		int loop = 0;
 		for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
 		{
@@ -1038,9 +1041,6 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 				row.faithCost = faith ? city->GetFaithPurchaseCost(static_cast<UnitTypes>(unitIndex), true) : -1;
 				snapshot.cityPurchaseCosts.push_back(row);
 			}
-			// Healing uses the actor's state religion and qualifies each owned origin city.
-			const CvReligion* religion = GC.getGame().GetGameReligions()->GetReligion(
-				player.GetReligions()->GetStateReligion(), player.GetID());
 			if (religion != NULL && !player.isMinorCiv() && !player.isBarbarian())
 				for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
 					for (int ownedTerritory = 0; ownedTerritory < 2; ++ownedTerritory)
