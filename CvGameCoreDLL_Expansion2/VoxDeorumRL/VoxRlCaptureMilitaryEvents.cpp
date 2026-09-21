@@ -20,6 +20,8 @@ namespace
         std::vector<RequestEventUnitPlagueRecord> requestEventUnitPlagues;
         std::vector<RequestEventUnitBlockedPromotionRecord> requestEventUnitBlockedPromotions;
         std::vector<RequestEventUnitAttackCountRecord> requestEventUnitAttackCounts;
+        std::vector<RequestEventUnitMissionRecord> requestEventUnitMissions;
+        std::vector<RequestEventUnitPromotionTurnRecord> requestEventUnitPromotionTurns;
 
         // Takes freshly collected buffers without copying capability payloads.
         void Take(VoxRlRequestData& data)
@@ -29,6 +31,8 @@ namespace
             requestEventUnitPlagues.swap(data.requestEventUnitPlagues);
             requestEventUnitBlockedPromotions.swap(data.requestEventUnitBlockedPromotions);
             requestEventUnitAttackCounts.swap(data.requestEventUnitAttackCounts);
+            requestEventUnitMissions.swap(data.requestEventUnitMissions);
+            requestEventUnitPromotionTurns.swap(data.requestEventUnitPromotionTurns);
         }
     };
     // One immutable event-time snapshot, independent of later live unit changes.
@@ -566,7 +570,9 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
             RequestMilitaryArrivalRecord arrival = row;
             if (!AppendRequestMilitaryArrivalRecordPlagueRange(&arrival, &data, event.snapshot.requestEventUnitPlagues) ||
                 !AppendRequestMilitaryArrivalRecordBlockedPromotionRange(&arrival, &data, event.snapshot.requestEventUnitBlockedPromotions) ||
-                !AppendRequestMilitaryArrivalRecordAttackCountRange(&arrival, &data, event.snapshot.requestEventUnitAttackCounts)) return false;
+                !AppendRequestMilitaryArrivalRecordAttackCountRange(&arrival, &data, event.snapshot.requestEventUnitAttackCounts) ||
+                !AppendRequestMilitaryArrivalRecordMissionRange(&arrival, &data, event.snapshot.requestEventUnitMissions) ||
+                !AppendRequestMilitaryArrivalRecordPromotionTurnRange(&arrival, &data, event.snapshot.requestEventUnitPromotionTurns)) return false;
             data.requestMilitaryArrivals.push_back(arrival);
         }
         else if (event.kind == 1)
@@ -574,7 +580,9 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
             RequestMilitaryDepartureRecord departure = EventRow<RequestMilitaryDepartureRecord>(row);
             if (!AppendRequestMilitaryDepartureRecordPlagueRange(&departure, &data, event.snapshot.requestEventUnitPlagues) ||
                 !AppendRequestMilitaryDepartureRecordBlockedPromotionRange(&departure, &data, event.snapshot.requestEventUnitBlockedPromotions) ||
-                !AppendRequestMilitaryDepartureRecordAttackCountRange(&departure, &data, event.snapshot.requestEventUnitAttackCounts)) return false;
+                !AppendRequestMilitaryDepartureRecordAttackCountRange(&departure, &data, event.snapshot.requestEventUnitAttackCounts) ||
+                !AppendRequestMilitaryDepartureRecordMissionRange(&departure, &data, event.snapshot.requestEventUnitMissions) ||
+                !AppendRequestMilitaryDepartureRecordPromotionTurnRange(&departure, &data, event.snapshot.requestEventUnitPromotionTurns)) return false;
             data.requestMilitaryDepartures.push_back(departure);
         }
     }

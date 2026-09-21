@@ -499,6 +499,52 @@ void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 	}
 }
 
+// Collects one unit's complete mission queue and active timed promotion origins.
+bool VoxRlCollectUnitTurnRows(CvUnit& unit, std::vector<UnitMissionRecord>& missions,
+	std::vector<UnitPromotionTurnRecord>& promotionTurns)
+{
+	bool valid = true;
+	const int missionCount = unit.GetLengthMissionQueue();
+	if (missionCount > 255)
+	{
+		VoxRlNoteCaptureRangeFailure("range", "UnitMissionRecord", "queueIndex", missionCount - 1, 0, 255);
+		valid = false;
+	}
+	for (int index = 0; index < missionCount && index <= 255; ++index)
+	{
+		const MissionData* mission = unit.GetMissionData(index);
+		if (mission == NULL) { valid = false; continue; }
+		UnitMissionRecord row;
+		ZeroRecord(row);
+		row.owner = static_cast<i8>(unit.getOwner());
+		row.unitId = unit.GetID();
+		row.queueIndex = static_cast<u8>(index);
+		if (!AssignCheckedI16(row.missionType, mission->eMissionType,
+			"UnitMissionRecord", "missionType")) valid = false;
+		row.data1 = mission->iData1;
+		row.data2 = mission->iData2;
+		row.flags = mission->iFlags;
+		if (!AssignCheckedI16(row.pushTurn, mission->iPushTurn,
+			"UnitMissionRecord", "pushTurn")) valid = false;
+		missions.push_back(row);
+	}
+	for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
+	{
+		const PromotionTypes type = static_cast<PromotionTypes>(promotion);
+		const CvPromotionEntry* info = GC.getPromotionInfo(type);
+		if (info == NULL || info->PromotionDuration() <= 0 || !unit.isHasPromotion(type)) continue;
+		UnitPromotionTurnRecord row;
+		ZeroRecord(row);
+		row.owner = static_cast<i8>(unit.getOwner());
+		row.unitId = unit.GetID();
+		row.promotion = promotion;
+		if (!AssignCheckedI16(row.turnGained, unit.getTurnPromotionGained(type),
+			"UnitPromotionTurnRecord", "turnGained")) valid = false;
+		promotionTurns.push_back(row);
+	}
+	return valid;
+}
+
 // Collects a unit's nonzero per-attacking-player counts for sparse capture rows.
 void VoxRlCollectUnitAttackCountRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 	std::vector<UnitAttackCountRecord>& rows)
@@ -687,6 +733,29 @@ bool VoxRlAppendEventUnitSnapshot(CvUnit& unit, TeamTypes observingTeam,
 		child.promotion = blocked[index].promotion;
 		data.requestEventUnitBlockedPromotions.push_back(child);
 	}
+	std::vector<UnitMissionRecord> missions;
+	std::vector<UnitPromotionTurnRecord> promotionTurns;
+	if (!VoxRlCollectUnitTurnRows(unit, missions, promotionTurns)) return false;
+	for (size_t index = 0; index < missions.size(); ++index)
+	{
+		RequestEventUnitMissionRecord child;
+		ZeroRecord(child);
+		child.queueIndex = missions[index].queueIndex;
+		child.missionType = missions[index].missionType;
+		child.data1 = missions[index].data1;
+		child.data2 = missions[index].data2;
+		child.flags = missions[index].flags;
+		child.pushTurn = missions[index].pushTurn;
+		data.requestEventUnitMissions.push_back(child);
+	}
+	for (size_t index = 0; index < promotionTurns.size(); ++index)
+	{
+		RequestEventUnitPromotionTurnRecord child;
+		ZeroRecord(child);
+		child.promotion = promotionTurns[index].promotion;
+		child.turnGained = promotionTurns[index].turnGained;
+		data.requestEventUnitPromotionTurns.push_back(child);
+	}
 	std::vector<UnitAttackCountRecord> attacks;
 	VoxRlCollectUnitAttackCountRows(unit.getOwner(), unit.GetID(), &unit, attacks);
 	for (size_t index = 0; index < attacks.size(); ++index)
@@ -777,6 +846,24 @@ void VoxRlCollectAllUnitPlagueRows(std::vector<UnitPlagueRecord>& plagues,
 			VoxRlCollectUnitPlagueRows(owner.GetID(), pUnit->GetID(), pUnit, plagues, blockedPromotions);
 		}
 	}
+}
+
+// Collects complete turn-state children for each live unit at a WORLD checkpoint.
+bool VoxRlCollectAllUnitTurnRows(std::vector<UnitMissionRecord>& missions,
+	std::vector<UnitPromotionTurnRecord>& promotionTurns)
+{
+	bool valid = true;
+	for (int player = 0; player < MAX_PLAYERS; ++player)
+	{
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player));
+		int loop = 0;
+		for (CvUnit* unit = owner.firstUnit(&loop); unit != NULL; unit = owner.nextUnit(&loop))
+		{
+			if (unit->isDelayedDeath() || unit->plot() == NULL) continue;
+			if (!VoxRlCollectUnitTurnRows(*unit, missions, promotionTurns)) valid = false;
+		}
+	}
+	return valid;
 }
 
 // Collects all live units' per-attacking-player counts for sparse capture rows.
@@ -1037,6 +1124,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldDangerPlayers.push_back(dangerRow);
 
 	VoxRlCollectAllUnitPlagueRows(data.worldUnitPlagues, data.worldUnitBlockedPromotions);
+	if (!VoxRlCollectAllUnitTurnRows(data.worldUnitMissions, data.worldUnitPromotionTurns)) valid = false;
 	VoxRlCollectAllUnitAttackCountRows(data.worldUnitAttackCounts);
 	VoxRlCollectAllCityAttackCountRows(data.worldCityAttackCounts);
 	VoxRlCollectAllPlayerResistanceRows(data.worldPlayerResistances);

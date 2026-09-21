@@ -493,6 +493,8 @@ namespace
 			data.requestInterceptorReplacements.size() + data.requestInterceptorEntries.size() +
 			data.requestParticipants.size() + data.requestDroppedUnits.size() +
 			data.requestUnitPlagueReplacements.size() + data.requestUnitPlagueRows.size() +
+			data.requestUnitMissionReplacements.size() + data.requestUnitMissionRows.size() +
+			data.requestUnitPromotionTurnReplacements.size() + data.requestUnitPromotionTurnRows.size() +
 			data.requestUnitBlockedPromotionReplacements.size() + data.requestUnitBlockedPromotionRows.size() +
 			data.requestUnitAttackCountReplacements.size() + data.requestUnitAttackCountRows.size() +
 			data.requestPlayerResistanceReplacements.size() + data.requestPlayerResistanceRows.size() +
@@ -508,6 +510,7 @@ namespace
 		data.requestMilitaryGoldTransactions.size() + data.requestEventUnits.size() +
 		data.requestEventUnitSparseFields.size() + data.requestEventUnitPlagues.size() +
 		data.requestEventUnitBlockedPromotions.size() + data.requestEventUnitAttackCounts.size() +
+		data.requestEventUnitMissions.size() + data.requestEventUnitPromotionTurns.size() +
 		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
 		data.requestBarbarianCampCreations.size();
 }
@@ -2589,6 +2592,39 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		}
 		data.requestDeltaUnits.push_back(delta);
 		segment.lastUnitActualHealRates[*key] = record.actualHealRate;
+		// A changed unit replaces both child tables in full. Empty ranges clear a
+		// queue or timed-promotion set left by an earlier checkpoint.
+		std::vector<UnitMissionRecord> missions;
+		std::vector<UnitPromotionTurnRecord> promotionTurns;
+		if (!VoxRlCollectUnitTurnRows(*pUnit, missions, promotionTurns)) valid = false;
+		RequestUnitMissionReplacementRecord missionReplacement;
+		std::memset(&missionReplacement, 0, sizeof(missionReplacement));
+		missionReplacement.owner = static_cast<i8>((*key).owner);
+		missionReplacement.unitId = (*key).id;
+		std::vector<RequestUnitMissionRowRecord> missionRows(missions.size());
+		for (size_t index = 0; index < missions.size(); ++index)
+		{
+			missionRows[index].queueIndex = missions[index].queueIndex;
+			missionRows[index].missionType = missions[index].missionType;
+			missionRows[index].data1 = missions[index].data1;
+			missionRows[index].data2 = missions[index].data2;
+			missionRows[index].flags = missions[index].flags;
+			missionRows[index].pushTurn = missions[index].pushTurn;
+		}
+		if (!AppendRequestUnitMissionReplacementRecordRowRange(&missionReplacement, &data, missionRows)) valid = false;
+		data.requestUnitMissionReplacements.push_back(missionReplacement);
+		RequestUnitPromotionTurnReplacementRecord promotionReplacement;
+		std::memset(&promotionReplacement, 0, sizeof(promotionReplacement));
+		promotionReplacement.owner = static_cast<i8>((*key).owner);
+		promotionReplacement.unitId = (*key).id;
+		std::vector<RequestUnitPromotionTurnRowRecord> promotionRows(promotionTurns.size());
+		for (size_t index = 0; index < promotionTurns.size(); ++index)
+		{
+			promotionRows[index].promotion = promotionTurns[index].promotion;
+			promotionRows[index].turnGained = promotionTurns[index].turnGained;
+		}
+		if (!AppendRequestUnitPromotionTurnReplacementRecordRowRange(&promotionReplacement, &data, promotionRows)) valid = false;
+		data.requestUnitPromotionTurnReplacements.push_back(promotionReplacement);
 	}
 
 	// Physical plot deltas carry the compact core row plus an optional counter row for

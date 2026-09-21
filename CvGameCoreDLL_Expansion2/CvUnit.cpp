@@ -7031,6 +7031,9 @@ void CvUnit::SetTurnPromotionGained(PromotionTypes eIndex, int iValue)
 {
 	PRECONDITION(eIndex >= 0, "eIndex is expected to be non-negative (invalid Index)");
 	PRECONDITION(eIndex < GC.getNumPromotionInfos(), "eIndex is expected to be within maximum bounds (invalid Index)");
+	// Vox Deorum: the acquisition turn changes expiry without changing membership.
+	if (getTurnPromotionGained(eIndex) != iValue && MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 	std::map<PromotionTypes, int>& m_map = m_TurnPromotionGained;
 	if (iValue>0)
 		m_map[eIndex] = iValue;
@@ -21237,7 +21240,17 @@ CvCity* CvUnit::getOriginCity() const
 void CvUnit::setOriginCity(int iNewValue)
 {
 	VALIDATE_OBJECT();
+	// Vox Deorum: a raw origin change must appear in the next unit delta.
+	if (m_iOriginCity != iNewValue && MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 	m_iOriginCity = iNewValue;
+}
+
+// Vox Deorum: Returns the raw origin ID so capture preserves the -1 sentinel.
+int CvUnit::getRawOriginCityId() const
+{
+	VALIDATE_OBJECT();
+	return m_iOriginCity;
 }
 
 //	--------------------------------------------------------------------------------
@@ -21252,6 +21265,9 @@ int CvUnit::getLastMoveTurn() const
 void CvUnit::setLastMoveTurn(int iNewValue)
 {
 	VALIDATE_OBJECT();
+	// Vox Deorum: track the turn even if movement did not change the plot.
+	if (m_iLastMoveTurn != iNewValue && MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 	m_iLastMoveTurn = iNewValue;
 	ASSERT(getLastMoveTurn() >= 0);
 }
@@ -21318,6 +21334,9 @@ void CvUnit::setReconPlot(CvPlot* pNewValue)
 
 	if(pOldPlot != pNewValue)
 	{
+		// Vox Deorum: recon visibility can change without unit movement.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 		if(pOldPlot != NULL)
 		{
 			if (canChangeVisibility())
@@ -24822,9 +24841,19 @@ bool CvUnit::isNoSupply() const
 	return (m_iNoSupply > 0) || getUnitInfo().IsNoSupply();
 }
 
+// Vox Deorum: Returns the raw no-supply counter for portable capture.
+int CvUnit::getNoSupplyCount() const
+{
+	VALIDATE_OBJECT();
+	return m_iNoSupply;
+}
+
 //	--------------------------------------------------------------------------------
 void CvUnit::changeNoSupply(int iChange)
 {
+	// Vox Deorum: capture gift and promotion-independent supply changes.
+	if (iChange != 0 && MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 	m_iNoSupply += iChange;
 }
 
@@ -29861,9 +29890,8 @@ void CvUnit::SetActivityType(ActivityTypes eNewValue)
 
 		m_eActivityType = eNewValue;
 
-		// Vox Deorum: capture intercept duty transitions; canInterceptNow feeds HasAirCover.
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled &&
-			(eOldActivity == ACTIVITY_INTERCEPT || eNewValue == ACTIVITY_INTERCEPT))
+		// Vox Deorum: every activity transition affects readiness or turn processing.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 
 		CvInterfacePtr<ICvPlot1> pDllSelectionPlot(DLLUI->getSelectionPlot());

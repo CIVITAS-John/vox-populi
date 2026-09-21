@@ -1311,6 +1311,8 @@ public:
 
 	void setOriginCity(int iNewValue);
 	CvCity* getOriginCity() const;
+	// Vox Deorum: Exposes the stored origin without resolving the capital fallback.
+	int getRawOriginCityId() const;
 
 	int getLastMoveTurn() const;
 	void setLastMoveTurn(int iNewValue);
@@ -1675,6 +1677,8 @@ public:
 
 	bool isNoSupply() const;
 	void changeNoSupply(int iChange);
+	// Vox Deorum: Exposes the mutable counter independently of unit-type rules.
+	int getNoSupplyCount() const;
 
 	int getMaxHitPointsBase() const;
 	void setMaxHitPointsBase(int iMaxHitPoints);

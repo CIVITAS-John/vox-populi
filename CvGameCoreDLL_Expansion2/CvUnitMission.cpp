@@ -21,6 +21,8 @@
 #include "CvUnitCombat.h"
 #include "CvDllUnit.h"
 #include "CvTypes.h"
+// Vox Deorum: mission queue mutations must be visible in REQUEST checkpoints.
+#include "VoxDeorumRL/VoxRlCapture.h"
 
 #if !defined(FINAL_RELEASE) || defined(VPDEBUG)
 #include <sstream>
@@ -283,6 +285,9 @@ void CvUnitMission::WaitFor(CvUnit* hUnit, CvUnit* hWaitForUnit)
 
 	//  Insert head of mission list
 	kQueue.insertAtBeginning(&mission);
+	// Vox Deorum: the head insertion changes the complete ordered queue.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(hUnit->getOwner(), hUnit->GetID());
 
 	ASSERT(kQueue.getLength() < 10);
 
@@ -2093,6 +2098,9 @@ void CvUnitMission::InsertAtEndMissionQueue(CvUnit* hUnit, MissionData mission, 
 
 	MissionQueue& kQueue = hUnit->m_missionQueue;
 	kQueue.insertAtEnd(&mission);
+	// Vox Deorum: append records the complete queue in the next unit delta.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(hUnit->getOwner(), hUnit->GetID());
 
 	ASSERT(kQueue.getLength() < 10);
 
@@ -2126,6 +2134,9 @@ MissionData* CvUnitMission::DeleteMissionData(CvUnit* hUnit, MissionData* pNode)
 	}
 
 	pNextMissionNode = kQueue.deleteNode(pNode);
+	// Vox Deorum: deletion also captures the explicit empty replacement.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteUnitChanged(hUnit->getOwner(), hUnit->GetID());
 	if(pNextMissionNode == HeadMissionData(kQueue))
 	{
 		ActivateHeadMission(hUnit);

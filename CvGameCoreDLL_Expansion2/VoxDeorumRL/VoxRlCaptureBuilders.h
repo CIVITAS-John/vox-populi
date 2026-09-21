@@ -260,6 +260,9 @@ bool VoxRlBuildRequestBlock(const VoxRlBlockIdentity& identity, VoxRlRequestData
 // records.
 void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, class CvUnit* pUnit,
 	std::vector<UnitPlagueRecord>& plagues, std::vector<UnitBlockedPromotionRecord>& blockedPromotions);
+// Collects the complete ordered queue and sparse promotion acquisition turns.
+bool VoxRlCollectUnitTurnRows(class CvUnit& unit, std::vector<UnitMissionRecord>& missions,
+	std::vector<UnitPromotionTurnRecord>& promotionTurns);
 // Collects one unit's per-attacking-player counts into the sparse family
 // records.
 void VoxRlCollectUnitAttackCountRows(PlayerTypes eOwner, int iUnitId, class CvUnit* pUnit,
@@ -287,6 +290,9 @@ bool VoxRlCollectTeamResourceRows(const std::set<int>& teams,
 
 void VoxRlCollectAllUnitPlagueRows(std::vector<UnitPlagueRecord>& plagues,
 	std::vector<UnitBlockedPromotionRecord>& blockedPromotions);
+// Collects turn-state children for every live unit in WORLD.
+bool VoxRlCollectAllUnitTurnRows(std::vector<UnitMissionRecord>& missions,
+	std::vector<UnitPromotionTurnRecord>& promotionTurns);
 void VoxRlCollectAllUnitAttackCountRows(std::vector<UnitAttackCountRecord>& rows);
 void VoxRlCollectAllCityAttackCountRows(std::vector<CityAttackCountRecord>& rows);
 void VoxRlCollectAllPlayerResistanceRows(std::vector<PlayerResistanceRecord>& rows);
