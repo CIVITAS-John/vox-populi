@@ -29689,8 +29689,17 @@ void CvUnit::setArmyID(int iNewArmyID)
 		//shouldn't happen
 		OutputDebugString("warning: damaged unit recruited into army!\n");
 	}
-		
+
+	const bool bArmyChanged = (m_iArmyId != iNewArmyID);
 	m_iArmyId = iNewArmyID;
+
+	// Vox Deorum: army membership is a captured unit field, and the aligned CAMPAIGN
+	// checkpoint names the unit filling each formation slot, so the replica needs this
+	// change before the next captured search reads the slot.
+	if (bArmyChanged && MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+	}
 }
 
 CvString CvUnit::getTacticalZoneInfo() const
