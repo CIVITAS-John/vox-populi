@@ -118,15 +118,6 @@ namespace
 		return maximum;
 	}
 
-	// Resolves the unit-level portion of native pillage legality without freezing a plot result.
-	bool IsPillageCapable(const CvUnit& unit)
-	{
-		const CvUnitEntry& info = unit.getUnitInfo();
-		if (!info.IsPillage()) return false;
-		const TechTypes prerequisite = static_cast<TechTypes>(info.GetPrereqPillageTech());
-		return prerequisite == NO_TECH || GET_TEAM(unit.getTeam()).GetTeamTechs()->HasTech(prerequisite);
-	}
-
 	// Checks and assigns one signed sixteen-bit field without hiding an invalid
 	// native value through saturation.
 	bool AssignCheckedI16(i16& destination, int value, const char* record,
@@ -660,7 +651,6 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
 	VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(unit, false));
 	VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(unit, true));
-	row.setPillageCapable(IsPillageCapable(unit));
 	// The promotion passability tables pack one bit per terrain or feature index.
 	row.setHasAllowTerrainPassable(unit.GetPromotions().HasAllowTerrainPassable());
 	if (row.hasAllowTerrainPassable())
