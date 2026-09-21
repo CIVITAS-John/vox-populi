@@ -23,6 +23,9 @@ typedef std::pair<int, int> VoxRlCityKey;
 // Holds the complete mutable child tables used to compare each REQUEST with WORLD.
 struct VoxRlPlayerCitySnapshot
 {
+	std::vector<PlayerGreatPersonRecord> playerGreatPersons;
+	std::vector<PlayerStrategicMonopolyRecord> playerStrategicMonopolies;
+	std::vector<CityHealingYieldRecord> cityHealingYields;
 	std::vector<CityPurchaseCostRecord> cityPurchaseCosts;
 	std::vector<CityFreePromotionRecord> cityFreePromotions;
 	std::vector<TeamTechnologyRecord> teamTechnologies;

@@ -1768,6 +1768,8 @@ public:
 	int getUpgradeDiscount() const;
 	void changeUpgradeDiscount(int iChange);
 
+	// Vox Deorum: captures the stored XP percentage before live aura and player terms.
+	int VoxRlGetExperiencePercentBase() const { return m_iExperiencePercent; }
 	int getExperiencePercent() const;
 	void changeExperiencePercent(int iChange);
 

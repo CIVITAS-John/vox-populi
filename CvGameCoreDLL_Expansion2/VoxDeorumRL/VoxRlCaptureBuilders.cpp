@@ -17,6 +17,7 @@
 #include "CvMilitaryAI.h"
 #include "CvTacticalAnalysisMap.h"
 #include "CvTechClasses.h"
+#include "CvReligionClasses.h"
 
 #include <algorithm>
 #include <map>
@@ -951,6 +952,33 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.unitType = upgrade->second;
 			snapshot.playerSpecialUpgrades.push_back(row);
 		}
+		for (int greatPerson = 0; greatPerson < GC.getNumGreatPersonInfos(); ++greatPerson)
+		{
+			const GreatPersonTypes type = static_cast<GreatPersonTypes>(greatPerson);
+			const int rateModifier = player.GetGreatPersonRateModifier(type);
+			const int costReduction = traits->GetGreatPersonCostReduction(type);
+			if (rateModifier == 0 && costReduction == 0) continue;
+			PlayerGreatPersonRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.greatPerson, greatPerson,
+				"PlayerGreatPersonRecord", "greatPerson", 0)) return false;
+			row.rateModifier = rateModifier;
+			row.costReduction = costReduction;
+			snapshot.playerGreatPersons.push_back(row);
+		}
+		const std::vector<ResourceTypes>& monopolies = player.GetStrategicMonopolies();
+		const std::set<ResourceTypes> orderedMonopolies(monopolies.begin(), monopolies.end());
+		for (std::set<ResourceTypes>::const_iterator resource = orderedMonopolies.begin();
+			resource != orderedMonopolies.end(); ++resource)
+		{
+			PlayerStrategicMonopolyRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.resource, *resource,
+				"PlayerStrategicMonopolyRecord", "resource", 0)) return false;
+			snapshot.playerStrategicMonopolies.push_back(row);
+		}
 		const std::vector<CvPurchaseRequest>& savings = player.GetEconomicAI()->VoxRlGetRequestedSavings();
 		for (size_t index = 0; index < savings.size(); ++index)
 		{
@@ -1010,6 +1038,26 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 				row.faithCost = faith ? city->GetFaithPurchaseCost(static_cast<UnitTypes>(unitIndex), true) : -1;
 				snapshot.cityPurchaseCosts.push_back(row);
 			}
+			// Healing uses the actor's state religion and qualifies each owned origin city.
+			const CvReligion* religion = GC.getGame().GetGameReligions()->GetReligion(
+				player.GetReligions()->GetStateReligion(), player.GetID());
+			if (religion != NULL && !player.isMinorCiv() && !player.isBarbarian())
+				for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
+					for (int ownedTerritory = 0; ownedTerritory < 2; ++ownedTerritory)
+					{
+						const int coefficient = religion->m_Beliefs.GetYieldPerHeal(
+							static_cast<YieldTypes>(yield), player.GetID(), city, true, ownedTerritory != 0);
+						if (coefficient == 0) continue;
+						CityHealingYieldRecord row;
+						ZeroRecord(row);
+						row.cityOwner = static_cast<i8>(playerIndex);
+						row.cityId = city->GetID();
+						if (!AssignCheckedI16(row.yieldType, yield,
+							"CityHealingYieldRecord", "yieldType", 0)) return false;
+						row.ownedTerritory = ownedTerritory != 0 ? 1 : 0;
+						row.yieldPer100Hp = coefficient;
+						snapshot.cityHealingYields.push_back(row);
+					}
 			const std::vector<PromotionTypes> promotions = city->getFreePromotions();
 			for (size_t index = 0; index < promotions.size(); ++index)
 			{
@@ -1083,6 +1131,31 @@ namespace
 	// Copies a city promotion into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const CityFreePromotionRecord& source, RequestCityFreePromotionRowRecord& row)
 	{ row.promotion = source.promotion; }
+
+	// Reads the player owning a PlayerGreatPerson row.
+	int ChildRowOwner(const PlayerGreatPersonRecord& row) { return row.player; }
+	// Sets the player for a complete PlayerGreatPerson replacement.
+	void SetChildReplacementOwner(RequestPlayerGreatPersonReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Copies a PlayerGreatPerson input into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerGreatPersonRecord& source, RequestPlayerGreatPersonRowRecord& row)
+	{ row.greatPerson = source.greatPerson; row.rateModifier = source.rateModifier; row.costReduction = source.costReduction; }
+
+	// Reads the player owning a PlayerStrategicMonopoly row.
+	int ChildRowOwner(const PlayerStrategicMonopolyRecord& row) { return row.player; }
+	// Sets the player for a complete PlayerStrategicMonopoly replacement.
+	void SetChildReplacementOwner(RequestPlayerStrategicMonopolyReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Copies a PlayerStrategicMonopoly input into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerStrategicMonopolyRecord& source, RequestPlayerStrategicMonopolyRowRecord& row)
+	{ row.resource = source.resource; }
+
+	// Reads the city owning a healing coefficient row.
+	VoxRlCityKey ChildRowOwner(const CityHealingYieldRecord& row) { return VoxRlCityKey(row.cityOwner, row.cityId); }
+	// Sets the city for a complete healing coefficient replacement.
+	void SetChildReplacementOwner(RequestCityHealingYieldReplacementRecord& row, VoxRlCityKey owner)
+	{ row.cityOwner = static_cast<i8>(owner.first); row.cityId = owner.second; }
+	// Copies a CityHealingYield input into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const CityHealingYieldRecord& source, RequestCityHealingYieldRowRecord& row)
+	{ row.yieldType = source.yieldType; row.ownedTerritory = source.ownedTerritory; row.yieldPer100Hp = source.yieldPer100Hp; }
 
 	// Emits each owner's complete table when any row in a family differs from the baseline.
 	template <typename World, typename RequestRow, typename Replacement, typename Key>
@@ -1163,6 +1236,15 @@ bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 	if (!AppendChangedChildFamily(baseline.cityPurchaseCosts, current.cityPurchaseCosts,
 		cityOwners, data.requestCityPurchaseCostReplacements, data,
 		&AppendRequestCityPurchaseCostReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerGreatPersons, current.playerGreatPersons,
+		playerOwners, data.requestPlayerGreatPersonReplacements, data,
+		&AppendRequestPlayerGreatPersonReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerStrategicMonopolies, current.playerStrategicMonopolies,
+		playerOwners, data.requestPlayerStrategicMonopolyReplacements, data,
+		&AppendRequestPlayerStrategicMonopolyReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.cityHealingYields, current.cityHealingYields,
+		cityOwners, data.requestCityHealingYieldReplacements, data,
+		&AppendRequestCityHealingYieldReplacementRecordRowRange)) valid = false;
 	if (!AppendChangedChildFamily(baseline.cityFreePromotions, current.cityFreePromotions,
 		cityOwners, data.requestCityFreePromotionReplacements, data,
 		&AppendRequestCityFreePromotionReplacementRecordRowRange)) valid = false;
@@ -1711,6 +1793,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	}
 	VoxRlPlayerCitySnapshot playerCityState;
 	if (!VoxRlCollectPlayerCitySnapshot(playerCityState)) valid = false;
+	data.worldPlayerGreatPersons = playerCityState.playerGreatPersons;
+	data.worldPlayerStrategicMonopolies = playerCityState.playerStrategicMonopolies;
+	data.worldCityHealingYields = playerCityState.cityHealingYields;
 	data.worldCityPurchaseCosts = playerCityState.cityPurchaseCosts;
 	data.worldCityFreePromotions = playerCityState.cityFreePromotions;
 	data.worldTeamTechnologies = playerCityState.teamTechnologies;
