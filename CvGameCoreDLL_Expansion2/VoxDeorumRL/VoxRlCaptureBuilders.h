@@ -17,6 +17,34 @@
 
 class CvUnitEntry;
 
+// One owner-qualified city identity with its stable (owner, id) ordering.
+typedef std::pair<int, int> VoxRlCityKey;
+
+// Holds the complete mutable child tables used to compare each REQUEST with WORLD.
+struct VoxRlPlayerCitySnapshot
+{
+	std::vector<CityPurchaseCostRecord> cityPurchaseCosts;
+	std::vector<CityFreePromotionRecord> cityFreePromotions;
+	std::vector<TeamTechnologyRecord> teamTechnologies;
+	std::vector<PlayerSpecialUpgradeRecord> playerSpecialUpgrades;
+	std::vector<PlayerSavingsRecord> playerSavings;
+	std::vector<PlayerRelationRecord> playerRelations;
+	std::vector<PlayerFlavorRecord> playerFlavors;
+	std::vector<TeamRecord> teams;
+};
+
+// Collects all player and city child tables and team scalars in stable owner order.
+bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot);
+
+// Emits complete replacements for changed player and city child tables, including clears.
+bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
+	const VoxRlPlayerCitySnapshot& current, const std::vector<int>& playerOwners,
+	const std::vector<int>& teamOwners, const std::vector<VoxRlCityKey>& cityOwners,
+	VoxRlRequestData& data);
+
+// Collects generated player fields and the at-war strategy bit.
+bool VoxRlCollectPlayerRecord(class CvPlayer& player, PlayerTypes capturingPlayer, PlayerRecord& row);
+
 // Returns the largest yield-indexed kill bonus for one immutable unit entry.
 int VoxRlMaxUnitEntryYieldFromKills(const CvUnitEntry& source, bool barbarian);
 
@@ -29,9 +57,6 @@ void VoxRlAssignClamped(Target& destination, i32 value)
 	const __int64 maximum = (std::numeric_limits<Target>::max)();
 	destination = static_cast<Target>(value < minimum ? minimum : value > maximum ? maximum : value);
 }
-
-// One owner-qualified city identity with its stable (owner, id) ordering.
-typedef std::pair<int, int> VoxRlCityKey;
 
 // Builds the sorted unique city reference table covering every non-null owning and
 // effective owning city in the collected rows. Token zero stays reserved for the null

@@ -753,6 +753,8 @@ public:
 	unsigned int GetVariableCitySizeFromPopulation(unsigned int nPopulation);
 
 	int GetNextGlobalID() { ++m_iGlobalAssetCounterCurrentTurn; return m_iGlobalAssetCounterAllPreviousTurns + m_iGlobalAssetCounterCurrentTurn; }
+	// Vox Deorum: Read the next operation or army ID without advancing the allocator.
+	int VoxRlPeekNextGlobalID() const { return m_iGlobalAssetCounterAllPreviousTurns + m_iGlobalAssetCounterCurrentTurn + 1; }
 	void RollOverAssetCounter() { m_iGlobalAssetCounterAllPreviousTurns += m_iGlobalAssetCounterCurrentTurn; m_iGlobalAssetCounterCurrentTurn = 0; }
 
 	void SetClosestCityMapDirty();

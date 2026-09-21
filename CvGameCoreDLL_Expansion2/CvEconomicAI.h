@@ -219,6 +219,8 @@ public:
 	const CvExplorationPlotSet GetExplorationPlots(const CvUnit* pUnit);
 
 	void StartSaveForPurchase(PurchaseType ePurchase, int iAmount, int iPriority);
+	// Vox Deorum: Expose the complete native savings ledger to capture without changing it.
+	const vector<CvPurchaseRequest>& VoxRlGetRequestedSavings() const { return m_RequestedSavings; }
 	bool IsSavingForThisPurchase(PurchaseType ePurchase);
 	void CancelSaveForPurchase(PurchaseType ePurchase);
 	bool CanWithdrawMoneyForPurchase(PurchaseType ePurchase, int iAmount, int iPriority = -1);

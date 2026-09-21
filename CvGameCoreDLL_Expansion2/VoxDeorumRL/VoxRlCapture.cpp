@@ -23,6 +23,7 @@
 #include "CvTacticalAnalysisMap.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <climits>
 #include <cstring>
@@ -30,6 +31,26 @@
 
 namespace
 {
+	// Tracks the city scalar inputs that can change without a city setter notification.
+	struct CityCheckpointScalars
+	{
+		int productionAccumulated;
+		int productionNeeded;
+		int numWorkablePlots;
+		// Copies the exact values carried by a WORLD or REQUEST city row.
+		explicit CityCheckpointScalars(const CityRecord& row)
+			: productionAccumulated(row.productionAccumulated),
+			productionNeeded(row.productionNeeded), numWorkablePlots(row.numWorkablePlots) {}
+		// Reads the current native values before deciding whether to mark a city dirty.
+		explicit CityCheckpointScalars(CvCity& city)
+			: productionAccumulated(city.getProduction()),
+			productionNeeded(city.getProductionNeeded()), numWorkablePlots(city.GetNumWorkablePlots()) {}
+		// Compares only the three scalar inputs this refresh owns.
+		bool operator!=(const CityCheckpointScalars& other) const
+		{ return productionAccumulated != other.productionAccumulated ||
+			productionNeeded != other.productionNeeded || numWorkablePlots != other.numWorkablePlots; }
+	};
+
 	// Keeps lazy native danger queries from reentering capture during collection.
 	class ScopedCaptureCollection
 	{
@@ -263,10 +284,12 @@ struct VoxRlCapture::Segment
 	std::map<VoxRlEntityKey, RequestDeltaCityRecord> lastCityRows;
 	std::map<VoxRlEntityKey, std::vector<RequestCityResourceRecord> > lastCityResourceRows;
 	std::map<VoxRlEntityKey, unsigned char> lastCityNeedsGarrison;
+	std::map<VoxRlEntityKey, CityCheckpointScalars> lastCityCheckpointScalars;
 	std::map<int, TeamPassabilityRecord> lastTeamPassabilityRows;
 	std::map<int, TeamResourceRecord> lastTeamResourceRows;
 	// Tracks the serialized WORLD value so REQUEST emits only native game-state changes.
-	i32 lastGameState;
+	WorldGameStateRecord lastGameState;
+	VoxRlPlayerCitySnapshot playerCitySnapshot;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
 	// Latest native healing result for each serialized unit. ActualHealRate depends on
@@ -341,7 +364,7 @@ struct VoxRlCapture::Segment
 		commitId(0), firstRequestSequence(0), lastRequestSequence(0), hasRequests(false),
 		stagingRequest(false)
 	{
-		lastGameState = static_cast<i32>(GAMESTATE_ON);
+		std::memset(&lastGameState, 0, sizeof(lastGameState));
 		closureReason[0] = '\0';
 	}
 };
@@ -487,7 +510,15 @@ namespace
 			data.requestDeltaPlotZones.size() + data.requestDeltaPlotZonesWide.size() +
 			data.requestZoneReplacements.size() + data.requestZoneNeighbors.size() +
 			data.requestDeltaCities.size() + data.requestRemovedUnits.size() +
-			data.requestRemovedCities.size() + data.requestTeamPassability.size() + data.requestTeamResources.size() +
+			data.requestRemovedCities.size() + data.requestDeltaTeams.size() +
+			data.requestTeamPassability.size() + data.requestTeamResources.size() +
+			data.requestTeamTechnologyReplacements.size() + data.requestTeamTechnologyRows.size() +
+			data.requestPlayerSpecialUpgradeReplacements.size() + data.requestPlayerSpecialUpgradeRows.size() +
+			data.requestPlayerSavingsReplacements.size() + data.requestPlayerSavingsRows.size() +
+			data.requestPlayerRelationReplacements.size() + data.requestPlayerRelationRows.size() +
+			data.requestPlayerFlavorReplacements.size() + data.requestPlayerFlavorRows.size() +
+			data.requestCityPurchaseCostReplacements.size() + data.requestCityPurchaseCostRows.size() +
+			data.requestCityFreePromotionReplacements.size() + data.requestCityFreePromotionRows.size() +
 			data.requestVisibilityWords.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
 			data.requestRemovedRevealedOverrides.size() + data.requestKnownAttackers.size() +
 			data.requestInterceptorReplacements.size() + data.requestInterceptorEntries.size() +
@@ -1530,6 +1561,9 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	{
 		VoxRlBlockView worldView;
 		if (!worldView.Open(storage.Bytes(), length)) return false;
+		const u8* gameBytes = worldView.SectionBytes(VOX_RL_SECTION_WORLD_GAME_STATE);
+		if (gameBytes == NULL) return false;
+		std::memcpy(&segment.lastGameState, gameBytes, sizeof(segment.lastGameState));
 		const VoxRlSectionDirectoryEntry* players = worldView.FindSection(VOX_RL_SECTION_WORLD_PLAYERS);
 		const u32 playerCount = players == NULL ? 0U : players->count;
 		const u8* playerBytes = playerCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_PLAYERS);
@@ -1559,6 +1593,7 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 		const u8* cityBytes = cityCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_CITIES);
 		if (cityCount != 0U && cityBytes == NULL) return false;
 		segment.lastCityNeedsGarrison.clear();
+		segment.lastCityCheckpointScalars.clear();
 		for (u32 index = 0; index < cityCount; ++index)
 		{
 			CityRecord row;
@@ -1566,6 +1601,7 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			const VoxRlEntityKey key(static_cast<int>(row.owner), row.id);
 			if (!segment.lastCityNeedsGarrison.insert(
 				std::make_pair(key, static_cast<unsigned char>(row.needsGarrison))).second) return false;
+		segment.lastCityCheckpointScalars.insert(std::make_pair(key, CityCheckpointScalars(row)));
 		}
 		// Keep the baseline's visibility domain even if a team dies later in the segment.
 		segment.capturedTeams.clear();
@@ -1586,7 +1622,7 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	segment.lastTeamResourceRows.clear();
 	for (size_t index = 0; index < teamResources.size(); ++index)
 		segment.lastTeamResourceRows[static_cast<int>(teamResources[index].team)] = teamResources[index];
-	segment.lastGameState = static_cast<i32>(GC.getGame().getGameState());
+	if (!VoxRlCollectPlayerCitySnapshot(segment.playerCitySnapshot)) return false;
 	// The WORLD build accepts a fresh zone snapshot and the collected team
 	// passability table, so both dirty markers reset here.
 	m_zoneSnapshotDirty = false;
@@ -2382,10 +2418,15 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	ScopedCaptureCollection collecting(m_collectingState);
 	bool valid = true;
 	Segment& segment = *m_segment;
-	const i32 gameState = static_cast<i32>(GC.getGame().getGameState());
-	if (gameState != segment.lastGameState)
+	WorldGameStateRecord gameState;
+	std::memset(&gameState, 0, sizeof(gameState));
+	gameState.gameState = static_cast<i32>(GC.getGame().getGameState());
+	VoxRlAssignClamped(gameState.elapsedGameTurns, GC.getGame().getElapsedGameTurns());
+	VoxRlAssignClamped(gameState.maxTurns, GC.getGame().getMaxTurns());
+	VoxRlAssignClamped(gameState.currentEra, GC.getGame().getCurrentEra());
+	if (std::memcmp(&gameState, &segment.lastGameState, sizeof(gameState)) != 0)
 	{
-		data.requestGameState.gameState = gameState;
+		std::memcpy(&data.requestGameState, &gameState, sizeof(gameState));
 		data.hasRequestGameState = true;
 		segment.lastGameState = gameState;
 	}
@@ -2461,7 +2502,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		PlayerRecord row;
 		std::memset(&row, 0, sizeof(row));
 		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(baseline->first));
-		if (!CollectPlayerRecord(owner, capturingPlayer, row))
+		if (!VoxRlCollectPlayerRecord(owner, capturingPlayer, row))
 		{
 			valid = false;
 			continue;
@@ -2473,10 +2514,55 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestDeltaPlayers.push_back(delta);
 		baseline->second = row;
 	}
+	VoxRlPlayerCitySnapshot currentPlayerCityState;
+	if (!VoxRlCollectPlayerCitySnapshot(currentPlayerCityState)) valid = false;
+	else
+	{
+		std::vector<int> playerOwners;
+		for (std::map<int, PlayerRecord>::const_iterator player = segment.lastPlayerRows.begin();
+			player != segment.lastPlayerRows.end(); ++player) playerOwners.push_back(player->first);
+		std::vector<int> teamOwners;
+		for (size_t index = 0; index < segment.playerCitySnapshot.teams.size(); ++index)
+			teamOwners.push_back(segment.playerCitySnapshot.teams[index].id);
+		for (size_t index = 0; index < currentPlayerCityState.teams.size(); ++index)
+			if (std::find(teamOwners.begin(), teamOwners.end(), currentPlayerCityState.teams[index].id) == teamOwners.end())
+				teamOwners.push_back(currentPlayerCityState.teams[index].id);
+		std::sort(teamOwners.begin(), teamOwners.end());
+		std::vector<VoxRlCityKey> cityOwners;
+		for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
+		{
+			CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
+			if (!player.isAlive() && playerIndex != BARBARIAN_PLAYER) continue;
+			int loop = 0;
+			for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+				cityOwners.push_back(VoxRlCityKey(playerIndex, city->GetID()));
+		}
+		if (!VoxRlAppendPlayerCityReplacements(segment.playerCitySnapshot, currentPlayerCityState,
+			playerOwners, teamOwners, cityOwners, data)) valid = false;
+	}
 	// Native healing depends on nearby units and mutable plot, city, diplomacy, and player
 	// state. Recompute it at the safe boundary so changes also refresh affected recipients.
 	RefreshChangedActualHealRates(segment.lastUnitActualHealRates, segment.dirtyUnits);
 	RefreshChangedNeedsGarrison(segment.lastCityNeedsGarrison, segment.dirtyCities);
+	for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
+	{
+		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
+		if (!player.isAlive() && playerIndex != BARBARIAN_PLAYER) continue;
+		int loop = 0;
+		for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+		{
+			const VoxRlEntityKey key(playerIndex, city->GetID());
+			const CityCheckpointScalars current(*city);
+			std::map<VoxRlEntityKey, CityCheckpointScalars>::iterator last =
+				segment.lastCityCheckpointScalars.find(key);
+			if (last == segment.lastCityCheckpointScalars.end() || last->second != current)
+			{
+				segment.dirtyCities.insert(key);
+				segment.lastCityCheckpointScalars.erase(key);
+				segment.lastCityCheckpointScalars.insert(std::make_pair(key, current));
+			}
+		}
+	}
 	// The zone table is recollected only after a native rebuild marked it dirty.
 	// The comparison stays because the native rebuild does not identify changed
 	// plots: it accepts the rebuilt table, carries a replacement when the rows
@@ -3730,6 +3816,7 @@ void VoxRlCapture::NoteCityRemoved(PlayerTypes eOwner, int iCityId)
 	m_segment->lastCityRows.erase(key);
 	m_segment->lastCityResourceRows.erase(key);
 	m_segment->lastCityNeedsGarrison.erase(key);
+	m_segment->lastCityCheckpointScalars.erase(key);
 	// Deletion removes the city's associated sparse rows, so no family
 	// tombstone or collection work remains for it.
 	m_segment->dirtyCityAttackCounts.erase(key);

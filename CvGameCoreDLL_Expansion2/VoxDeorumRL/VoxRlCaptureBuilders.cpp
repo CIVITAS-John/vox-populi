@@ -10,10 +10,13 @@
 #include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 #include "CvDangerPlots.h"
 #include "CvDiplomacyAI.h"
+#include "CvEconomicAI.h"
+#include "CvFlavorManager.h"
 #include "CvGrandStrategyAI.h"
 #include "CvInternalGameCoreUtils.h"
 #include "CvMilitaryAI.h"
 #include "CvTacticalAnalysisMap.h"
+#include "CvTechClasses.h"
 
 #include <algorithm>
 #include <map>
@@ -906,6 +909,270 @@ void VoxRlCollectAllPlayerResistanceRows(std::vector<PlayerResistanceRecord>& ro
 	}
 }
 
+// Collects the player and city tables from native state in stable owner and type order.
+bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
+{
+	snapshot = VoxRlPlayerCitySnapshot();
+	for (int teamIndex = 0; teamIndex < MAX_TEAMS; ++teamIndex)
+	{
+		CvTeam& team = GET_TEAM(static_cast<TeamTypes>(teamIndex));
+		if (!team.isAlive() && teamIndex != BARBARIAN_TEAM) continue;
+		TeamRecord teamRow;
+		ZeroRecord(teamRow);
+		if (!CollectTeamRecord(team, teamRow)) return false;
+		snapshot.teams.push_back(teamRow);
+		for (int techIndex = 0; techIndex < GC.getNumTechInfos(); ++techIndex)
+		{
+			if (!team.GetTeamTechs()->HasTech(static_cast<TechTypes>(techIndex))) continue;
+			TeamTechnologyRecord row;
+			ZeroRecord(row);
+			row.team = static_cast<i8>(teamIndex);
+			if (!AssignCheckedI16(row.technology, techIndex,
+				"TeamTechnologyRecord", "technology", 0)) return false;
+			snapshot.teamTechnologies.push_back(row);
+		}
+	}
+	for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
+	{
+		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
+		if (!player.isAlive() && playerIndex != BARBARIAN_PLAYER) continue;
+		for (int classIndex = 0; classIndex < GC.getNumUnitClassInfos(); ++classIndex)
+			for (int unitIndex = 0; unitIndex < GC.getNumUnitInfos(); ++unitIndex)
+			{
+				if (!player.GetPlayerTraits()->HasSpecialUnitUpgrade(classIndex, unitIndex)) continue;
+				PlayerSpecialUpgradeRecord row;
+				ZeroRecord(row);
+				row.player = static_cast<i8>(playerIndex);
+				if (!AssignCheckedI16(row.unitClass, classIndex,
+					"PlayerSpecialUpgradeRecord", "unitClass", 0)) return false;
+				row.unitType = unitIndex;
+				snapshot.playerSpecialUpgrades.push_back(row);
+			}
+		const std::vector<CvPurchaseRequest>& savings = player.GetEconomicAI()->VoxRlGetRequestedSavings();
+		for (size_t index = 0; index < savings.size(); ++index)
+		{
+			if (savings[index].m_iAmount == 0 && savings[index].m_iPriority == 0) continue;
+			PlayerSavingsRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			row.purchaseType = static_cast<i8>(savings[index].m_eType);
+			row.amount = savings[index].m_iAmount;
+			row.priority = savings[index].m_iPriority;
+			snapshot.playerSavings.push_back(row);
+		}
+		if (playerIndex < MAX_MAJOR_CIVS)
+			for (int other = 0; other < MAX_MAJOR_CIVS; ++other)
+			{
+				if (other == playerIndex || !GET_PLAYER(static_cast<PlayerTypes>(other)).isAlive()) continue;
+				PlayerRelationRecord row;
+				ZeroRecord(row);
+				row.player = static_cast<i8>(playerIndex);
+				row.otherPlayer = static_cast<i8>(other);
+				row.approach = static_cast<i8>(player.GetDiplomacyAI()->GetCivApproach(static_cast<PlayerTypes>(other)));
+				row.potentialMilitaryTargetOrThreat =
+					player.GetDiplomacyAI()->IsPotentialMilitaryTargetOrThreat(static_cast<PlayerTypes>(other), false) ? 1 : 0;
+				snapshot.playerRelations.push_back(row);
+			}
+		for (int flavor = 0; flavor < GC.getNumFlavorTypes(); ++flavor)
+		{
+			PlayerFlavorRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.flavorId, flavor,
+				"PlayerFlavorRecord", "flavorId", 0)) return false;
+			row.value = player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor));
+			snapshot.playerFlavors.push_back(row);
+		}
+		int loop = 0;
+		for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+		{
+			for (int unitIndex = 0; unitIndex < GC.getNumUnitInfos(); ++unitIndex)
+			{
+				CvUnitEntry* unit = GC.getUnitInfo(static_cast<UnitTypes>(unitIndex));
+				if (unit == NULL || (unit->GetCombat() <= 0 && unit->GetRangedCombat() <= 0 &&
+					!unit->IsMilitarySupport() && !unit->IsMilitaryProduction())) continue;
+				const bool gold = city->IsCanPurchase(false, true, static_cast<UnitTypes>(unitIndex),
+					NO_BUILDING, NO_PROJECT, YIELD_GOLD);
+				const bool faith = city->IsCanPurchase(false, true, static_cast<UnitTypes>(unitIndex),
+					NO_BUILDING, NO_PROJECT, YIELD_FAITH);
+				if (!gold && !faith) continue;
+				CityPurchaseCostRecord row;
+				ZeroRecord(row);
+				row.cityOwner = static_cast<i8>(playerIndex);
+				row.cityId = city->GetID();
+				row.unitType = unitIndex;
+				row.goldCost = gold ? city->GetPurchaseCost(static_cast<UnitTypes>(unitIndex)) : -1;
+				row.faithCost = faith ? city->GetFaithPurchaseCost(static_cast<UnitTypes>(unitIndex), true) : -1;
+				snapshot.cityPurchaseCosts.push_back(row);
+			}
+			const std::vector<PromotionTypes> promotions = city->getFreePromotions();
+			for (size_t index = 0; index < promotions.size(); ++index)
+			{
+				CityFreePromotionRecord row;
+				ZeroRecord(row);
+				row.cityOwner = static_cast<i8>(playerIndex);
+				row.cityId = city->GetID();
+				if (!AssignCheckedI16(row.promotion, promotions[index],
+					"CityFreePromotionRecord", "promotion", 0)) return false;
+				snapshot.cityFreePromotions.push_back(row);
+			}
+		}
+	}
+	return true;
+}
+
+namespace
+{
+	// Reads the team owning a technology row.
+	int ChildRowOwner(const TeamTechnologyRecord& row) { return row.team; }
+	// Reads the player owning a special-upgrade row.
+	int ChildRowOwner(const PlayerSpecialUpgradeRecord& row) { return row.player; }
+	// Reads the player owning a savings row.
+	int ChildRowOwner(const PlayerSavingsRecord& row) { return row.player; }
+	// Reads the player owning a diplomacy row.
+	int ChildRowOwner(const PlayerRelationRecord& row) { return row.player; }
+	// Reads the player owning a personality flavor row.
+	int ChildRowOwner(const PlayerFlavorRecord& row) { return row.player; }
+	// Reads the city owning a purchase cost row.
+	VoxRlCityKey ChildRowOwner(const CityPurchaseCostRecord& row) { return VoxRlCityKey(row.cityOwner, row.cityId); }
+	// Reads the city owning a promotion row.
+	VoxRlCityKey ChildRowOwner(const CityFreePromotionRecord& row) { return VoxRlCityKey(row.cityOwner, row.cityId); }
+
+	// Sets the team for a technology replacement.
+	void SetChildReplacementOwner(RequestTeamTechnologyReplacementRecord& row, int owner) { row.team = static_cast<i8>(owner); }
+	// Sets the player for a special-upgrade replacement.
+	void SetChildReplacementOwner(RequestPlayerSpecialUpgradeReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Sets the player for a savings replacement.
+	void SetChildReplacementOwner(RequestPlayerSavingsReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Sets the player for a diplomacy replacement.
+	void SetChildReplacementOwner(RequestPlayerRelationReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Sets the player for a flavor replacement.
+	void SetChildReplacementOwner(RequestPlayerFlavorReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Sets the city for a purchase-cost replacement.
+	void SetChildReplacementOwner(RequestCityPurchaseCostReplacementRecord& row, VoxRlCityKey owner)
+	{ row.cityOwner = static_cast<i8>(owner.first); row.cityId = owner.second; }
+	// Sets the city for a free-promotion replacement.
+	void SetChildReplacementOwner(RequestCityFreePromotionReplacementRecord& row, VoxRlCityKey owner)
+	{ row.cityOwner = static_cast<i8>(owner.first); row.cityId = owner.second; }
+
+	// Copies a researched technology into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const TeamTechnologyRecord& source, RequestTeamTechnologyRowRecord& row)
+	{ row.technology = source.technology; }
+	// Copies a special unit upgrade into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerSpecialUpgradeRecord& source, RequestPlayerSpecialUpgradeRowRecord& row)
+	{ row.unitClass = source.unitClass; row.unitType = source.unitType; }
+	// Copies a savings commitment into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerSavingsRecord& source, RequestPlayerSavingsRowRecord& row)
+	{ row.purchaseType = source.purchaseType; row.amount = source.amount; row.priority = source.priority; }
+	// Copies a diplomatic assessment into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerRelationRecord& source, RequestPlayerRelationRowRecord& row)
+	{ row.otherPlayer = source.otherPlayer; row.approach = source.approach;
+		row.potentialMilitaryTargetOrThreat = source.potentialMilitaryTargetOrThreat; }
+	// Copies a personality flavor into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
+	{ row.flavorId = source.flavorId; row.value = source.value; }
+	// Copies a purchase cost into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const CityPurchaseCostRecord& source, RequestCityPurchaseCostRowRecord& row)
+	{ row.unitType = source.unitType; row.goldCost = source.goldCost; row.faithCost = source.faithCost; }
+	// Copies a city promotion into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const CityFreePromotionRecord& source, RequestCityFreePromotionRowRecord& row)
+	{ row.promotion = source.promotion; }
+
+	// Emits each owner's complete table when any row in a family differs from the baseline.
+	template <typename World, typename RequestRow, typename Replacement, typename Key>
+	bool AppendChangedChildFamily(std::vector<World>& baseline, const std::vector<World>& current,
+		const std::vector<Key>& owners, std::vector<Replacement>& replacements, VoxRlRequestData& data,
+		bool (*append)(Replacement*, VoxRlRequestData*, const std::vector<RequestRow>&))
+	{
+		if (baseline.size() == current.size() &&
+			(baseline.empty() || std::memcmp(&baseline[0], &current[0], baseline.size() * sizeof(World)) == 0))
+			return true;
+		for (size_t ownerIndex = 0; ownerIndex < owners.size(); ++ownerIndex)
+		{
+			std::vector<World> oldRows;
+			for (size_t index = 0; index < baseline.size(); ++index)
+				if (ChildRowOwner(baseline[index]) == owners[ownerIndex]) oldRows.push_back(baseline[index]);
+			std::vector<World> newRows;
+			for (size_t index = 0; index < current.size(); ++index)
+				if (ChildRowOwner(current[index]) == owners[ownerIndex]) newRows.push_back(current[index]);
+			if (oldRows.size() == newRows.size() &&
+				(oldRows.empty() || std::memcmp(&oldRows[0], &newRows[0], oldRows.size() * sizeof(World)) == 0))
+				continue;
+			Replacement replacement;
+			ZeroRecord(replacement);
+			SetChildReplacementOwner(replacement, owners[ownerIndex]);
+			std::vector<RequestRow> rows;
+			for (size_t index = 0; index < newRows.size(); ++index)
+			{
+				RequestRow row;
+				ZeroRecord(row);
+				CopyChildReplacementRow(newRows[index], row);
+				rows.push_back(row);
+			}
+			if (!append(&replacement, &data, rows)) return false;
+			replacements.push_back(replacement);
+		}
+		baseline = current;
+		return true;
+	}
+}
+
+// Emits child replacements and exact team scalars at a REQUEST boundary.
+bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
+	const VoxRlPlayerCitySnapshot& current, const std::vector<int>& playerOwners,
+	const std::vector<int>& teamOwners, const std::vector<VoxRlCityKey>& cityOwners,
+	VoxRlRequestData& data)
+{
+	bool valid = true;
+	for (size_t index = 0; index < current.teams.size(); ++index)
+	{
+		const TeamRecord& row = current.teams[index];
+		bool changed = true;
+		for (size_t old = 0; old < baseline.teams.size(); ++old)
+			if (baseline.teams[old].id == row.id)
+			{ changed = std::memcmp(&baseline.teams[old], &row, sizeof(row)) != 0; break; }
+		if (changed)
+		{
+			RequestDeltaTeamRecord delta;
+			std::memcpy(&delta, &row, sizeof(delta));
+			data.requestDeltaTeams.push_back(delta);
+		}
+	}
+	baseline.teams = current.teams;
+	if (!AppendChangedChildFamily(baseline.teamTechnologies, current.teamTechnologies,
+		teamOwners, data.requestTeamTechnologyReplacements, data,
+		&AppendRequestTeamTechnologyReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerSpecialUpgrades, current.playerSpecialUpgrades,
+		playerOwners, data.requestPlayerSpecialUpgradeReplacements, data,
+		&AppendRequestPlayerSpecialUpgradeReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerSavings, current.playerSavings,
+		playerOwners, data.requestPlayerSavingsReplacements, data,
+		&AppendRequestPlayerSavingsReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerRelations, current.playerRelations,
+		playerOwners, data.requestPlayerRelationReplacements, data,
+		&AppendRequestPlayerRelationReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerFlavors, current.playerFlavors,
+		playerOwners, data.requestPlayerFlavorReplacements, data,
+		&AppendRequestPlayerFlavorReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.cityPurchaseCosts, current.cityPurchaseCosts,
+		cityOwners, data.requestCityPurchaseCostReplacements, data,
+		&AppendRequestCityPurchaseCostReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.cityFreePromotions, current.cityFreePromotions,
+		cityOwners, data.requestCityFreePromotionReplacements, data,
+		&AppendRequestCityFreePromotionReplacementRecordRowRange)) valid = false;
+	return valid;
+}
+
+// Collects one player row, including the military strategy used by purchases.
+bool VoxRlCollectPlayerRecord(CvPlayer& player, PlayerTypes capturingPlayer, PlayerRecord& row)
+{
+	if (!CollectPlayerRecord(player, capturingPlayer, row)) return false;
+	const int atWarStrategy = GC.getInfoTypeForString("MILITARYAISTRATEGY_AT_WAR", true);
+	row.militaryAtWarStrategy = atWarStrategy >= 0 &&
+		player.GetMilitaryAI()->IsUsingStrategy(static_cast<MilitaryAIStrategyTypes>(atWarStrategy)) ? 1 : 0;
+	return true;
+}
+
 // Collects immutable native tables and topology for the generated STATIC builder.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
@@ -915,6 +1182,18 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	ZeroRecord(data.staticRules);
 	if (!CollectStaticRulesRecord(data.staticRules)) valid = false;
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
+	for (int flavor = 0; flavor < GC.getNumFlavorTypes(); ++flavor)
+	{
+		const CvString& name = GC.getFlavorTypes(static_cast<FlavorTypes>(flavor));
+		StaticFlavorInfoRecord row;
+		ZeroRecord(row);
+		if (!AssignCheckedI16(row.flavorId, flavor, "StaticFlavorInfoRecord", "flavorId", 0)) valid = false;
+		row.nameOffset = static_cast<u32>(data.staticFlavorNames.size());
+		if (name.length() > 65535U) return false;
+		row.nameLength = static_cast<u16>(name.length());
+		data.staticFlavorNames.insert(data.staticFlavorNames.end(), name.begin(), name.end());
+		data.staticFlavorInfos.push_back(row);
+	}
 	if (!VoxRlCollectNativeInfoTables(data)) valid = false;
 	ZeroRecord(data.staticBuildIds);
 	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) valid = false;
@@ -1060,6 +1339,9 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	const TeamTypes capturingTeam = capturing.getTeam();
 	VoxRlWorldData data;
 	data.worldGameState.gameState = static_cast<i32>(GC.getGame().getGameState());
+	VoxRlAssignClamped(data.worldGameState.elapsedGameTurns, GC.getGame().getElapsedGameTurns());
+	VoxRlAssignClamped(data.worldGameState.maxTurns, GC.getGame().getMaxTurns());
+	VoxRlAssignClamped(data.worldGameState.currentEra, GC.getGame().getCurrentEra());
 	std::vector<TeamTypes> aliveTeams;
 	CollectAliveTeams(aliveTeams);
 	std::set<int> recordedTeams;
@@ -1371,7 +1653,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		}
 		PlayerRecord row;
 		ZeroRecord(row);
-		if (!CollectPlayerRecord(owner, capturingPlayer, row)) valid = false;
+		if (!VoxRlCollectPlayerRecord(owner, capturingPlayer, row)) valid = false;
 		row.id = static_cast<i8>(player);
 		data.worldPlayers.push_back(row);
 		if (!CollectPlayerResources(owner, tileResourceTotals[player], ordinaryBuildingSupply[player],
@@ -1421,6 +1703,15 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		if (!AppendInterceptorCacheRecordEntryRange(&row, &data, entries)) valid = false;
 		data.worldInterceptorCaches.push_back(row);
 	}
+	VoxRlPlayerCitySnapshot playerCityState;
+	if (!VoxRlCollectPlayerCitySnapshot(playerCityState)) valid = false;
+	data.worldCityPurchaseCosts = playerCityState.cityPurchaseCosts;
+	data.worldCityFreePromotions = playerCityState.cityFreePromotions;
+	data.worldTeamTechnologies = playerCityState.teamTechnologies;
+	data.worldPlayerSpecialUpgrades = playerCityState.playerSpecialUpgrades;
+	data.worldPlayerSavings = playerCityState.playerSavings;
+	data.worldPlayerRelations = playerCityState.playerRelations;
+	data.worldPlayerFlavors = playerCityState.playerFlavors;
 	if (timings != NULL) timings->cityCount = static_cast<unsigned int>(data.worldCities.size());
 	entityRelationTiming.Stop();
 	if (!valid) return false;
@@ -1443,6 +1734,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	CampaignHeaderRecord& header = data.campaignHeader;
 	ZeroRecord(header);
 	if (!CollectCampaignHeaderRecord(*military, capturing, header)) valid = false;
+	header.nextGlobalId = GC.getGame().VoxRlPeekNextGlobalID();
 	header.alignedWorldGeneration = alignedWorldGeneration;
 	header.alignedNextDeltaSequence = alignedNextDeltaSequence;
 	InitializeBaselineMilitaryFlavors(
