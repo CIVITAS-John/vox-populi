@@ -629,6 +629,14 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 {
 	bool valid = true;
 	if (!CollectUnitRecord(unit, capturingTeam, row)) valid = false;
+	// Preserve only XP percent history that the current active promotions cannot determine.
+	row.experiencePercentOffset = unit.VoxRlGetExperiencePercentBase();
+	for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
+	{
+		const PromotionTypes type = static_cast<PromotionTypes>(promotion);
+		if (unit.isHasPromotion(type) && unit.isPromotionActive(type))
+			row.experiencePercentOffset -= GC.getPromotionInfo(type)->GetExperiencePercent();
+	}
 	int lineageOwner = -1;
 	int lineageUnitId = -1;
 	VoxRlGetUnitLineage(unit, lineageOwner, lineageUnitId);
