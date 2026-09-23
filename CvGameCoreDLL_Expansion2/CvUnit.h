@@ -1351,6 +1351,8 @@ public:
 	int addDamageReceivedThisTurn(int iDamage, CvUnit* pAttacker=NULL);
 	void flipDamageReceivedPerTurn();
 	bool isProjectedToDieNextTurn() const;
+	// Vox Deorum: Exposes the current owner-turn damage accumulator to military capture.
+	int GetDamageTakenThisTurn() const;
 	int GetDamageTakenLastTurn() const;
 
 	int getMoves() const;

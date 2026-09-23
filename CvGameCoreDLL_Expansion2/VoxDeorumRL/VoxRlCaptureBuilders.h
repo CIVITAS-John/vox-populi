@@ -25,6 +25,7 @@ struct VoxRlPlayerCitySnapshot
 {
 	std::vector<PlayerGreatPersonRecord> playerGreatPersons;
 	std::vector<PlayerStrategicMonopolyRecord> playerStrategicMonopolies;
+	std::vector<CityConnectionPlotRecord> cityConnectionPlots;
 	std::vector<CityHealingYieldRecord> cityHealingYields;
 	std::vector<CityPurchaseCostRecord> cityPurchaseCosts;
 	std::vector<CityFreePromotionRecord> cityFreePromotions;
@@ -39,6 +40,9 @@ struct VoxRlPlayerCitySnapshot
 // Collects all player and city child tables and team scalars in stable owner order.
 bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot);
 
+// Collects the active native trade roster as one complete REQUEST replacement.
+bool VoxRlCollectRequestTrade(VoxRlRequestData& data);
+
 // Emits complete replacements for changed player and city child tables, including clears.
 bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 	const VoxRlPlayerCitySnapshot& current, const std::vector<int>& playerOwners,
@@ -51,8 +55,6 @@ bool VoxRlCollectPlayerRecord(class CvPlayer& player, PlayerTypes capturingPlaye
 // Returns native military-support units omitted from the live unit rows.
 int VoxRlMilitaryUnitCountCorrection(class CvPlayer& player);
 
-// Returns the largest yield-indexed kill bonus for one immutable unit entry.
-int VoxRlMaxUnitEntryYieldFromKills(const CvUnitEntry& source, bool barbarian);
 
 // Saturates a native integer to the destination schema field's storage range before
 // narrowing. Wide bounds keep signed inputs comparable with unsigned field limits.

@@ -306,6 +306,8 @@ struct VoxRlCapture::Segment
 	// Tracks the serialized WORLD value so REQUEST emits only native game-state changes.
 	WorldGameStateRecord lastGameState;
 	VoxRlPlayerCitySnapshot playerCitySnapshot;
+	std::vector<TradeConnectionRecord> lastTradeConnections;
+	std::vector<TradePathPlotRecord> lastTradePathPlots;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
 	// Latest native healing result for each serialized unit. ActualHealRate depends on
@@ -533,6 +535,7 @@ namespace
 			data.requestPlayerSavingsReplacements.size() + data.requestPlayerSavingsRows.size() +
 			data.requestPlayerRelationReplacements.size() + data.requestPlayerRelationRows.size() +
 			data.requestPlayerFlavorReplacements.size() + data.requestPlayerFlavorRows.size() +
+			data.requestCityConnectionReplacements.size() + data.requestCityConnectionRows.size() +
 			data.requestCityPurchaseCostReplacements.size() + data.requestCityPurchaseCostRows.size() +
 			data.requestCityFreePromotionReplacements.size() + data.requestCityFreePromotionRows.size() +
 			data.requestVisibilityWords.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
@@ -1580,6 +1583,15 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 		const u8* gameBytes = worldView.SectionBytes(VOX_RL_SECTION_WORLD_GAME_STATE);
 		if (gameBytes == NULL) return false;
 		std::memcpy(&segment.lastGameState, gameBytes, sizeof(segment.lastGameState));
+		const VoxRlSectionDirectoryEntry* tradeRoutes = worldView.FindSection(VOX_RL_SECTION_WORLD_TRADE_CONNECTIONS);
+		const VoxRlSectionDirectoryEntry* tradePaths = worldView.FindSection(VOX_RL_SECTION_WORLD_TRADE_PATH_PLOTS);
+		if (tradeRoutes == NULL || tradePaths == NULL) return false;
+		segment.lastTradeConnections.resize(tradeRoutes->count);
+		segment.lastTradePathPlots.resize(tradePaths->count);
+		if (tradeRoutes->count != 0U)
+			std::memcpy(&segment.lastTradeConnections[0], worldView.SectionBytes(VOX_RL_SECTION_WORLD_TRADE_CONNECTIONS), tradeRoutes->count * sizeof(TradeConnectionRecord));
+		if (tradePaths->count != 0U)
+			std::memcpy(&segment.lastTradePathPlots[0], worldView.SectionBytes(VOX_RL_SECTION_WORLD_TRADE_PATH_PLOTS), tradePaths->count * sizeof(TradePathPlotRecord));
 		const VoxRlSectionDirectoryEntry* players = worldView.FindSection(VOX_RL_SECTION_WORLD_PLAYERS);
 		const u32 playerCount = players == NULL ? 0U : players->count;
 		const u8* playerBytes = playerCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_PLAYERS);
@@ -3111,6 +3123,25 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestCityAttackCountReplacements.push_back(replacement);
 	}
 
+	VoxRlRequestData currentTrade;
+	if (!VoxRlCollectRequestTrade(currentTrade)) valid = false;
+	else if (sizeof(TradeConnectionRecord) != sizeof(RequestTradeConnectionRecord) ||
+		sizeof(TradePathPlotRecord) != sizeof(RequestTradePathPlotRecord)) valid = false;
+	else
+	{
+		std::vector<TradeConnectionRecord> routes(currentTrade.requestTradeConnections.size());
+		std::vector<TradePathPlotRecord> paths(currentTrade.requestTradePathPlots.size());
+		if (!routes.empty()) std::memcpy(&routes[0], &currentTrade.requestTradeConnections[0], routes.size() * sizeof(TradeConnectionRecord));
+		if (!paths.empty()) std::memcpy(&paths[0], &currentTrade.requestTradePathPlots[0], paths.size() * sizeof(TradePathPlotRecord));
+		if (!SameRows(routes, segment.lastTradeConnections) || !SameRows(paths, segment.lastTradePathPlots))
+		{
+			data.requestTradeRoster.swap(currentTrade.requestTradeRoster);
+			data.requestTradeConnections.swap(currentTrade.requestTradeConnections);
+			data.requestTradePathPlots.swap(currentTrade.requestTradePathPlots);
+			segment.lastTradeConnections.swap(routes);
+			segment.lastTradePathPlots.swap(paths);
+		}
+	}
 	// Pending danger events carry their event-time board in this request.
 	data.requestDangerEvents = segment.pendingDangerEvents;
 	// Military events may have occurred outside the observer's segment.

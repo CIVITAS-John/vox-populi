@@ -459,6 +459,8 @@ public:
 	void DoUpdateCityConnectionHappiness();
 	bool UpdateCityConnection(const CvPlot* pPlot, bool bActive, bool bIndustrial);
 	bool IsCityConnectionPlot(const CvPlot* pPlot, bool bIndustrial) const;
+	// Vox Deorum: expose the native connection set to military recording without rebuilding routes.
+	const std::vector<int>& VoxRlGetCityConnectionPlots() const { return m_vCityConnectionPlots; }
 
 	// Culture
 	int GetTotalJONSCulturePerTurnTimes100(CvString* toolTipSink = NULL) const;

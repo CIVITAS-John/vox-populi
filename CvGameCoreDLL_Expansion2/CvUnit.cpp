@@ -6407,6 +6407,12 @@ bool CvUnit::isProjectedToDieNextTurn() const
 	return m_iDamageTakenLastTurn>GetCurrHitPoints();
 }
 
+// Vox Deorum: Exposes the current owner-turn damage accumulator to military capture.
+int CvUnit::GetDamageTakenThisTurn() const
+{
+	return m_iDamageTakenThisTurn;
+}
+
 int CvUnit::GetDamageTakenLastTurn() const
 {
 	return m_iDamageTakenLastTurn;

@@ -17,6 +17,7 @@
 #include "CvMilitaryAI.h"
 #include "CvTacticalAnalysisMap.h"
 #include "CvTechClasses.h"
+#include "CvTradeClasses.h"
 #include "CvReligionClasses.h"
 
 #include <algorithm>
@@ -24,6 +25,89 @@
 #include <set>
 #include <string>
 #include <vector>
+
+// Copies one native trade connection's scalar state into either WORLD or REQUEST row.
+template <typename Row>
+void VoxRlAssignTradeConnection(Row& row, const TradeConnection& native)
+{
+	row.id = native.m_iID;
+	row.unitId = native.m_unitID;
+	row.originOwner = static_cast<i8>(native.m_eOriginOwner);
+	row.originCityId = native.m_iOriginID;
+	row.destOwner = static_cast<i8>(native.m_eDestOwner);
+	row.destCityId = native.m_iDestID;
+	row.domain = static_cast<i8>(native.m_eDomain);
+	row.locationIndex = native.m_iTradeUnitLocationIndex;
+	row.setMovingForward(native.m_bTradeUnitMovingForward);
+	row.speedFactor = native.m_iSpeedFactor;
+	row.ownerRouteSpeed = GET_PLAYER(native.m_eOriginOwner).GetTrade()->GetTradeRouteSpeed(native.m_eDomain);
+	row.circuitsCompleted = native.m_iCircuitsCompleted;
+	row.circuitsToComplete = native.m_iCircuitsToComplete;
+	row.setRecalled(native.m_bTradeUnitRecalled);
+}
+
+// Resolves one native trade path to portable plot indices in native order.
+template <typename Row>
+bool VoxRlCollectTradePath(const TradeConnection& native, std::vector<Row>& path)
+{
+	for (size_t index = 0; index < native.m_aPlotList.size(); ++index)
+	{
+		const TradeConnectionPlot& nativePlot = native.m_aPlotList[index];
+		CvPlot* plot = GC.getMap().plot(nativePlot.m_iX, nativePlot.m_iY);
+		if (plot == NULL || plot->GetPlotIndex() < 0 || plot->GetPlotIndex() > 32767) return false;
+		Row row;
+		std::memset(&row, 0, sizeof(row));
+		row.plotIndex = static_cast<i16>(plot->GetPlotIndex());
+		path.push_back(row);
+	}
+	return path.size() >= 2U;
+}
+
+// Captures every active native route and its fixed path for a WORLD checkpoint.
+bool VoxRlCollectWorldTrade(VoxRlWorldData& data)
+{
+	CvGameTrade* trade = GC.getGame().GetGameTrade();
+	if (trade == NULL) return false;
+	for (size_t index = 0; index < trade->GetNumTradeConnections(); ++index)
+	{
+		const TradeConnection& native = trade->GetTradeConnection(index);
+		if (trade->IsTradeRouteIndexEmpty(static_cast<int>(index)) || !native.isValid()) continue;
+		TradeConnectionRecord row;
+		std::memset(&row, 0, sizeof(row));
+		VoxRlAssignTradeConnection(row, native);
+		std::vector<TradePathPlotRecord> path;
+		if (!VoxRlCollectTradePath(native, path) ||
+			!AppendTradeConnectionRecordPathRange(&row, &data, path)) return false;
+		data.worldTradeConnections.push_back(row);
+	}
+	return true;
+}
+
+// Captures a complete trade roster replacement for a REQUEST checkpoint.
+bool VoxRlCollectRequestTrade(VoxRlRequestData& data)
+{
+	if (!data.requestTradeRoster.empty()) return true;
+	CvGameTrade* trade = GC.getGame().GetGameTrade();
+	if (trade == NULL) return false;
+	std::vector<RequestTradeConnectionRecord> routes;
+	for (size_t index = 0; index < trade->GetNumTradeConnections(); ++index)
+	{
+		const TradeConnection& native = trade->GetTradeConnection(index);
+		if (trade->IsTradeRouteIndexEmpty(static_cast<int>(index)) || !native.isValid()) continue;
+		RequestTradeConnectionRecord row;
+		std::memset(&row, 0, sizeof(row));
+		VoxRlAssignTradeConnection(row, native);
+		std::vector<RequestTradePathPlotRecord> path;
+		if (!VoxRlCollectTradePath(native, path) ||
+			!AppendRequestTradeConnectionRecordPathRange(&row, &data, path)) return false;
+		routes.push_back(row);
+	}
+	RequestTradeRosterRecord roster;
+	std::memset(&roster, 0, sizeof(roster));
+	if (!AppendRequestTradeRosterRecordRouteRange(&roster, &data, routes)) return false;
+	data.requestTradeRoster.push_back(roster);
+	return true;
+}
 
 namespace
 {
@@ -102,21 +186,6 @@ namespace
 				players.push_back(static_cast<PlayerTypes>(player));
 			}
 		}
-	}
-
-	// Returns the largest value in a live unit's yield-indexed kill bonus
-	// array, using the lowercase native unit accessors.
-	int MaxYieldFromKills(const CvUnit& source, bool barbarian)
-	{
-		int maximum = 0;
-		for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
-		{
-			const int value = barbarian
-				? source.getYieldFromBarbarianKills(static_cast<YieldTypes>(yield))
-				: source.getYieldFromKills(static_cast<YieldTypes>(yield));
-			if (value > maximum) maximum = value;
-		}
-		return maximum;
 	}
 
 	// Checks and assigns one signed sixteen-bit field without hiding an invalid
@@ -275,21 +344,6 @@ namespace
 		return true;
 	}
 
-}
-
-// Returns the largest value in an immutable unit entry's yield-indexed kill
-// bonus array for the generated native-info collector.
-int VoxRlMaxUnitEntryYieldFromKills(const CvUnitEntry& source, bool barbarian)
-{
-	int maximum = 0;
-	for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
-	{
-		const int value = barbarian
-			? source.GetYieldFromBarbarianKills(static_cast<YieldTypes>(yield))
-			: source.GetYieldFromKills(static_cast<YieldTypes>(yield));
-		if (value > maximum) maximum = value;
-	}
-	return maximum;
 }
 
 // Reports one capture conversion or row the wire contract rejected. The generated
@@ -658,8 +712,11 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 	// generated collector's guards for other unit fields.
 	if (GC.getNumTerrainInfos() > VoxRlTerrainCapacity ||
 		GC.getNumFeatureInfos() > VoxRlFeatureCapacity) return false;
-	VoxRlAssignClamped(row.yieldFromKills, MaxYieldFromKills(unit, false));
-	VoxRlAssignClamped(row.yieldFromBarbarianKills, MaxYieldFromKills(unit, true));
+	for (int yield = 0; yield < NUM_YIELD_TYPES && yield < 32; ++yield)
+	{
+		VoxRlAssignClamped(row.yieldFromKills[yield], unit.getYieldFromKills(static_cast<YieldTypes>(yield)));
+		VoxRlAssignClamped(row.yieldFromBarbarianKills[yield], unit.getYieldFromBarbarianKills(static_cast<YieldTypes>(yield)));
+	}
 	// The promotion passability tables pack one bit per terrain or feature index.
 	row.setHasAllowTerrainPassable(unit.GetPromotions().HasAllowTerrainPassable());
 	if (row.hasAllowTerrainPassable())
@@ -936,6 +993,16 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 	{
 		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
 		if (!player.isAlive() && playerIndex != BARBARIAN_PLAYER) continue;
+		const std::vector<int>& connectionPlots = player.VoxRlGetCityConnectionPlots();
+		for (size_t index = 0; index < connectionPlots.size(); ++index)
+		{
+			CityConnectionPlotRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.plotIndex, connectionPlots[index],
+				"CityConnectionPlotRecord", "plotIndex", 0)) return false;
+			snapshot.cityConnectionPlots.push_back(row);
+		}
 		// Match HasSpecialUnitUpgrade's active-trait union without probing every class/type pair.
 		// Activation remains live because beliefs, policies, and technologies can change it.
 		CvPlayerTraits* traits = player.GetPlayerTraits();
@@ -1150,6 +1217,13 @@ namespace
 
 	// Reads the player owning a PlayerStrategicMonopoly row.
 	int ChildRowOwner(const PlayerStrategicMonopolyRecord& row) { return row.player; }
+	// Reads the player owning a city connection plot.
+	int ChildRowOwner(const CityConnectionPlotRecord& row) { return row.player; }
+	// Sets the player for a complete city connection replacement.
+	void SetChildReplacementOwner(RequestCityConnectionReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Copies one captured connection member into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const CityConnectionPlotRecord& source, RequestCityConnectionRowRecord& row)
+	{ row.plotIndex = source.plotIndex; }
 	// Sets the player for a complete PlayerStrategicMonopoly replacement.
 	void SetChildReplacementOwner(RequestPlayerStrategicMonopolyReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
 	// Copies a PlayerStrategicMonopoly input into its owner-qualified REQUEST row.
@@ -1250,6 +1324,9 @@ bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 	if (!AppendChangedChildFamily(baseline.playerStrategicMonopolies, current.playerStrategicMonopolies,
 		playerOwners, data.requestPlayerStrategicMonopolyReplacements, data,
 		&AppendRequestPlayerStrategicMonopolyReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.cityConnectionPlots, current.cityConnectionPlots,
+		playerOwners, data.requestCityConnectionReplacements, data,
+		&AppendRequestCityConnectionReplacementRecordRowRange)) valid = false;
 	if (!AppendChangedChildFamily(baseline.cityHealingYields, current.cityHealingYields,
 		cityOwners, data.requestCityHealingYieldReplacements, data,
 		&AppendRequestCityHealingYieldReplacementRecordRowRange)) valid = false;
@@ -1814,6 +1891,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	if (!VoxRlCollectPlayerCitySnapshot(playerCityState)) valid = false;
 	data.worldPlayerGreatPersons = playerCityState.playerGreatPersons;
 	data.worldPlayerStrategicMonopolies = playerCityState.playerStrategicMonopolies;
+	data.worldCityConnectionPlots = playerCityState.cityConnectionPlots;
 	data.worldCityHealingYields = playerCityState.cityHealingYields;
 	data.worldCityPurchaseCosts = playerCityState.cityPurchaseCosts;
 	data.worldCityFreePromotions = playerCityState.cityFreePromotions;
@@ -1822,6 +1900,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldPlayerSavings = playerCityState.playerSavings;
 	data.worldPlayerRelations = playerCityState.playerRelations;
 	data.worldPlayerFlavors = playerCityState.playerFlavors;
+	if (!VoxRlCollectWorldTrade(data)) valid = false;
 	if (timings != NULL) timings->cityCount = static_cast<unsigned int>(data.worldCities.size());
 	entityRelationTiming.Stop();
 	if (!valid) return false;
