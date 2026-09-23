@@ -46,6 +46,15 @@ void VoxRlAssignTradeConnection(Row& row, const TradeConnection& native)
 	row.setRecalled(native.m_bTradeUnitRecalled);
 }
 
+// Records a rejected route path without discarding other captured routes.
+void VoxRlNoteTradePathFailure(const TradeConnection& native, const char* reason, size_t pathIndex)
+{
+	FILogFile* log = LOGFILEMGR.GetLog("VoxRlCapture.log", FILogFile::kDontTimeStamp);
+	if (log != NULL)
+		log->Msg("Skipping trade route %d: %s at path index %u.\n",
+			native.m_iID, reason, static_cast<unsigned int>(pathIndex));
+}
+
 // Resolves one native trade path to portable plot indices in native order.
 template <typename Row>
 bool VoxRlCollectTradePath(const TradeConnection& native, std::vector<Row>& path)
@@ -54,13 +63,24 @@ bool VoxRlCollectTradePath(const TradeConnection& native, std::vector<Row>& path
 	{
 		const TradeConnectionPlot& nativePlot = native.m_aPlotList[index];
 		CvPlot* plot = GC.getMap().plot(nativePlot.m_iX, nativePlot.m_iY);
-		if (plot == NULL || plot->GetPlotIndex() < 0 || plot->GetPlotIndex() > 32767) return false;
+		if (plot == NULL)
+		{
+			VoxRlNoteTradePathFailure(native, "plot lookup failed", index);
+			return false;
+		}
+		if (plot->GetPlotIndex() < 0 || plot->GetPlotIndex() > 32767)
+		{
+			VoxRlNoteTradePathFailure(native, "plot index exceeds the wire range", index);
+			return false;
+		}
 		Row row;
 		std::memset(&row, 0, sizeof(row));
 		row.plotIndex = static_cast<i16>(plot->GetPlotIndex());
 		path.push_back(row);
 	}
-	return path.size() >= 2U;
+	if (path.size() >= 2U) return true;
+	VoxRlNoteTradePathFailure(native, "path has fewer than two plots", path.size());
+	return false;
 }
 
 // Captures every active native route and its fixed path for a WORLD checkpoint.
@@ -76,8 +96,8 @@ bool VoxRlCollectWorldTrade(VoxRlWorldData& data)
 		std::memset(&row, 0, sizeof(row));
 		VoxRlAssignTradeConnection(row, native);
 		std::vector<TradePathPlotRecord> path;
-		if (!VoxRlCollectTradePath(native, path) ||
-			!AppendTradeConnectionRecordPathRange(&row, &data, path)) return false;
+		if (!VoxRlCollectTradePath(native, path)) continue;
+		if (!AppendTradeConnectionRecordPathRange(&row, &data, path)) return false;
 		data.worldTradeConnections.push_back(row);
 	}
 	return true;
@@ -98,8 +118,8 @@ bool VoxRlCollectRequestTrade(VoxRlRequestData& data)
 		std::memset(&row, 0, sizeof(row));
 		VoxRlAssignTradeConnection(row, native);
 		std::vector<RequestTradePathPlotRecord> path;
-		if (!VoxRlCollectTradePath(native, path) ||
-			!AppendRequestTradeConnectionRecordPathRange(&row, &data, path)) return false;
+		if (!VoxRlCollectTradePath(native, path)) continue;
+		if (!AppendRequestTradeConnectionRecordPathRange(&row, &data, path)) return false;
 		routes.push_back(row);
 	}
 	RequestTradeRosterRecord roster;

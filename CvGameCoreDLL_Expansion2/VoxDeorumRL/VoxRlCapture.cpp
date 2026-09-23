@@ -104,6 +104,30 @@ namespace
 			std::memcmp(&left[0], &right[0], left.size() * sizeof(Record)) == 0);
 	}
 
+	// Checks paired trade row sizes in the DLL's C++03 build.
+	typedef char VoxRlAssertTradeConnectionMirror[
+		(sizeof(TradeConnectionRecord) == sizeof(RequestTradeConnectionRecord)) ? 1 : -1];
+	typedef char VoxRlAssertTradePathMirror[
+		(sizeof(TradePathPlotRecord) == sizeof(RequestTradePathPlotRecord)) ? 1 : -1];
+
+	// Emits the complete trade roster when routes or their fixed paths changed.
+	bool AppendChangedTradeRoster(VoxRlRequestData& current,
+		std::vector<TradeConnectionRecord>& lastRoutes,
+		std::vector<TradePathPlotRecord>& lastPaths, VoxRlRequestData& data)
+	{
+		std::vector<TradeConnectionRecord> routes(current.requestTradeConnections.size());
+		std::vector<TradePathPlotRecord> paths(current.requestTradePathPlots.size());
+		if (!routes.empty()) std::memcpy(&routes[0], &current.requestTradeConnections[0], routes.size() * sizeof(TradeConnectionRecord));
+		if (!paths.empty()) std::memcpy(&paths[0], &current.requestTradePathPlots[0], paths.size() * sizeof(TradePathPlotRecord));
+		if (SameRows(routes, lastRoutes) && SameRows(paths, lastPaths)) return false;
+		data.requestTradeRoster.swap(current.requestTradeRoster);
+		data.requestTradeConnections.swap(current.requestTradeConnections);
+		data.requestTradePathPlots.swap(current.requestTradePathPlots);
+		lastRoutes.swap(routes);
+		lastPaths.swap(paths);
+		return true;
+	}
+
 	// Appends a coupled city and resource replacement when either snapshot changed.
 	bool AppendChangedCityReplacement(const VoxRlEntityKey& key,
 		const RequestDeltaCityRecord& city, const std::vector<RequestCityResourceRecord>& resources,
@@ -536,6 +560,8 @@ namespace
 			data.requestPlayerRelationReplacements.size() + data.requestPlayerRelationRows.size() +
 			data.requestPlayerFlavorReplacements.size() + data.requestPlayerFlavorRows.size() +
 			data.requestCityConnectionReplacements.size() + data.requestCityConnectionRows.size() +
+			data.requestTradeRoster.size() + data.requestTradeConnections.size() +
+			data.requestTradePathPlots.size() +
 			data.requestCityPurchaseCostReplacements.size() + data.requestCityPurchaseCostRows.size() +
 			data.requestCityFreePromotionReplacements.size() + data.requestCityFreePromotionRows.size() +
 			data.requestVisibilityWords.size() + data.requestVisibilityResets.size() + data.requestRevealedOverrideUpserts.size() +
@@ -3125,23 +3151,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 
 	VoxRlRequestData currentTrade;
 	if (!VoxRlCollectRequestTrade(currentTrade)) valid = false;
-	else if (sizeof(TradeConnectionRecord) != sizeof(RequestTradeConnectionRecord) ||
-		sizeof(TradePathPlotRecord) != sizeof(RequestTradePathPlotRecord)) valid = false;
-	else
-	{
-		std::vector<TradeConnectionRecord> routes(currentTrade.requestTradeConnections.size());
-		std::vector<TradePathPlotRecord> paths(currentTrade.requestTradePathPlots.size());
-		if (!routes.empty()) std::memcpy(&routes[0], &currentTrade.requestTradeConnections[0], routes.size() * sizeof(TradeConnectionRecord));
-		if (!paths.empty()) std::memcpy(&paths[0], &currentTrade.requestTradePathPlots[0], paths.size() * sizeof(TradePathPlotRecord));
-		if (!SameRows(routes, segment.lastTradeConnections) || !SameRows(paths, segment.lastTradePathPlots))
-		{
-			data.requestTradeRoster.swap(currentTrade.requestTradeRoster);
-			data.requestTradeConnections.swap(currentTrade.requestTradeConnections);
-			data.requestTradePathPlots.swap(currentTrade.requestTradePathPlots);
-			segment.lastTradeConnections.swap(routes);
-			segment.lastTradePathPlots.swap(paths);
-		}
-	}
+	else AppendChangedTradeRoster(currentTrade, segment.lastTradeConnections,
+		segment.lastTradePathPlots, data);
 	// Pending danger events carry their event-time board in this request.
 	data.requestDangerEvents = segment.pendingDangerEvents;
 	// Military events may have occurred outside the observer's segment.
