@@ -48,6 +48,9 @@ bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 // Collects generated player fields and the at-war strategy bit.
 bool VoxRlCollectPlayerRecord(class CvPlayer& player, PlayerTypes capturingPlayer, PlayerRecord& row);
 
+// Returns native military-support units omitted from the live unit rows.
+int VoxRlMilitaryUnitCountCorrection(class CvPlayer& player);
+
 // Returns the largest yield-indexed kill bonus for one immutable unit entry.
 int VoxRlMaxUnitEntryYieldFromKills(const CvUnitEntry& source, bool barbarian);
 

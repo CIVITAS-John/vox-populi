@@ -2444,7 +2444,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	WorldGameStateRecord gameState;
 	std::memset(&gameState, 0, sizeof(gameState));
 	gameState.gameState = static_cast<i32>(GC.getGame().getGameState());
-	VoxRlAssignClamped(gameState.elapsedGameTurns, GC.getGame().getElapsedGameTurns());
+	VoxRlAssignClamped(gameState.elapsedGameTurns, GC.getGame().getGameTurn());
 	VoxRlAssignClamped(gameState.maxTurns, GC.getGame().getMaxTurns());
 	VoxRlAssignClamped(gameState.currentEra, GC.getGame().getCurrentEra());
 	if (std::memcmp(&gameState, &segment.lastGameState, sizeof(gameState)) != 0)

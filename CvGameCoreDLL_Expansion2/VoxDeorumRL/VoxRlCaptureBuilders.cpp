@@ -1259,6 +1259,17 @@ bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 	return valid;
 }
 
+// Counts native military-support units that the live unit-row filter omits.
+int VoxRlMilitaryUnitCountCorrection(CvPlayer& player)
+{
+	int capturedCount = 0;
+	int loop = 0;
+	for (CvUnit* unit = player.firstUnit(&loop); unit != NULL; unit = player.nextUnit(&loop))
+		if (!unit->isDelayedDeath() && unit->plot() != NULL && unit->getUnitInfo().IsMilitarySupport())
+			++capturedCount;
+	return player.getNumMilitaryUnits() - capturedCount;
+}
+
 // Collects one player row, including the military strategy used by purchases.
 bool VoxRlCollectPlayerRecord(CvPlayer& player, PlayerTypes capturingPlayer, PlayerRecord& row)
 {
@@ -1435,7 +1446,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	const TeamTypes capturingTeam = capturing.getTeam();
 	VoxRlWorldData data;
 	data.worldGameState.gameState = static_cast<i32>(GC.getGame().getGameState());
-	VoxRlAssignClamped(data.worldGameState.elapsedGameTurns, GC.getGame().getElapsedGameTurns());
+	VoxRlAssignClamped(data.worldGameState.elapsedGameTurns, GC.getGame().getGameTurn());
 	VoxRlAssignClamped(data.worldGameState.maxTurns, GC.getGame().getMaxTurns());
 	VoxRlAssignClamped(data.worldGameState.currentEra, GC.getGame().getCurrentEra());
 	std::vector<TeamTypes> aliveTeams;
@@ -1840,10 +1851,6 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		capturing.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
 			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
 		header.militaryFlavors);
-	VoxRlAssignClamped(header.numLandUnits, military->GetNumLandUnits());
-	VoxRlAssignClamped(header.numNavalUnits, military->GetNumNavalUnits());
-	VoxRlAssignClamped(header.numLandUnitsInArmies, military->GetNumLandUnitsInArmies());
-	VoxRlAssignClamped(header.numNavalUnitsInArmies, military->GetNumNavalUnitsInArmies());
 	VoxRlAssignClamped(header.recommendedLandUnits, military->GetRecommendedLandUnits());
 	VoxRlAssignClamped(header.recommendedNavalUnits, military->GetRecommendedNavalUnits());
 	VoxRlAssignClamped(header.recommendedExplorerUnits, military->GetRecommendedExplorerUnits());
