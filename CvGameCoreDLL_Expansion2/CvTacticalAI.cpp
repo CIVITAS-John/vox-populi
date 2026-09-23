@@ -528,8 +528,9 @@ void CvTacticalAI::FindTacticalTargets()
 						//barbarians do not attack civilians before the first city was founded.
 						if (!m_pPlayer->isBarbarian() || GET_PLAYER(pUnit->getOwner()).GetNumCitiesFounded() > 0)
 						{
-							newTarget.SetTargetType(IsHighPriorityCivilianTarget(&newTarget) ? AI_TACTICAL_TARGET_HIGH_PRIORITY_CIVILIAN : AI_TACTICAL_TARGET_LOW_PRIORITY_CIVILIAN);
+							// Vox Deorum: classify the current civilian rather than the previous target unit.
 							newTarget.SetUnitPtr(pUnit);
+							newTarget.SetTargetType(IsHighPriorityCivilianTarget(&newTarget) ? AI_TACTICAL_TARGET_HIGH_PRIORITY_CIVILIAN : AI_TACTICAL_TARGET_LOW_PRIORITY_CIVILIAN);
 							newTarget.SetAuxIntData(25);
 							m_AllTargets.push_back(newTarget);
 						}
