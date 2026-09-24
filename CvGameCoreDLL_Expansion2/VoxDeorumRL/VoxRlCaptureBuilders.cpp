@@ -5,6 +5,7 @@
 #include "VoxDeorumRL/VoxRlCaptureBuilders.h"
 #include "schema/VoxRlCollectors.generated.h"
 #include "schema/MilitaryFlavors.h"
+#include "schema/MissionIdentities.h"
 
 #include "VoxDeorumRL/VoxRlCapture.h"
 #include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
@@ -1386,6 +1387,12 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	ZeroRecord(data.staticRules);
 	if (!CollectStaticRulesRecord(data.staticRules)) valid = false;
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
+	// Stores each native mission identity at its shared STATIC slot.
+#define VOX_RL_CAPTURE_MISSION_IDENTITY(name) \
+	if (!AssignCheckedI16(data.staticRules.missionTypes[kMissionIdentity_##name], \
+		static_cast<int>(CvTypes::getMISSION_##name()), "StaticRulesRecord", "missionTypes")) valid = false;
+	VOX_RL_MISSION_IDENTITIES(VOX_RL_CAPTURE_MISSION_IDENTITY)
+#undef VOX_RL_CAPTURE_MISSION_IDENTITY
 	for (int flavor = 0; flavor < GC.getNumFlavorTypes(); ++flavor)
 	{
 		const CvString& name = GC.getFlavorTypes(static_cast<FlavorTypes>(flavor));
