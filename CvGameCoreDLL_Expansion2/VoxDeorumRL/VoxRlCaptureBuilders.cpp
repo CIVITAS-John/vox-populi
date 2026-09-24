@@ -20,6 +20,7 @@
 #include "CvTechClasses.h"
 #include "CvTradeClasses.h"
 #include "CvReligionClasses.h"
+#include "CvTypes.h"
 
 #include <algorithm>
 #include <map>
