@@ -138,11 +138,11 @@ inline bool VoxRlEncodeCityToken(int owner, int id, const std::map<VoxRlCityKey,
 }
 
 // Encodes one optional plot reference into its sixteen-bit wire field; -1 marks absence
-// and any value outside the plot domain fails with a diagnostic instead of truncating.
-inline bool VoxRlEncodeOptionalPlotIndex(int source, short* out, VoxRlFieldRangeFailure* failure)
+// and any value outside the plot domain fails with a diagnostic naming the record instead of truncating.
+inline bool VoxRlEncodeOptionalPlotIndex(int source, short* out, const char* record, VoxRlFieldRangeFailure* failure)
 {
 	if (source < -1 || source > 32767)
-		return VoxRlFailFieldRange(failure, "range", "CampaignAttackTargetRecord", "plotIndex", source, -1, 32767);
+		return VoxRlFailFieldRange(failure, "range", record, "plotIndex", source, -1, 32767);
 	*out = static_cast<short>(source);
 	return true;
 }

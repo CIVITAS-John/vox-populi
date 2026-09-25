@@ -1986,17 +1986,17 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		// The three plot references carry the optional -1 sentinel; the checked
 		// conversion rejects anything outside the sixteen-bit plot domain.
 		VoxRlFieldRangeFailure plotFailure;
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iMusterPlotIndex, &row.musterPlotIndex, &plotFailure))
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iMusterPlotIndex, &row.musterPlotIndex, "CampaignAttackTargetRecord", &plotFailure))
 		{
 			VoxRlNoteSplitFailure(plotFailure);
 			valid = false;
 		}
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iStagingPlotIndex, &row.stagingPlotIndex, &plotFailure))
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iStagingPlotIndex, &row.stagingPlotIndex, "CampaignAttackTargetRecord", &plotFailure))
 		{
 			VoxRlNoteSplitFailure(plotFailure);
 			valid = false;
 		}
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iTargetPlotIndex, &row.targetPlotIndex, &plotFailure))
+		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iTargetPlotIndex, &row.targetPlotIndex, "CampaignAttackTargetRecord", &plotFailure))
 		{
 			VoxRlNoteSplitFailure(plotFailure);
 			valid = false;
@@ -2012,10 +2012,19 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	{
 		CampaignExposedCityRecord row;
 		ZeroRecord(row);
-		CvPlot* plot = GC.getMap().plotByIndex(exposedCities[index].m_iTargetPlotIndex);
-		CvCity* city = plot != NULL ? plot->getPlotCity() : NULL;
-		row.cityOwner = city != NULL ? static_cast<i8>(city->getOwner()) : static_cast<i8>(-1);
-		row.cityId = city != NULL ? static_cast<i32>(city->GetID()) : static_cast<i32>(-1);
+		// Native IsExposedToEnemy reads the army type, the muster plot owner, and the target plot.
+		row.armyType = static_cast<i8>(exposedCities[index].m_armyType);
+		VoxRlFieldRangeFailure plotFailure;
+		if (!VoxRlEncodeOptionalPlotIndex(exposedCities[index].m_iMusterPlotIndex, &row.musterPlotIndex, "CampaignExposedCityRecord", &plotFailure))
+		{
+			VoxRlNoteSplitFailure(plotFailure);
+			valid = false;
+		}
+		if (!VoxRlEncodeOptionalPlotIndex(exposedCities[index].m_iTargetPlotIndex, &row.targetPlotIndex, "CampaignExposedCityRecord", &plotFailure))
+		{
+			VoxRlNoteSplitFailure(plotFailure);
+			valid = false;
+		}
 		exposedRows.push_back(row);
 	}
 	if (!AppendCampaignHeaderRecordExposedCityRange(&data, exposedRows)) valid = false;
