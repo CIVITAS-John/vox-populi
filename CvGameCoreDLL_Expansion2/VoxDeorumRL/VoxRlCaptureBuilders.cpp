@@ -20,6 +20,7 @@
 #include "CvTechClasses.h"
 #include "CvTradeClasses.h"
 #include "CvReligionClasses.h"
+#include "CvPromotionClasses.h"
 #include "CvTypes.h"
 
 #include <algorithm>
@@ -1437,6 +1438,8 @@ int VoxRlMilitaryUnitCountCorrection(CvPlayer& player)
 bool VoxRlCollectPlayerRecord(CvPlayer& player, PlayerTypes capturingPlayer, PlayerRecord& row)
 {
 	if (!CollectPlayerRecord(player, capturingPlayer, row)) return false;
+	const int needAirStrategy = GC.getInfoTypeForString("MILITARYAISTRATEGY_NEED_AIR", true);
+	row.militaryNeedAirStrategy = needAirStrategy >= 0 && player.GetMilitaryAI()->IsUsingStrategy(static_cast<MilitaryAIStrategyTypes>(needAirStrategy));
 	const int atWarStrategy = GC.getInfoTypeForString("MILITARYAISTRATEGY_AT_WAR", true);
 	row.militaryAtWarStrategy = atWarStrategy >= 0 &&
 		player.GetMilitaryAI()->IsUsingStrategy(static_cast<MilitaryAIStrategyTypes>(atWarStrategy)) ? 1 : 0;
@@ -1485,6 +1488,47 @@ static bool VoxRlCollectUnitEraRows(const CvUnitEntry& unit, int unitType, VoxRl
 				!AssignCheckedI16(row.era, era, "UnitEraPromotionRecord", "era", 0)) valid = false;
 			data.staticUnitEraPromotions.push_back(row);
 		}
+	return valid;
+}
+
+// Captures every raw promotion plague and incompatibility row in native container order.
+static bool VoxRlCollectPromotionChildRows(VoxRlStaticData& data)
+{
+	bool valid = true;
+	for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
+	{
+		const CvPromotionEntry* info = GC.getPromotionInfo(static_cast<PromotionTypes>(promotion));
+		if (info == NULL) continue;
+		const std::vector<PlagueInfo> plagues = info->GetPlagues();
+		for (size_t index = 0; index < plagues.size(); ++index)
+		{
+			const PlagueInfo& native = plagues[index];
+			PromotionPlagueRecord row;
+			ZeroRecord(row);
+			if (!AssignCheckedI16(row.promotion, promotion,
+				"PromotionPlagueRecord", "promotion", 0)) valid = false;
+			if (!AssignCheckedI16(row.plague, static_cast<int>(native.ePlague),
+				"PromotionPlagueRecord", "plague", 0)) valid = false;
+			if (!AssignCheckedI16(row.domain, static_cast<int>(native.eDomain),
+				"PromotionPlagueRecord", "domain", 0)) valid = false;
+			row.setOnAttack(native.bApplyOnAttack);
+			row.setOnDefense(native.bApplyOnDefense);
+			row.chance = native.iApplyChance;
+			data.staticPromotionPlagues.push_back(row);
+		}
+		const std::set<int> blockedPromotions = info->GetBlockedPromotions();
+		for (std::set<int>::const_iterator blocked = blockedPromotions.begin();
+			blocked != blockedPromotions.end(); ++blocked)
+		{
+			PromotionBlockedPromotionRecord row;
+			ZeroRecord(row);
+			if (!AssignCheckedI16(row.promotion, promotion,
+				"PromotionBlockedPromotionRecord", "promotion", 0)) valid = false;
+			if (!AssignCheckedI16(row.blockedPromotion, *blocked,
+				"PromotionBlockedPromotionRecord", "blockedPromotion", 0)) valid = false;
+			data.staticPromotionBlockedPromotions.push_back(row);
+		}
+	}
 	return valid;
 }
 
@@ -1542,6 +1586,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	}
 	if (!VoxRlCollectNativeInfoTables(data)) valid = false;
 	if (!VoxRlCollectPromotionTypeRows(data)) valid = false;
+	if (!VoxRlCollectPromotionChildRows(data)) valid = false;
 	ZeroRecord(data.staticBuildIds);
 	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) valid = false;
 	// Plot indices travel as signed sixteen-bit wire values, so only maps of one through
