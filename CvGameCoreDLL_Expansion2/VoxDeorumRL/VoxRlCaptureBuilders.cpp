@@ -1379,6 +1379,18 @@ bool VoxRlCollectPlayerRecord(CvPlayer& player, PlayerTypes capturingPlayer, Pla
 	return true;
 }
 
+// Reads the GOODY_GOLD row that the simulator pays for every goody hut. Native loads goody
+// rows from the GoodyHuts table on demand, so no CvGlobals accessor exists. A missing row
+// leaves the fields at zero.
+static void CollectGoodyGoldRules(StaticRulesRecord& rules)
+{
+	Database::Results kGoody;
+	if (!DB.SelectAt(kGoody, "GoodyHuts", "Type", "GOODY_GOLD") || !kGoody.Step()) return;
+	rules.goodyGoldAmount = kGoody.GetInt("Gold");
+	rules.goodyGoldNumRandRolls = kGoody.GetInt("NumGoldRandRolls");
+	rules.goodyGoldRandAmount = kGoody.GetInt("GoldRandAmount");
+}
+
 // Collects immutable native tables and topology for the generated STATIC builder.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
@@ -1388,6 +1400,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	ZeroRecord(data.staticRules);
 	if (!CollectStaticRulesRecord(data.staticRules)) valid = false;
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
+	CollectGoodyGoldRules(data.staticRules);
 	// Stores each native mission identity at its shared STATIC slot.
 #define VOX_RL_CAPTURE_MISSION_IDENTITY(name) \
 	if (!AssignCheckedI16(data.staticRules.missionTypes[kMissionIdentity_##name], \
