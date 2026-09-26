@@ -3674,8 +3674,8 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
     // iterationIndex has no generated assignment because its capture mode is builder.
     // Second owner-qualified CityRef component.
     out.id = static_cast<i32>(city.GetID());
-    // Garrison UnitRef ID or -1.
-    out.garrisonUnitId = static_cast<i32>(city.GetGarrisonedUnit() ? city.GetGarrisonedUnit()->GetID() : -1);
+    // Garrison UnitRef ID or -1; units awaiting deletion are absent from capture.
+    out.garrisonUnitId = static_cast<i32>(city.GetGarrisonedUnit() && !city.GetGarrisonedUnit()->isDelayedDeath() ? city.GetGarrisonedUnit()->GetID() : -1);
     // Requires the operational player and is non-const.
     out.economicValue = static_cast<i32>(city.getEconomicValue(capturingPlayer));
     // Current production process or -1 when none.
@@ -3947,9 +3947,9 @@ bool CollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecord& ou
     out.blockadedWaterAndLand = (city.IsBlockadedWaterAndLand()) ? 1 : 0;
     // Suppresses pillage healing on plots effectively owned by this city.
     out.localGainlessPillage = (city.IsLocalGainlessPillage()) ? 1 : 0;
-    // Garrison UnitRef owner or NO_PLAYER.
+    // Garrison UnitRef owner or NO_PLAYER; units awaiting deletion are absent from capture.
     {
-        const i32 checkedGarrisonOwner = static_cast<i32>(city.GetGarrisonedUnit() ? city.GetGarrisonedUnit()->getOwner() : NO_PLAYER);
+        const i32 checkedGarrisonOwner = static_cast<i32>(city.GetGarrisonedUnit() && !city.GetGarrisonedUnit()->isDelayedDeath() ? city.GetGarrisonedUnit()->getOwner() : NO_PLAYER);
         if (checkedGarrisonOwner < -128 || checkedGarrisonOwner > 127)
         {
             VoxRlNoteCaptureRangeFailure("range", "CityRecord", "garrisonOwner", checkedGarrisonOwner, -128, 127);
@@ -5372,7 +5372,7 @@ bool CollectRequestDeltaCityRecord(RequestDeltaCityRecord& out)
     // iterationIndex has no generated assignment because its capture mode is builder.
     // Second owner-qualified CityRef component.
     // id has no generated assignment because its capture mode is builder.
-    // Garrison UnitRef ID or -1.
+    // Garrison UnitRef ID or -1; units awaiting deletion are absent from capture.
     // garrisonUnitId has no generated assignment because its capture mode is builder.
     // Requires the operational player and is non-const.
     // economicValue has no generated assignment because its capture mode is builder.
@@ -5454,7 +5454,7 @@ bool CollectRequestDeltaCityRecord(RequestDeltaCityRecord& out)
     // blockadedWaterAndLand has no generated assignment because its capture mode is builder.
     // Suppresses pillage healing on plots effectively owned by this city.
     // localGainlessPillage has no generated assignment because its capture mode is builder.
-    // Garrison UnitRef owner or NO_PLAYER.
+    // Garrison UnitRef owner or NO_PLAYER; units awaiting deletion are absent from capture.
     // garrisonOwner has no generated assignment because its capture mode is builder.
     // Original capital flag.
     // originalCapital has no generated assignment because its capture mode is builder.

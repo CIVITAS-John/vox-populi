@@ -3813,23 +3813,13 @@ void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
 {
 	if (m_segment == NULL || m_segment->failed) return;
 	const VoxRlEntityKey key(static_cast<int>(eOwner), iUnitId);
-	// A garrisoned city names its unit, and native clears that reference lazily on the next
-	// query rather than when the unit dies. Marking the city here emits its fresh row in the
-	// same request as the removal, so the replica never keeps a garrison without a unit.
-	CvUnit* pRemoved = GET_PLAYER(eOwner).getUnit(iUnitId);
-	if (pRemoved != NULL)
+	// Refresh retained cities that last named this owner-qualified unit, even after native
+	// state has already removed the unit or cleared the reverse garrison link.
+	for (std::map<VoxRlEntityKey, RequestDeltaCityRecord>::const_iterator city = m_segment->lastCityRows.begin();
+		city != m_segment->lastCityRows.end(); ++city)
 	{
-		CvCity* pGarrisoned = pRemoved->GetGarrisonedCity();
-		if (pGarrisoned == NULL && pRemoved->plot() != NULL)
-		{
-			// The two sides of the link can disagree, so the city still needs a row when it
-			// names this unit even after the unit stopped naming the city.
-			CvCity* pPlotCity = pRemoved->plot()->getPlotCity();
-			if (pPlotCity != NULL && pPlotCity->GetGarrisonedUnit() == pRemoved) pGarrisoned = pPlotCity;
-		}
-		// A city already removed stays removed: the collection loop skips it.
-		if (pGarrisoned != NULL)
-			m_segment->dirtyCities.insert(VoxRlEntityKey(static_cast<int>(pGarrisoned->getOwner()), pGarrisoned->GetID()));
+		if (city->second.garrisonOwner == eOwner && city->second.garrisonUnitId == iUnitId)
+			m_segment->dirtyCities.insert(city->first);
 	}
 	m_segment->lastUnitActualHealRates.erase(key);
 	m_segment->dirtyUnits.erase(key);
