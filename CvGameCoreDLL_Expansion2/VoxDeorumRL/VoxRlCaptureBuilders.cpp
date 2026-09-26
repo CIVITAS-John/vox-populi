@@ -19,6 +19,7 @@
 #include "CvTacticalAnalysisMap.h"
 #include "CvTechClasses.h"
 #include "CvTradeClasses.h"
+#include "CvCorporationClasses.h"
 #include "CvReligionClasses.h"
 #include "CvPromotionClasses.h"
 #include "CvTypes.h"
@@ -47,6 +48,9 @@ void VoxRlAssignTradeConnection(Row& row, const TradeConnection& native)
 	row.circuitsCompleted = native.m_iCircuitsCompleted;
 	row.circuitsToComplete = native.m_iCircuitsToComplete;
 	row.setRecalled(native.m_bTradeUnitRecalled);
+	const CorporationTypes corporation = GET_PLAYER(native.m_eOriginOwner).GetCorporations()->GetFoundedCorporation();
+	const CvCorporationEntry* info = corporation != NO_CORPORATION ? GC.getCorporationInfo(corporation) : NULL;
+	row.setCorporationInvulnerable(info != NULL && info->IsTradeRoutesInvulnerable());
 }
 
 // Records a rejected route path without discarding other captured routes.
@@ -738,6 +742,7 @@ bool VoxRlCollectUnitRecord(CvUnit& unit, TeamTypes capturingTeam, UnitRecord& r
 	for (int yield = 0; yield < NUM_YIELD_TYPES && yield < 32; ++yield)
 	{
 		VoxRlAssignClamped(row.yieldFromKills[yield], unit.getYieldFromKills(static_cast<YieldTypes>(yield)));
+		VoxRlAssignClamped(row.yieldFromTRPlunder[yield], unit.getYieldFromTRPlunder(static_cast<YieldTypes>(yield)));
 		VoxRlAssignClamped(row.yieldFromBarbarianKills[yield], unit.getYieldFromBarbarianKills(static_cast<YieldTypes>(yield)));
 	}
 	// The promotion passability tables pack one bit per terrain or feature index.
@@ -1131,21 +1136,27 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.priority = savings[index].m_iPriority;
 			snapshot.playerSavings.push_back(row);
 		}
-		if (playerIndex < MAX_MAJOR_CIVS)
-			for (int other = 0; other < MAX_MAJOR_CIVS; ++other)
+		// Barbarian units also query their native ratings when considering pillage.
+		for (int other = 0; other < MAX_CIV_PLAYERS; ++other)
+		{
+			if (other == playerIndex ||
+				!GET_PLAYER(static_cast<PlayerTypes>(other)).isAlive()) continue;
+			PlayerRelationRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			row.otherPlayer = static_cast<i8>(other);
+			row.rawMilitaryStrengthComparedToUs = static_cast<i8>(player.GetDiplomacyAI()->GetRawMilitaryStrengthComparedToUs(static_cast<PlayerTypes>(other)));
+			row.rawTargetValue = static_cast<i8>(player.GetDiplomacyAI()->GetRawTargetValue(static_cast<PlayerTypes>(other)));
+			if (playerIndex < MAX_MAJOR_CIVS && other < MAX_MAJOR_CIVS)
 			{
-				if (other == playerIndex || !GET_PLAYER(static_cast<PlayerTypes>(other)).isAlive()) continue;
-				PlayerRelationRecord row;
-				ZeroRecord(row);
-				row.player = static_cast<i8>(playerIndex);
-				row.otherPlayer = static_cast<i8>(other);
 				row.approach = static_cast<i8>(player.GetDiplomacyAI()->GetCivApproach(static_cast<PlayerTypes>(other)));
 				row.visibleApproachTowardsUs = static_cast<i8>(player.GetDiplomacyAI()->GetVisibleApproachTowardsUs(static_cast<PlayerTypes>(other)));
 				row.opinion = static_cast<i8>(player.GetDiplomacyAI()->GetCivOpinion(static_cast<PlayerTypes>(other)));
 				row.potentialMilitaryTargetOrThreat =
 					player.GetDiplomacyAI()->IsPotentialMilitaryTargetOrThreat(static_cast<PlayerTypes>(other), false) ? 1 : 0;
-				snapshot.playerRelations.push_back(row);
 			}
+			snapshot.playerRelations.push_back(row);
+		}
 		for (int flavor = 0; flavor < GC.getNumFlavorTypes(); ++flavor)
 		{
 			PlayerFlavorRecord row;
@@ -1261,7 +1272,9 @@ namespace
 	void CopyChildReplacementRow(const PlayerRelationRecord& source, RequestPlayerRelationRowRecord& row)
 	{ row.otherPlayer = source.otherPlayer; row.approach = source.approach;
 		row.visibleApproachTowardsUs = source.visibleApproachTowardsUs; row.opinion = source.opinion;
-		row.potentialMilitaryTargetOrThreat = source.potentialMilitaryTargetOrThreat; }
+		row.potentialMilitaryTargetOrThreat = source.potentialMilitaryTargetOrThreat;
+		row.rawMilitaryStrengthComparedToUs = source.rawMilitaryStrengthComparedToUs;
+		row.rawTargetValue = source.rawTargetValue; }
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
 	{ row.flavorId = source.flavorId; row.value = source.value; }
@@ -2144,9 +2157,44 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	return written;
 }
 
+// Appends one native attack-target list, keeping its checkpoint order, scores, and preference.
+// Attack targets and exposed cities share the CvAttackTarget field layout.
+template <typename Row>
+static bool AppendCampaignAttackTargets(const std::vector<CvAttackTarget>& targets, std::vector<Row>& rows,
+	const char* recordName)
+{
+	bool valid = true;
+	for (size_t index = 0; index < targets.size(); ++index)
+	{
+		const CvAttackTarget& target = targets[index];
+		Row row;
+		ZeroRecord(row);
+		row.armyType = static_cast<i8>(target.m_armyType);
+		// Native lists have valid muster and target plots; the shared encoder also admits
+		// the optional staging plot's -1 sentinel, which the loader rejects for the others.
+		const int plots[3] = { target.m_iMusterPlotIndex, target.m_iStagingPlotIndex, target.m_iTargetPlotIndex };
+		i16* fields[3] = { &row.musterPlotIndex, &row.stagingPlotIndex, &row.targetPlotIndex };
+		for (int plot = 0; plot < 3; ++plot)
+		{
+			VoxRlFieldRangeFailure plotFailure;
+			if (!VoxRlEncodeOptionalPlotIndex(plots[plot], fields[plot], recordName, &plotFailure))
+			{
+				VoxRlNoteSplitFailure(plotFailure);
+				valid = false;
+			}
+		}
+		row.pathLength = static_cast<i32>(target.m_iPathLength);
+		row.approachScore = static_cast<i32>(target.m_iApproachScore);
+		row.preferred = target.m_bPreferred ? 1 : 0;
+		rows.push_back(row);
+	}
+	return valid;
+}
+
 // Collects the operational entry snapshot without refreshing native zones.
 bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence,
+	const std::map<int, PlayerRecord>& retainedPlayers,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
 {
 	bool valid = true;
@@ -2183,57 +2231,24 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.warScore = static_cast<i8>(capturing.GetDiplomacyAI()->GetWarScore(static_cast<PlayerTypes>(player)));
 		data.campaignEnemies.push_back(row);
 	}
-	const std::vector<CvAttackTarget>& attackTargets = military->GetPotentialAttackTargets();
-	for (size_t index = 0; index < attackTargets.size(); ++index)
+	// Capture the aligned WORLD roster, including players eliminated since that baseline.
+	for (std::map<int, PlayerRecord>::const_iterator player = retainedPlayers.begin();
+		player != retainedPlayers.end(); ++player)
 	{
-		CampaignAttackTargetRecord row;
-		ZeroRecord(row);
-		row.armyType = static_cast<i8>(attackTargets[index].m_armyType);
-		// The three plot references carry the optional -1 sentinel; the checked
-		// conversion rejects anything outside the sixteen-bit plot domain.
-		VoxRlFieldRangeFailure plotFailure;
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iMusterPlotIndex, &row.musterPlotIndex, "CampaignAttackTargetRecord", &plotFailure))
-		{
-			VoxRlNoteSplitFailure(plotFailure);
-			valid = false;
-		}
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iStagingPlotIndex, &row.stagingPlotIndex, "CampaignAttackTargetRecord", &plotFailure))
-		{
-			VoxRlNoteSplitFailure(plotFailure);
-			valid = false;
-		}
-		if (!VoxRlEncodeOptionalPlotIndex(attackTargets[index].m_iTargetPlotIndex, &row.targetPlotIndex, "CampaignAttackTargetRecord", &plotFailure))
-		{
-			VoxRlNoteSplitFailure(plotFailure);
-			valid = false;
-		}
-		row.pathLength = static_cast<i32>(attackTargets[index].m_iPathLength);
-		row.approachScore = static_cast<i32>(attackTargets[index].m_iApproachScore);
-		row.preferred = attackTargets[index].m_bPreferred ? 1 : 0;
-		data.campaignAttackTargets.push_back(row);
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(player->first));
+		CvMilitaryAI* preferencesMilitary = owner.GetMilitaryAI();
+		if (preferencesMilitary == NULL) return false;
+		CampaignPlayerPreferencesRecord preferences;
+		ZeroRecord(preferences);
+		preferences.owner = static_cast<i8>(player->first);
+		preferences.attackTargetRangeFirst = static_cast<u32>(data.campaignAttackTargets.size());
+		preferences.exposedCityRangeFirst = static_cast<u32>(data.campaignExposedCities.size());
+		if (!AppendCampaignAttackTargets(preferencesMilitary->GetPotentialAttackTargets(), data.campaignAttackTargets, "CampaignAttackTargetRecord")) valid = false;
+		if (!AppendCampaignAttackTargets(preferencesMilitary->GetExposedCities(), data.campaignExposedCities, "CampaignExposedCityRecord")) valid = false;
+		preferences.attackTargetRangeCount = static_cast<u32>(data.campaignAttackTargets.size()) - preferences.attackTargetRangeFirst;
+		preferences.exposedCityRangeCount = static_cast<u32>(data.campaignExposedCities.size()) - preferences.exposedCityRangeFirst;
+		data.campaignPlayerPreferences.push_back(preferences);
 	}
-	const std::vector<CvAttackTarget>& exposedCities = military->GetExposedCities();
-	std::vector<CampaignExposedCityRecord> exposedRows;
-	for (size_t index = 0; index < exposedCities.size(); ++index)
-	{
-		CampaignExposedCityRecord row;
-		ZeroRecord(row);
-		// Native IsExposedToEnemy reads the army type, the muster plot owner, and the target plot.
-		row.armyType = static_cast<i8>(exposedCities[index].m_armyType);
-		VoxRlFieldRangeFailure plotFailure;
-		if (!VoxRlEncodeOptionalPlotIndex(exposedCities[index].m_iMusterPlotIndex, &row.musterPlotIndex, "CampaignExposedCityRecord", &plotFailure))
-		{
-			VoxRlNoteSplitFailure(plotFailure);
-			valid = false;
-		}
-		if (!VoxRlEncodeOptionalPlotIndex(exposedCities[index].m_iTargetPlotIndex, &row.targetPlotIndex, "CampaignExposedCityRecord", &plotFailure))
-		{
-			VoxRlNoteSplitFailure(plotFailure);
-			valid = false;
-		}
-		exposedRows.push_back(row);
-	}
-	if (!AppendCampaignHeaderRecordExposedCityRange(&data, exposedRows)) valid = false;
 	std::vector<CvCity*> threatened = capturing.GetThreatenedCities(false);
 	std::vector<CampaignThreatenedCityRecord> threatenedRows;
 	for (size_t index = 0; index < threatened.size(); ++index)

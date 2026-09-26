@@ -172,6 +172,14 @@ namespace
 		return true;
 	}
 
+	// Keeps relation deltas inside the directed team roster captured by WORLD.
+	bool IsCapturedRelation(const TeamRelationRecord& relation, const std::set<int>& teams)
+	{
+		return relation.team != relation.otherTeam &&
+			teams.count(static_cast<int>(relation.team)) != 0 &&
+			teams.count(static_cast<int>(relation.otherTeam)) != 0;
+	}
+
 	// Marks every retained unit whose native current-plot healing result changed.
 	void RefreshChangedActualHealRates(std::map<VoxRlEntityKey, int>& previous,
 		std::set<VoxRlEntityKey>& dirtyUnits)
@@ -330,6 +338,8 @@ struct VoxRlCapture::Segment
 	// Team ids present in the WORLD visibility sections. Delta visibility and
 	// revealed-override rows must stay within this baseline-owned domain.
 	std::set<int> capturedTeams;
+	// Directed relation changes are valid only for the teams in the WORLD relation roster.
+	std::set<int> capturedRelationTeams;
 	std::map<VoxRlEntityKey, unsigned char> revealedOverrideUpserts;  // team-major key, 1 = present
 	std::set<VoxRlEntityKey> removedRevealedOverrides;                // (team, plot)
 	std::set<int> dirtyInterceptors;
@@ -1685,6 +1695,18 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 		}
 		// Keep the baseline's visibility domain even if a team dies later in the segment.
 		segment.capturedTeams.clear();
+		segment.capturedRelationTeams.clear();
+		const VoxRlSectionDirectoryEntry* relations = worldView.FindSection(VOX_RL_SECTION_WORLD_TEAM_RELATIONS);
+		const u32 relationCount = relations == NULL ? 0U : relations->count;
+		const u8* relationBytes = relationCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_TEAM_RELATIONS);
+		if (relationCount != 0U && relationBytes == NULL) return false;
+		for (u32 index = 0; index < relationCount; ++index)
+		{
+			TeamRelationRecord row;
+			std::memcpy(&row, relationBytes + index * sizeof(TeamRelationRecord), sizeof(row));
+			segment.capturedRelationTeams.insert(static_cast<int>(row.team));
+			segment.capturedRelationTeams.insert(static_cast<int>(row.otherTeam));
+		}
 		const VoxRlSectionDirectoryEntry* teams = worldView.FindSection(VOX_RL_SECTION_WORLD_PLOT_TEAMS);
 		const u32 teamCount = teams == NULL ? 0U : teams->count;
 		const u8* teamBytes = teamCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_PLOT_TEAMS);
@@ -1776,7 +1798,7 @@ bool VoxRlCapture::BuildAndBindCampaign(PlayerTypes ePlayer, int iTurn,
 	{
 		ScopedTiming timing(m_config.timings, segment.timings.campaignConstructNs);
 		if (!VoxRlBuildCampaignBlock(identity, ePlayer, alignedWorldGeneration,
-			alignedNextDeltaSequence, storage, length))
+			alignedNextDeltaSequence, segment.lastPlayerRows, storage, length))
 		{
 			return false;
 		}
@@ -3056,6 +3078,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	for (size_t index = 0; index < m_operationState->bufferedRelations.size(); ++index)
 	{
 		TeamRelationRecord record = m_operationState->bufferedRelations[index];
+		if (!IsCapturedRelation(record, segment.capturedRelationTeams)) continue;
 		record.canDeclareWar = GET_TEAM(static_cast<TeamTypes>(record.team)).canDeclareWar(
 			static_cast<TeamTypes>(record.otherTeam), capturingPlayer) ? 1 : 0;
 		RequestTeamRelationRecord row;

@@ -259,6 +259,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 // capturing player. Zone data is read without triggering a refresh.
 bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	unsigned int alignedWorldGeneration, unsigned int alignedNextDeltaSequence,
+	const std::map<int, PlayerRecord>& retainedPlayers,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length);
 
 // Appends one complete operation snapshot and its army and slot versions to a
