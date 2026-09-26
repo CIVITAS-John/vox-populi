@@ -1556,6 +1556,28 @@ static bool VoxRlCollectPromotionTypeRows(VoxRlStaticData& data)
 	return valid;
 }
 
+// Captures unit combat type names so simulator name lookups resolve to native indices.
+static bool VoxRlCollectUnitCombatTypeRows(VoxRlStaticData& data)
+{
+	bool valid = true;
+	for (int unitCombat = 0; unitCombat < GC.getNumUnitCombatClassInfos(); ++unitCombat)
+	{
+		const CvBaseInfo* info = GC.getUnitCombatClassInfo(static_cast<UnitCombatTypes>(unitCombat));
+		const char* name = info != NULL ? info->GetType() : NULL;
+		if (name == NULL || name[0] == '\0') return false;
+		const size_t nameLength = std::strlen(name);
+		if (nameLength > 65535U) return false;
+		UnitCombatTypeRecord row;
+		ZeroRecord(row);
+		if (!AssignCheckedI16(row.unitCombat, unitCombat, "UnitCombatTypeRecord", "unitCombat", 0)) valid = false;
+		row.nameOffset = static_cast<u32>(data.staticUnitCombatTypeNames.size());
+		row.nameLength = static_cast<u16>(nameLength);
+		data.staticUnitCombatTypeNames.insert(data.staticUnitCombatTypeNames.end(), name, name + nameLength);
+		data.staticUnitCombatTypes.push_back(row);
+	}
+	return valid;
+}
+
 // Collects immutable native tables and topology for the generated STATIC builder.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
@@ -1587,6 +1609,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	if (!VoxRlCollectNativeInfoTables(data)) valid = false;
 	if (!VoxRlCollectPromotionTypeRows(data)) valid = false;
 	if (!VoxRlCollectPromotionChildRows(data)) valid = false;
+	if (!VoxRlCollectUnitCombatTypeRows(data)) valid = false;
 	ZeroRecord(data.staticBuildIds);
 	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) valid = false;
 	// Plot indices travel as signed sixteen-bit wire values, so only maps of one through
