@@ -53,18 +53,42 @@ namespace
 		int productionAccumulated;
 		int productionNeeded;
 		int numWorkablePlots;
+		int unitPurchaseCooldown;
+		int civilianUnitPurchaseCooldown;
+		int unitPurchaseCooldownMod;
+		int civilianUnitPurchaseCooldownMod;
+		int unitFaithPurchaseCooldown;
+		int civilianUnitFaithPurchaseCooldown;
 		// Copies the exact values carried by a WORLD or REQUEST city row.
 		explicit CityCheckpointScalars(const CityRecord& row)
 			: productionAccumulated(row.productionAccumulated),
-			productionNeeded(row.productionNeeded), numWorkablePlots(row.numWorkablePlots) {}
+			productionNeeded(row.productionNeeded), numWorkablePlots(row.numWorkablePlots),
+			unitPurchaseCooldown(row.unitPurchaseCooldown),
+			civilianUnitPurchaseCooldown(row.civilianUnitPurchaseCooldown),
+			unitPurchaseCooldownMod(row.unitPurchaseCooldownMod),
+			civilianUnitPurchaseCooldownMod(row.civilianUnitPurchaseCooldownMod),
+			unitFaithPurchaseCooldown(row.unitFaithPurchaseCooldown),
+			civilianUnitFaithPurchaseCooldown(row.civilianUnitFaithPurchaseCooldown) {}
 		// Reads the current native values before deciding whether to mark a city dirty.
 		explicit CityCheckpointScalars(CvCity& city)
 			: productionAccumulated(city.getProduction()),
-			productionNeeded(city.getProductionNeeded()), numWorkablePlots(city.GetNumWorkablePlots()) {}
-		// Compares only the three scalar inputs this refresh owns.
+			productionNeeded(city.getProductionNeeded()), numWorkablePlots(city.GetNumWorkablePlots()),
+			unitPurchaseCooldown(city.GetUnitPurchaseCooldown(false)),
+			civilianUnitPurchaseCooldown(city.GetUnitPurchaseCooldown(true)),
+			unitPurchaseCooldownMod(city.GetUnitPurchaseCooldownMod(false)),
+			civilianUnitPurchaseCooldownMod(city.GetUnitPurchaseCooldownMod(true)),
+			unitFaithPurchaseCooldown(city.GetUnitFaithPurchaseCooldown(false)),
+			civilianUnitFaithPurchaseCooldown(city.GetUnitFaithPurchaseCooldown(true)) {}
+		// Compares the scalar inputs whose native setters do not notify capture.
 		bool operator!=(const CityCheckpointScalars& other) const
 		{ return productionAccumulated != other.productionAccumulated ||
-			productionNeeded != other.productionNeeded || numWorkablePlots != other.numWorkablePlots; }
+			productionNeeded != other.productionNeeded || numWorkablePlots != other.numWorkablePlots ||
+			unitPurchaseCooldown != other.unitPurchaseCooldown ||
+			civilianUnitPurchaseCooldown != other.civilianUnitPurchaseCooldown ||
+			unitPurchaseCooldownMod != other.unitPurchaseCooldownMod ||
+			civilianUnitPurchaseCooldownMod != other.civilianUnitPurchaseCooldownMod ||
+			unitFaithPurchaseCooldown != other.unitFaithPurchaseCooldown ||
+			civilianUnitFaithPurchaseCooldown != other.civilianUnitFaithPurchaseCooldown; }
 	};
 
 	// Keeps lazy native danger queries from reentering capture during collection.
@@ -559,6 +583,8 @@ namespace
 			data.requestPlayerSavingsReplacements.size() + data.requestPlayerSavingsRows.size() +
 			data.requestPlayerRelationReplacements.size() + data.requestPlayerRelationRows.size() +
 			data.requestPlayerFlavorReplacements.size() + data.requestPlayerFlavorRows.size() +
+			data.requestPlayerTraitPromotionCombatReplacements.size() + data.requestPlayerTraitPromotionCombatRows.size() +
+			data.requestPlayerTraitPromotionClassReplacements.size() + data.requestPlayerTraitPromotionClassRows.size() +
 			data.requestCityConnectionReplacements.size() + data.requestCityConnectionRows.size() +
 			data.requestTradeRoster.size() + data.requestTradeConnections.size() +
 			data.requestTradePathPlots.size() +

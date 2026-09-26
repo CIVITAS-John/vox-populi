@@ -34,6 +34,8 @@ struct VoxRlPlayerCitySnapshot
 	std::vector<PlayerSavingsRecord> playerSavings;
 	std::vector<PlayerRelationRecord> playerRelations;
 	std::vector<PlayerFlavorRecord> playerFlavors;
+	std::vector<PlayerTraitPromotionCombatRecord> playerTraitPromotionCombats;
+	std::vector<PlayerTraitPromotionClassRecord> playerTraitPromotionClasses;
 	std::vector<TeamRecord> teams;
 };
 

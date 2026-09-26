@@ -21740,6 +21740,10 @@ void CvUnit::setExperienceTimes100(int iNewValueTimes100, int iMax, bool bDontSh
 		if (bStartingXP)
 			m_iStartingExperienceTimes100 = m_iExperienceTimes100;
 
+		// Vox Deorum: retain experience and starting-experience changes in the next capture delta.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
+
 		if(getOwner() == GC.getGame().getActivePlayer() && !bDontShow && iExperienceChange > 0)
 		{
 			// Don't show XP for unit that's about to bite the dust
@@ -25456,6 +25460,10 @@ void CvUnit::setPromotionReady(bool bNewValue)
 	if(isPromotionReady() != bNewValue)
 	{
 		m_bPromotionReady = bNewValue;
+
+		// Vox Deorum: readiness can change without another captured unit mutation.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
 
 		if(m_bPromotionReady)
 		{

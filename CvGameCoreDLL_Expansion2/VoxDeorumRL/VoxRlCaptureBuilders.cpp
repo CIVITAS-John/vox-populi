@@ -988,6 +988,47 @@ void VoxRlCollectAllPlayerResistanceRows(std::vector<PlayerResistanceRecord>& ro
 	}
 }
 
+// Collects the active trait union without probing every promotion and unit category.
+static bool VoxRlCollectPlayerTraitPromotionRows(CvPlayer& player, VoxRlPlayerCitySnapshot& snapshot)
+{
+	CvPlayerTraits* traits = player.GetPlayerTraits();
+	const std::vector<TraitTypes> potentialTraits = traits->GetPotentiallyActiveTraits();
+	std::set<std::pair<int, int> > grantsCombat;
+	std::set<std::pair<int, int> > grantsClass;
+	for (size_t index = 0; index < potentialTraits.size(); ++index)
+	{
+		CvTraitEntry* trait = GC.getTraitInfo(potentialTraits[index]);
+		if (trait == NULL || !traits->HasTrait(potentialTraits[index])) continue;
+		const std::multimap<int, int>& entriesCombat = trait->VoxRlGetFreePromotionUnitCombats();
+		for (std::multimap<int, int>::const_iterator entry = entriesCombat.begin(); entry != entriesCombat.end(); ++entry)
+			if (entry->first >= 0 && entry->first < GC.getNumPromotionInfos() &&
+				entry->second >= 0 && entry->second < GC.getNumUnitCombatClassInfos()) grantsCombat.insert(*entry);
+		const std::multimap<int, int>& entriesClass = trait->VoxRlGetFreePromotionUnitClasses();
+		for (std::multimap<int, int>::const_iterator entry = entriesClass.begin(); entry != entriesClass.end(); ++entry)
+			if (entry->first >= 0 && entry->first < GC.getNumPromotionInfos() &&
+				entry->second >= 0 && entry->second < GC.getNumUnitClassInfos()) grantsClass.insert(*entry);
+	}
+	for (std::set<std::pair<int, int> >::const_iterator grant = grantsCombat.begin(); grant != grantsCombat.end(); ++grant)
+	{
+		PlayerTraitPromotionCombatRecord row;
+		ZeroRecord(row);
+		row.player = static_cast<i8>(player.GetID());
+		if (!AssignCheckedI16(row.promotion, grant->first, "PlayerTraitPromotionCombatRecord", "promotion", 0) ||
+			!AssignCheckedI16(row.unitCombat, grant->second, "PlayerTraitPromotionCombatRecord", "unitCombat", 0)) return false;
+		snapshot.playerTraitPromotionCombats.push_back(row);
+	}
+	for (std::set<std::pair<int, int> >::const_iterator grant = grantsClass.begin(); grant != grantsClass.end(); ++grant)
+	{
+		PlayerTraitPromotionClassRecord row;
+		ZeroRecord(row);
+		row.player = static_cast<i8>(player.GetID());
+		if (!AssignCheckedI16(row.promotion, grant->first, "PlayerTraitPromotionClassRecord", "promotion", 0) ||
+			!AssignCheckedI16(row.unitClass, grant->second, "PlayerTraitPromotionClassRecord", "unitClass", 0)) return false;
+		snapshot.playerTraitPromotionClasses.push_back(row);
+	}
+	return true;
+}
+
 // Collects the player and city tables from native state in stable owner and type order.
 bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 {
@@ -1015,6 +1056,7 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 	{
 		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
 		if (!player.isAlive() && playerIndex != BARBARIAN_PLAYER) continue;
+		if (!VoxRlCollectPlayerTraitPromotionRows(player, snapshot)) return false;
 		const std::vector<int>& connectionPlots = player.VoxRlGetCityConnectionPlots();
 		for (size_t index = 0; index < connectionPlots.size(); ++index)
 		{
@@ -1261,6 +1303,22 @@ namespace
 	void CopyChildReplacementRow(const CityHealingYieldRecord& source, RequestCityHealingYieldRowRecord& row)
 	{ row.yieldType = source.yieldType; row.ownedTerritory = source.ownedTerritory; row.yieldPer100Hp = source.yieldPer100Hp; }
 
+	// Reads the player owning a trait promotion grant.
+	int ChildRowOwner(const PlayerTraitPromotionCombatRecord& row) { return row.player; }
+	// Sets the player for a complete trait promotion replacement.
+	void SetChildReplacementOwner(RequestPlayerTraitPromotionCombatReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Copies a trait promotion grant into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerTraitPromotionCombatRecord& source, RequestPlayerTraitPromotionCombatRowRecord& row)
+	{ row.promotion = source.promotion; row.unitCombat = source.unitCombat; }
+
+	// Reads the player owning a trait promotion grant.
+	int ChildRowOwner(const PlayerTraitPromotionClassRecord& row) { return row.player; }
+	// Sets the player for a complete trait promotion replacement.
+	void SetChildReplacementOwner(RequestPlayerTraitPromotionClassReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Copies a trait promotion grant into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerTraitPromotionClassRecord& source, RequestPlayerTraitPromotionClassRowRecord& row)
+	{ row.promotion = source.promotion; row.unitClass = source.unitClass; }
+
 	// Emits each owner's complete table when any row in a family differs from the baseline.
 	template <typename World, typename RequestRow, typename Replacement, typename Key>
 	bool AppendChangedChildFamily(std::vector<World>& baseline, const std::vector<World>& current,
@@ -1334,6 +1392,12 @@ bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 	if (!AppendChangedChildFamily(baseline.playerRelations, current.playerRelations,
 		playerOwners, data.requestPlayerRelationReplacements, data,
 		&AppendRequestPlayerRelationReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerTraitPromotionCombats, current.playerTraitPromotionCombats,
+		playerOwners, data.requestPlayerTraitPromotionCombatReplacements, data,
+		&AppendRequestPlayerTraitPromotionCombatReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerTraitPromotionClasses, current.playerTraitPromotionClasses,
+		playerOwners, data.requestPlayerTraitPromotionClassReplacements, data,
+		&AppendRequestPlayerTraitPromotionClassReplacementRecordRowRange)) valid = false;
 	if (!AppendChangedChildFamily(baseline.playerFlavors, current.playerFlavors,
 		playerOwners, data.requestPlayerFlavorReplacements, data,
 		&AppendRequestPlayerFlavorReplacementRecordRowRange)) valid = false;
@@ -1391,6 +1455,63 @@ static void CollectGoodyGoldRules(StaticRulesRecord& rules)
 	rules.goodyGoldRandAmount = kGoody.GetInt("GoldRandAmount");
 }
 
+// Records nonzero era operands without resolving a creation-time promotion or combat class.
+static bool VoxRlCollectUnitEraRows(const CvUnitEntry& unit, int unitType, VoxRlStaticData& data)
+{
+	bool valid = true;
+	for (int category = 0; category < GC.getNumUnitCombatClassInfos(); ++category)
+		for (int era = 0; era < GC.getNumEraInfos(); ++era)
+		{
+			const int value = unit.GetUnitNewEraCombatType(category, era);
+			if (value == 0) continue;
+			UnitEraCombatRecord row;
+			ZeroRecord(row);
+			row.unitType = unitType;
+			row.value = value;
+			if (!AssignCheckedI16(row.unitCombat, category, "UnitEraCombatRecord", "unitCombat", 0) ||
+				!AssignCheckedI16(row.era, era, "UnitEraCombatRecord", "era", 0)) valid = false;
+			data.staticUnitEraCombats.push_back(row);
+		}
+	for (int category = 0; category < GC.getNumPromotionInfos(); ++category)
+		for (int era = 0; era < GC.getNumEraInfos(); ++era)
+		{
+			const int value = unit.GetUnitNewEraPromotions(category, era);
+			if (value == 0) continue;
+			UnitEraPromotionRecord row;
+			ZeroRecord(row);
+			row.unitType = unitType;
+			row.value = value;
+			if (!AssignCheckedI16(row.promotion, category, "UnitEraPromotionRecord", "promotion", 0) ||
+				!AssignCheckedI16(row.era, era, "UnitEraPromotionRecord", "era", 0)) valid = false;
+			data.staticUnitEraPromotions.push_back(row);
+		}
+	return valid;
+}
+
+// Captures type names once alongside the existing indexed promotion info table.
+static bool VoxRlCollectPromotionTypeRows(VoxRlStaticData& data)
+{
+	bool valid = true;
+	// Preserve promotion identities once; consumers resolve names to the existing info rows.
+	for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
+	{
+		const CvPromotionEntry* info = GC.getPromotionInfo(static_cast<PromotionTypes>(promotion));
+		if (info == NULL) continue;
+		const char* name = info->GetType();
+		if (name == NULL || name[0] == '\0') return false;
+		const size_t nameLength = std::strlen(name);
+		if (nameLength > 65535U) return false;
+		PromotionTypeRecord row;
+		ZeroRecord(row);
+		if (!AssignCheckedI16(row.promotion, promotion, "PromotionTypeRecord", "promotion", 0)) valid = false;
+		row.nameOffset = static_cast<u32>(data.staticPromotionTypeNames.size());
+		row.nameLength = static_cast<u16>(nameLength);
+		data.staticPromotionTypeNames.insert(data.staticPromotionTypeNames.end(), name, name + nameLength);
+		data.staticPromotionTypes.push_back(row);
+	}
+	return valid;
+}
+
 // Collects immutable native tables and topology for the generated STATIC builder.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length)
@@ -1420,6 +1541,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		data.staticFlavorInfos.push_back(row);
 	}
 	if (!VoxRlCollectNativeInfoTables(data)) valid = false;
+	if (!VoxRlCollectPromotionTypeRows(data)) valid = false;
 	ZeroRecord(data.staticBuildIds);
 	if (!CollectStaticBuildIdsRecord(data.staticBuildIds)) valid = false;
 	// Plot indices travel as signed sixteen-bit wire values, so only maps of one through
@@ -1470,6 +1592,7 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 	{
 		CvUnitEntry* unit = GC.getUnitInfo(static_cast<UnitTypes>(unitType));
 		if (unit == NULL) continue;
+		if (!VoxRlCollectUnitEraRows(*unit, unitType, data)) valid = false;
 		for (int resourceType = 0; resourceType < GC.getNumResourceInfos(); ++resourceType)
 		{
 			const int quantity = unit->GetResourceQuantityRequirement(resourceType);
@@ -1940,6 +2063,8 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldPlayerSpecialUpgrades = playerCityState.playerSpecialUpgrades;
 	data.worldPlayerSavings = playerCityState.playerSavings;
 	data.worldPlayerRelations = playerCityState.playerRelations;
+	data.worldPlayerTraitPromotionCombats = playerCityState.playerTraitPromotionCombats;
+	data.worldPlayerTraitPromotionClasses = playerCityState.playerTraitPromotionClasses;
 	data.worldPlayerFlavors = playerCityState.playerFlavors;
 	if (!VoxRlCollectWorldTrade(data)) valid = false;
 	if (timings != NULL) timings->cityCount = static_cast<unsigned int>(data.worldCities.size());

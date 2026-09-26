@@ -414,10 +414,14 @@ public:
 	FreeResourceXCities GetFreeResourceXCities(ResourceTypes eResource) const;
 
 	bool IsFreePromotionUnitCombat(const int promotionID, const int unitCombatID) const;
+	// Vox Deorum: Exposes sparse combat-class promotion grants for military capture.
+	const std::multimap<int, int>& VoxRlGetFreePromotionUnitCombats() const { return m_FreePromotionUnitCombats; }
 	bool IsSpecialUpgradeUnitClass(const int unitClassesID, const int unitID) const;
 	// Vox Deorum: expose sparse immutable upgrade entries for exact capture enumeration.
 	const std::multimap<int, int>& VoxRlGetSpecialUnitUpgrades() const { return m_piUpgradeUnitClass; }
 	bool IsFreePromotionUnitClass(const int promotionID, const int unitClassID) const;
+	// Vox Deorum: Exposes sparse unit-class promotion grants for military capture.
+	const std::multimap<int, int>& VoxRlGetFreePromotionUnitClasses() const { return m_FreePromotionUnitClass; }
 	int GetGoldenAgeYieldModifier(const int iYield) const;
 	std::pair<int, bool> GetUnitCombatProductionCostModifier(const int unitCombatID) const;
 	int GetNonSpecialistFoodChange() const;
