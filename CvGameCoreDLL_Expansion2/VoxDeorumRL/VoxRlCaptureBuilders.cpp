@@ -1167,6 +1167,18 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.value = player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor));
 			snapshot.playerFlavors.push_back(row);
 		}
+		for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
+		{
+			const int count = player.GetFreePromotionCount(static_cast<PromotionTypes>(promotion));
+			if (count == 0) continue;
+			PlayerFreePromotionRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.promotion, promotion,
+				"PlayerFreePromotionRecord", "promotion", 0)) return false;
+			row.count = count;
+			snapshot.playerFreePromotions.push_back(row);
+		}
 		// Healing uses the actor's state religion and qualifies each owned origin city.
 		const CvReligion* religion = GC.getGame().GetGameReligions()->GetReligion(
 			player.GetReligions()->GetStateReligion(), player.GetID());
@@ -1237,6 +1249,8 @@ namespace
 	int ChildRowOwner(const PlayerRelationRecord& row) { return row.player; }
 	// Reads the player owning a personality flavor row.
 	int ChildRowOwner(const PlayerFlavorRecord& row) { return row.player; }
+	// Reads the player owning a free promotion count.
+	int ChildRowOwner(const PlayerFreePromotionRecord& row) { return row.player; }
 	// Reads the city owning a purchase cost row.
 	VoxRlCityKey ChildRowOwner(const CityPurchaseCostRecord& row) { return VoxRlCityKey(row.cityOwner, row.cityId); }
 	// Reads the city owning a promotion row.
@@ -1252,6 +1266,8 @@ namespace
 	void SetChildReplacementOwner(RequestPlayerRelationReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
 	// Sets the player for a flavor replacement.
 	void SetChildReplacementOwner(RequestPlayerFlavorReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
+	// Sets the player for a free promotion replacement.
+	void SetChildReplacementOwner(RequestPlayerFreePromotionReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
 	// Sets the city for a purchase-cost replacement.
 	void SetChildReplacementOwner(RequestCityPurchaseCostReplacementRecord& row, VoxRlCityKey owner)
 	{ row.cityOwner = static_cast<i8>(owner.first); row.cityId = owner.second; }
@@ -1278,6 +1294,9 @@ namespace
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
 	{ row.flavorId = source.flavorId; row.value = source.value; }
+	// Copies a free promotion count into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerFreePromotionRecord& source, RequestPlayerFreePromotionRowRecord& row)
+	{ row.promotion = source.promotion; row.count = source.count; }
 	// Copies a purchase cost into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const CityPurchaseCostRecord& source, RequestCityPurchaseCostRowRecord& row)
 	{ row.unitType = source.unitType; row.goldCost = source.goldCost; row.faithCost = source.faithCost; }
@@ -1415,6 +1434,9 @@ bool VoxRlAppendPlayerCityReplacements(VoxRlPlayerCitySnapshot& baseline,
 	if (!AppendChangedChildFamily(baseline.playerFlavors, current.playerFlavors,
 		playerOwners, data.requestPlayerFlavorReplacements, data,
 		&AppendRequestPlayerFlavorReplacementRecordRowRange)) valid = false;
+	if (!AppendChangedChildFamily(baseline.playerFreePromotions, current.playerFreePromotions,
+		playerOwners, data.requestPlayerFreePromotionReplacements, data,
+		&AppendRequestPlayerFreePromotionReplacementRecordRowRange)) valid = false;
 	if (!AppendChangedChildFamily(baseline.cityPurchaseCosts, current.cityPurchaseCosts,
 		cityOwners, data.requestCityPurchaseCostReplacements, data,
 		&AppendRequestCityPurchaseCostReplacementRecordRowRange)) valid = false;
@@ -1591,12 +1613,93 @@ static bool VoxRlCollectUnitCombatTypeRows(VoxRlStaticData& data)
 	return valid;
 }
 
-// Collects immutable native tables and topology for the generated STATIC builder.
+// Collects the player values that change only at rare events (trait, policy, and leader
+// changes) into the STATIC player map: one row per player slot plus sparse unit class and
+// unit combat rows.
+static bool VoxRlCollectStaticPlayerMap(VoxRlStaticData& data)
+{
+	bool valid = true;
+	for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
+	{
+		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
+		StaticPlayerRecord row;
+		ZeroRecord(row);
+		row.player = static_cast<i8>(playerIndex);
+		if (!CollectStaticPlayerRecord(player, row)) valid = false;
+		data.staticPlayers.push_back(row);
+		for (int unitClass = 0; unitClass < GC.getNumUnitClassInfos(); ++unitClass)
+		{
+			const UnitClassTypes type = static_cast<UnitClassTypes>(unitClass);
+			const int replacement = player.GetUnitClassReplacement(type);
+			const int extraCost = player.getUnitExtraCost(type);
+			if (replacement == NO_UNITCLASS && extraCost == 0) continue;
+			StaticPlayerUnitClassRecord classRow;
+			ZeroRecord(classRow);
+			classRow.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(classRow.unitClass, unitClass,
+				"StaticPlayerUnitClassRecord", "unitClass", 0) ||
+				!AssignCheckedI16(classRow.replacementClass, replacement,
+				"StaticPlayerUnitClassRecord", "replacementClass")) valid = false;
+			classRow.extraCost = extraCost;
+			data.staticPlayerUnitClasses.push_back(classRow);
+		}
+		CvPlayerTraits* traits = player.GetPlayerTraits();
+		for (int unitCombat = 0; unitCombat < GC.getNumUnitCombatClassInfos(); ++unitCombat)
+		{
+			const std::pair<int, bool> modifier = traits->GetUnitCombatProductionCostModifier(
+				static_cast<UnitCombatTypes>(unitCombat));
+			if (modifier.first == 0) continue;
+			StaticPlayerUnitCombatCostRecord combatRow;
+			ZeroRecord(combatRow);
+			combatRow.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(combatRow.unitCombat, unitCombat,
+				"StaticPlayerUnitCombatCostRecord", "unitCombat", 0)) valid = false;
+			combatRow.modifier = modifier.first;
+			combatRow.goldenAgeOnly = modifier.second ? 1 : 0;
+			data.staticPlayerUnitCombatCosts.push_back(combatRow);
+		}
+	}
+	return valid;
+}
+
+// Appends one row table's count and bytes to a player map signature.
+template <typename Row>
+static void VoxRlAppendSignatureRows(const std::vector<Row>& rows, std::vector<char>& signature)
+{
+	const unsigned int count = static_cast<unsigned int>(rows.size());
+	const char* countBytes = reinterpret_cast<const char*>(&count);
+	signature.insert(signature.end(), countBytes, countBytes + sizeof(count));
+	if (rows.empty()) return;
+	const char* bytes = reinterpret_cast<const char*>(&rows[0]);
+	signature.insert(signature.end(), bytes, bytes + rows.size() * sizeof(Row));
+}
+
+// Encodes the staged player map. Rows are zeroed before collection, so padding compares equal.
+static void VoxRlEncodeStaticPlayerSignature(const VoxRlStaticData& data, std::vector<char>& signature)
+{
+	signature.clear();
+	VoxRlAppendSignatureRows(data.staticPlayers, signature);
+	VoxRlAppendSignatureRows(data.staticPlayerUnitClasses, signature);
+	VoxRlAppendSignatureRows(data.staticPlayerUnitCombatCosts, signature);
+}
+
+// Encodes the current STATIC player map for the segment-start change check.
+bool VoxRlCollectStaticPlayerSignature(std::vector<char>& signature)
+{
+	VoxRlStaticData data;
+	if (!VoxRlCollectStaticPlayerMap(data)) return false;
+	VoxRlEncodeStaticPlayerSignature(data, signature);
+	return true;
+}
+
+// Collects native tables, topology, and the player map for the generated STATIC builder.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
-	VoxRlOwnedBlockStorage& storage, unsigned int& length)
+	VoxRlOwnedBlockStorage& storage, unsigned int& length, std::vector<char>& playerSignature)
 {
 	bool valid = true;
 	VoxRlStaticData data;
+	if (!VoxRlCollectStaticPlayerMap(data)) valid = false;
+	VoxRlEncodeStaticPlayerSignature(data, playerSignature);
 	ZeroRecord(data.staticRules);
 	if (!CollectStaticRulesRecord(data.staticRules)) valid = false;
 	data.staticRules.modAiUnitProduction = MOD_AI_UNIT_PRODUCTION ? 1 : 0;
@@ -1749,6 +1852,66 @@ bool VoxRlCollectZones(CvTacticalAnalysisMap* zoneMap, VoxRlZoneSnapshot& snapsh
 	snapshot.plotZones.resize(plotCount);
 	for (int plot = 0; plot < plotCount; ++plot)
 		snapshot.plotZones[plot] = zoneMap != NULL ? zoneMap->GetDominanceZoneIDWithoutRefresh(plot) : -1;
+	return valid;
+}
+
+// Collects the three native espionage sight inputs for every watched city: established
+// surveillance per spy, the revealed city screen, and the passive vision bonus. The simulator
+// rebuilds the lit plots from these rows with extracted changeEspionageSight.
+static bool VoxRlCollectCityEspionageSightRows(std::vector<CityEspionageSightRecord>& rows)
+{
+	bool valid = true;
+	// Counts established spies per watched city and spying player.
+	std::map<std::pair<VoxRlCityKey, int>, int> surveillance;
+	for (int spyOwner = 0; spyOwner < MAX_MAJOR_CIVS; ++spyOwner)
+	{
+		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(spyOwner));
+		CvPlayerEspionage* espionage = player.isAlive() ? player.GetEspionage() : NULL;
+		if (espionage == NULL) continue;
+		for (int spy = 0; spy < espionage->GetNumSpies(); ++spy)
+		{
+			if (!espionage->HasEstablishedSurveillance(static_cast<uint>(spy))) continue;
+			CvCity* city = espionage->GetCityWithSpy(static_cast<uint>(spy));
+			if (city == NULL) continue;
+			++surveillance[std::make_pair(VoxRlCityKey(city->getOwner(), city->GetID()), spyOwner)];
+		}
+	}
+	for (int cityOwner = 0; cityOwner < MAX_PLAYERS; ++cityOwner)
+	{
+		CvPlayerAI& owner = GET_PLAYER(static_cast<PlayerTypes>(cityOwner));
+		if (!owner.isAlive()) continue;
+		int loop = 0;
+		for (CvCity* city = owner.firstCity(&loop); city != NULL; city = owner.nextCity(&loop))
+		{
+			CvCityEspionage* cityEspionage = city->GetCityEspionage();
+			if (cityEspionage == NULL) continue;
+			for (int spyOwner = 0; spyOwner < MAX_MAJOR_CIVS; ++spyOwner)
+			{
+				const std::map<std::pair<VoxRlCityKey, int>, int>::const_iterator count = surveillance.find(
+					std::make_pair(VoxRlCityKey(cityOwner, city->GetID()), spyOwner));
+				const int surveillanceCount = count != surveillance.end() ? count->second : 0;
+				const PlayerTypes spyPlayer = static_cast<PlayerTypes>(spyOwner);
+				const bool revealCityScreen = cityEspionage->GetRevealCityScreen(spyPlayer);
+				const int visionBonus = cityEspionage->GetVisionBonus(spyPlayer);
+				if (surveillanceCount == 0 && !revealCityScreen && visionBonus <= 0) continue;
+				CityEspionageSightRecord row;
+				ZeroRecord(row);
+				row.cityOwner = static_cast<i8>(cityOwner);
+				row.cityId = city->GetID();
+				row.spyOwner = static_cast<i8>(spyOwner);
+				row.surveillanceCount = static_cast<i8>((std::min)(surveillanceCount, 127));
+				row.revealCityScreen = revealCityScreen ? 1 : 0;
+				// Native ring tables stop far below the eight-bit limit, so a larger bonus is a capture fault.
+				if (visionBonus > 127)
+				{
+					VoxRlNoteCaptureRangeFailure("range", "CityEspionageSightRecord", "visionBonus", visionBonus, 0, 127);
+					valid = false;
+				}
+				row.visionBonus = static_cast<i8>((std::max)((std::min)(visionBonus, 127), 0));
+				rows.push_back(row);
+			}
+		}
+	}
 	return valid;
 }
 
@@ -2147,6 +2310,8 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldPlayerTraitPromotionCombats = playerCityState.playerTraitPromotionCombats;
 	data.worldPlayerTraitPromotionClasses = playerCityState.playerTraitPromotionClasses;
 	data.worldPlayerFlavors = playerCityState.playerFlavors;
+	data.worldPlayerFreePromotions = playerCityState.playerFreePromotions;
+	if (!VoxRlCollectCityEspionageSightRows(data.worldCityEspionageSights)) valid = false;
 	if (!VoxRlCollectWorldTrade(data)) valid = false;
 	if (timings != NULL) timings->cityCount = static_cast<unsigned int>(data.worldCities.size());
 	entityRelationTiming.Stop();

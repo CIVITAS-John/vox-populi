@@ -34,6 +34,7 @@ struct VoxRlPlayerCitySnapshot
 	std::vector<PlayerSavingsRecord> playerSavings;
 	std::vector<PlayerRelationRecord> playerRelations;
 	std::vector<PlayerFlavorRecord> playerFlavors;
+	std::vector<PlayerFreePromotionRecord> playerFreePromotions;
 	std::vector<PlayerTraitPromotionCombatRecord> playerTraitPromotionCombats;
 	std::vector<PlayerTraitPromotionClassRecord> playerTraitPromotionClasses;
 	std::vector<TeamRecord> teams;
@@ -243,9 +244,14 @@ void VoxRlNoteCaptureRangeFailure(const char* reason, const char* record, const 
 void VoxRlNoteSplitFailure(const VoxRlFieldRangeFailure& failure);
 
 // Reserves storage and builds one complete STATIC block from the global
-// defines, info tables, and map topology.
+// defines, info tables, map topology, and player map. The player map signature
+// that went into the block is returned so capture can detect a later change.
 bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
-	VoxRlOwnedBlockStorage& storage, unsigned int& length);
+	VoxRlOwnedBlockStorage& storage, unsigned int& length, std::vector<char>& playerSignature);
+
+// Encodes the current STATIC player map. Capture compares it with the signature of the
+// written STATIC at every segment start and writes a new generation when they differ.
+bool VoxRlCollectStaticPlayerSignature(std::vector<char>& signature);
 
 // Builds one complete WORLD block at the pre-refresh checkpoint for the
 // capturing player.

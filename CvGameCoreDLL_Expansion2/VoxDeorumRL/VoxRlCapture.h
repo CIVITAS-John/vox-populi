@@ -388,6 +388,9 @@ private:
 	std::string m_staticRelPath;
 	unsigned int m_staticFramedLength;
 	bool m_topologyInvalidated;
+	// Player map signature inside the written STATIC. A different signature at a segment
+	// start writes a new STATIC generation.
+	std::vector<char> m_staticPlayerSignature;
 	// A war change marks the next pre-refresh moment as a WORLD
 	// replacement checkpoint.
 	bool m_worldReplacementPending;

@@ -593,6 +593,7 @@ namespace
 			data.requestPlayerSavingsReplacements.size() + data.requestPlayerSavingsRows.size() +
 			data.requestPlayerRelationReplacements.size() + data.requestPlayerRelationRows.size() +
 			data.requestPlayerFlavorReplacements.size() + data.requestPlayerFlavorRows.size() +
+			data.requestPlayerFreePromotionReplacements.size() + data.requestPlayerFreePromotionRows.size() +
 			data.requestPlayerTraitPromotionCombatReplacements.size() + data.requestPlayerTraitPromotionCombatRows.size() +
 			data.requestPlayerTraitPromotionClassReplacements.size() + data.requestPlayerTraitPromotionClassRows.size() +
 			data.requestCityConnectionReplacements.size() + data.requestCityConnectionRows.size() +
@@ -914,6 +915,7 @@ void VoxRlCapture::OnGameStartOrLoad()
 	std::memset(m_gameUuidText, 0, sizeof(m_gameUuidText));
 	m_staticGeneration = 0;
 	m_staticGenerationWritten = false;
+	m_staticPlayerSignature.clear();
 	m_campaignTurnPlayer = 0xFFFFFFFF;
 	m_campaignTurn = -1;
 	m_campaignStaticGeneration = 0;
@@ -1579,7 +1581,7 @@ bool VoxRlCapture::BuildAndWriteStatic()
 	char fileName[32];
 	{
 		ScopedTiming timing(m_config.timings, m_staticConstructNs);
-		if (!VoxRlBuildStaticBlock(identity, storage, length))
+		if (!VoxRlBuildStaticBlock(identity, storage, length, m_staticPlayerSignature))
 		{
 			return false;
 		}
@@ -1958,8 +1960,15 @@ void VoxRlCapture::OnPreDangerCheckpoint(PlayerTypes ePlayer)
 		return;
 	}
 	m_gameDirectory = m_captureRoot + "/" + m_gameUuidText;
-	// STATIC is reused until a topology invalidation replaces it.
-	if (!m_staticGenerationWritten || m_topologyInvalidated)
+	// STATIC is reused until a topology invalidation or a player map change replaces it.
+	bool playerMapChanged = false;
+	if (m_staticGenerationWritten && !m_topologyInvalidated)
+	{
+		std::vector<char> playerSignature;
+		playerMapChanged = !VoxRlCollectStaticPlayerSignature(playerSignature) ||
+			playerSignature != m_staticPlayerSignature;
+	}
+	if (!m_staticGenerationWritten || m_topologyInvalidated || playerMapChanged)
 	{
 		const std::string directory = m_gameDirectory + "/baselines/static";
 		const unsigned int generation = ReserveGeneration(directory, "static");
