@@ -186,7 +186,10 @@ namespace
             captureFailed = true;
             return;
         }
-        if (!VoxRlAppendEventUnitSnapshot(unit, unit.getTeam(), snapshot, &event.row.eventUnitIndex)) captureFailed = true;
+        int snapshotIndex = -1;
+        if (!VoxRlAppendEventUnitSnapshot(unit, unit.getTeam(), snapshot, &snapshotIndex) ||
+            !VoxRlAssignChecked(event.row.eventUnitIndex, snapshotIndex,
+                "RequestMilitaryArrivalRecord", "eventUnitIndex", -1)) captureFailed = true;
         event.snapshot.Take(snapshot);
         SetPlot(event.row.plotIndex, unit.plot()->GetPlotIndex(), "MilitaryEvent");
     }
@@ -245,12 +248,13 @@ namespace
     }
 
     // Appends snapshot children using the generated range ownership helpers.
-    bool AppendSnapshot(const MilitaryEvent& event, VoxRlRequestData& data, i32& unitIndex)
+    bool AppendSnapshot(const MilitaryEvent& event, VoxRlRequestData& data, i16& unitIndex)
     {
         if (event.snapshot.requestEventUnits.empty()) { unitIndex = -1; return true; }
         RequestEventUnitRecord row = event.snapshot.requestEventUnits.front();
         if (!AppendRequestEventUnitRecordSparseFieldRange(&row, &data, event.snapshot.requestEventUnitSparseFields)) return false;
-        unitIndex = static_cast<i32>(data.requestEventUnits.size());
+        if (!VoxRlAssignChecked(unitIndex, static_cast<i32>(data.requestEventUnits.size()),
+            "RequestMilitaryArrivalRecord", "eventUnitIndex", -1)) return false;
         data.requestEventUnits.push_back(row);
         return true;
     }
@@ -328,7 +332,8 @@ void VoxRlNoteBarbarianCampCreated(CvPlot& plot, int improvementType)
     RequestBarbarianCampCreationRecord row = RequestBarbarianCampCreationRecord();
     SetOccurrence(row);
     row.campId = nextCreatedCamp++;
-    row.improvementType = improvementType;
+    if (!VoxRlAssignChecked(row.improvementType, improvementType,
+        "RequestBarbarianCampCreationRecord", "improvementType", 0)) captureFailed = true;
     SetPlot(row.plotIndex, plot.GetPlotIndex(), "BarbarianCampCreation");
     campIds[plot.GetPlotIndex()] = row.campId;
     campCreations.push_back(row);

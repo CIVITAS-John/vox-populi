@@ -3643,10 +3643,10 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 		return;
 	}
 	InitializeRequestHeader(data);
-	data.requestHeader.callerType = static_cast<i32>(callerType);
+	data.requestHeader.callerType = static_cast<u8>(callerType);
 	data.requestHeader.searchIntent = static_cast<u8>(eSearchIntent);
-	data.requestHeader.attemptIndex = static_cast<i32>(engagement.attemptIndex);
-	data.requestHeader.retryOutcome = static_cast<i32>(engagement.lastOutcome);
+	VoxRlAssignClamped(data.requestHeader.attemptIndex, static_cast<i32>(engagement.attemptIndex));
+	data.requestHeader.retryOutcome = static_cast<u8>(engagement.lastOutcome);
 	InitializeBaselineMilitaryFlavors(
 		GET_PLAYER(ePlayer).GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
 			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
@@ -3654,7 +3654,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	data.requestHeader.previousAttemptWorldGeneration = engagement.attemptIndex == 0
 		? kVoxRlAbsentGeneration : engagement.lastAttemptWorldGeneration;
 	data.requestHeader.targetPlotIndex = pTarget != NULL ? static_cast<i16>(pTarget->GetPlotIndex()) : static_cast<i16>(kVoxRlAbsentPlotIndex);
-	data.requestHeader.saveMovement = static_cast<i32>(iSaveMovement);
+	VoxRlAssignClamped(data.requestHeader.saveMovement, iSaveMovement);
 	data.requestHeader.aggressionLevel = static_cast<u8>(eAggression);
 	data.requestHeader.targetDistanceRelevant = bTargetDistanceRelevant ? 1 : 0;
 	data.requestHeader.returnToStartPositions = bReturnToStartPositions ? 1 : 0;

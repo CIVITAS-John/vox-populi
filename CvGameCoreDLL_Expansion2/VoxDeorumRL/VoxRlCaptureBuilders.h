@@ -243,6 +243,23 @@ void VoxRlNoteCaptureRangeFailure(const char* reason, const char* record, const 
 	int value, int minValue, int maxValue);
 void VoxRlNoteSplitFailure(const VoxRlFieldRangeFailure& failure);
 
+// Assigns one native identifier or index to a narrowed schema field when it fits the
+// field's storage range and lower bound. Otherwise it notes a range failure and leaves
+// the destination unchanged, so the caller can reject the row instead of saturating it.
+template <typename Target>
+bool VoxRlAssignChecked(Target& destination, i32 value, const char* record, const char* field,
+	i32 minimum = static_cast<i32>((std::numeric_limits<Target>::min)()))
+{
+	const __int64 maximum = (std::numeric_limits<Target>::max)();
+	if (value < minimum || value > maximum)
+	{
+		VoxRlNoteCaptureRangeFailure("range", record, field, value, minimum, static_cast<int>(maximum));
+		return false;
+	}
+	destination = static_cast<Target>(value);
+	return true;
+}
+
 // Reserves storage and builds one complete STATIC block from the global
 // defines, info tables, map topology, and player map. The player map signature
 // that went into the block is returned so capture can detect a later change.

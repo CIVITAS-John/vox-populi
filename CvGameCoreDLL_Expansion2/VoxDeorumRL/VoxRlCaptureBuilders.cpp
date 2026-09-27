@@ -31,8 +31,9 @@
 #include <vector>
 
 // Copies one native trade connection's scalar state into either WORLD or REQUEST row.
+// Returns false when the path position does not fit its narrowed field.
 template <typename Row>
-void VoxRlAssignTradeConnection(Row& row, const TradeConnection& native)
+bool VoxRlAssignTradeConnection(Row& row, const TradeConnection& native)
 {
 	row.id = native.m_iID;
 	row.unitId = native.m_unitID;
@@ -41,16 +42,18 @@ void VoxRlAssignTradeConnection(Row& row, const TradeConnection& native)
 	row.destOwner = static_cast<i8>(native.m_eDestOwner);
 	row.destCityId = native.m_iDestID;
 	row.domain = static_cast<i8>(native.m_eDomain);
-	row.locationIndex = native.m_iTradeUnitLocationIndex;
+	if (!VoxRlAssignChecked(row.locationIndex, native.m_iTradeUnitLocationIndex,
+		"TradeConnectionRecord", "locationIndex", -1)) return false;
 	row.setMovingForward(native.m_bTradeUnitMovingForward);
-	row.speedFactor = native.m_iSpeedFactor;
-	row.ownerRouteSpeed = GET_PLAYER(native.m_eOriginOwner).GetTrade()->GetTradeRouteSpeed(native.m_eDomain);
-	row.circuitsCompleted = native.m_iCircuitsCompleted;
-	row.circuitsToComplete = native.m_iCircuitsToComplete;
+	VoxRlAssignClamped(row.speedFactor, native.m_iSpeedFactor);
+	VoxRlAssignClamped(row.ownerRouteSpeed, GET_PLAYER(native.m_eOriginOwner).GetTrade()->GetTradeRouteSpeed(native.m_eDomain));
+	VoxRlAssignClamped(row.circuitsCompleted, native.m_iCircuitsCompleted);
+	VoxRlAssignClamped(row.circuitsToComplete, native.m_iCircuitsToComplete);
 	row.setRecalled(native.m_bTradeUnitRecalled);
 	const CorporationTypes corporation = GET_PLAYER(native.m_eOriginOwner).GetCorporations()->GetFoundedCorporation();
 	const CvCorporationEntry* info = corporation != NO_CORPORATION ? GC.getCorporationInfo(corporation) : NULL;
 	row.setCorporationInvulnerable(info != NULL && info->IsTradeRoutesInvulnerable());
+	return true;
 }
 
 // Records a rejected route path without discarding other captured routes.
@@ -101,7 +104,7 @@ bool VoxRlCollectWorldTrade(VoxRlWorldData& data)
 		if (trade->IsTradeRouteIndexEmpty(static_cast<int>(index)) || !native.isValid()) continue;
 		TradeConnectionRecord row;
 		std::memset(&row, 0, sizeof(row));
-		VoxRlAssignTradeConnection(row, native);
+		if (!VoxRlAssignTradeConnection(row, native)) continue;
 		std::vector<TradePathPlotRecord> path;
 		if (!VoxRlCollectTradePath(native, path)) continue;
 		if (!AppendTradeConnectionRecordPathRange(&row, &data, path)) return false;
@@ -123,7 +126,7 @@ bool VoxRlCollectRequestTrade(VoxRlRequestData& data)
 		if (trade->IsTradeRouteIndexEmpty(static_cast<int>(index)) || !native.isValid()) continue;
 		RequestTradeConnectionRecord row;
 		std::memset(&row, 0, sizeof(row));
-		VoxRlAssignTradeConnection(row, native);
+		if (!VoxRlAssignTradeConnection(row, native)) continue;
 		std::vector<RequestTradePathPlotRecord> path;
 		if (!VoxRlCollectTradePath(native, path)) continue;
 		if (!AppendRequestTradeConnectionRecordPathRange(&row, &data, path)) return false;
@@ -360,7 +363,7 @@ namespace
 				weight += rate + unit->getUnitInfo().GetExtraMaintenanceCost() * 100;
 		}
 		row.unitMaintenanceTimes100 = maintenance;
-		row.baseGoldPerUnitTimes100 = rate;
+		VoxRlAssignClamped(row.baseGoldPerUnitTimes100, rate);
 		row.maintenanceWeight = weight;
 		int intervalTurn = -1;
 		int accruedGold = 0;
@@ -510,8 +513,8 @@ bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 		row.fromPlotIndex = static_cast<i16>(assignment.iFromPlotIndex);
 		row.toPlotIndex = static_cast<i16>(assignment.iToPlotIndex);
 		row.remainingMoves = static_cast<i16>(assignment.iRemainingMoves);
-		row.cityDamage = static_cast<i32>(assignment.iCityDamage);
-		row.selfDamage = static_cast<i32>(assignment.iSelfDamage);
+		VoxRlAssignClamped(row.cityDamage, assignment.iCityDamage);
+		VoxRlAssignClamped(row.selfDamage, assignment.iSelfDamage);
 		row.damagedCityId = static_cast<i32>(assignment.iDamagedCityId);
 		row.damagedCityOwner = static_cast<i8>(VoxRlResolveDamagedCityOwner(actingPlayer, assignment));
 		std::vector<ResultAssignmentDamageRecord> damageRows;
@@ -522,7 +525,7 @@ bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 			ZeroRecord(damage);
 			damage.owner = static_cast<i8>(VoxRlResolveDamagedUnitOwner(actingPlayer, (*entry).first));
 			damage.unitId = static_cast<i32>((*entry).first);
-			damage.value = static_cast<i32>((*entry).second);
+			VoxRlAssignClamped(damage.value, (*entry).second);
 			damageRows.push_back(damage);
 		}
 		std::vector<ResultAssignmentHealingRecord> healingRows;
@@ -533,7 +536,7 @@ bool VoxRlCollectAssignmentRows(PlayerTypes actingPlayer,
 			ZeroRecord(healing);
 			healing.owner = static_cast<i8>(actingPlayer);
 			healing.unitId = static_cast<i32>((*entry).first);
-			healing.value = static_cast<i32>((*entry).second);
+			VoxRlAssignClamped(healing.value, (*entry).second);
 			healingRows.push_back(healing);
 		}
 		if (!AppendResultAssignmentRecordUnitDamageRange(&row, &data, damageRows)) valid = false;
@@ -555,7 +558,7 @@ void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 		ZeroRecord(row);
 		row.owner = static_cast<i8>(eOwner);
 		row.unitId = static_cast<i32>(iUnitId);
-		row.plague = static_cast<i32>(toInflict[index].ePlague);
+		row.plague = static_cast<i16>(toInflict[index].ePlague);
 		row.domain = static_cast<i8>(toInflict[index].eDomain);
 		row.applyOnAttack = toInflict[index].bApplyOnAttack ? 1 : 0;
 		row.applyOnDefense = toInflict[index].bApplyOnDefense ? 1 : 0;
@@ -570,7 +573,7 @@ void VoxRlCollectUnitPlagueRows(PlayerTypes eOwner, int iUnitId, CvUnit* pUnit,
 		ZeroRecord(row);
 		row.owner = static_cast<i8>(eOwner);
 		row.unitId = static_cast<i32>(iUnitId);
-		row.promotion = promotion;
+		row.promotion = static_cast<i16>(promotion);
 		blockedPromotions.push_back(row);
 	}
 }
@@ -613,7 +616,7 @@ bool VoxRlCollectUnitTurnRows(CvUnit& unit, std::vector<UnitMissionRecord>& miss
 		ZeroRecord(row);
 		row.owner = static_cast<i8>(unit.getOwner());
 		row.unitId = unit.GetID();
-		row.promotion = promotion;
+		row.promotion = static_cast<i16>(promotion);
 		if (!AssignCheckedI16(row.turnGained, unit.getTurnPromotionGained(type),
 			"UnitPromotionTurnRecord", "turnGained")) valid = false;
 		promotionTurns.push_back(row);
@@ -695,8 +698,9 @@ bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecor
 	row.promisedOperationId = promise.m_iOperationID;
 	row.promisedArmyId = promise.m_iArmyID;
 	VoxRlAssignClamped(row.promisedSlotIndex, promise.m_iSlotID);
-	row.promisedUnitType = city.IsBuildingUnitForOperation() ? city.GetUnitForOperation() : NO_UNIT;
-	return true;
+	return AssignCheckedI16(row.promisedUnitType,
+		city.IsBuildingUnitForOperation() ? city.GetUnitForOperation() : NO_UNIT,
+		"CityRecord", "promisedUnitType", -1);
 }
 
 // Shares mutable physical plot collection between WORLD and dirty plot deltas.
@@ -1094,7 +1098,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.player = static_cast<i8>(playerIndex);
 			if (!AssignCheckedI16(row.unitClass, upgrade->first,
 				"PlayerSpecialUpgradeRecord", "unitClass", 0)) return false;
-			row.unitType = upgrade->second;
+			if (!AssignCheckedI16(row.unitType, upgrade->second,
+				"PlayerSpecialUpgradeRecord", "unitType", 0)) return false;
 			snapshot.playerSpecialUpgrades.push_back(row);
 		}
 		for (int greatPerson = 0; greatPerson < GC.getNumGreatPersonInfos(); ++greatPerson)
@@ -1108,8 +1113,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.player = static_cast<i8>(playerIndex);
 			if (!AssignCheckedI16(row.greatPerson, greatPerson,
 				"PlayerGreatPersonRecord", "greatPerson", 0)) return false;
-			row.rateModifier = rateModifier;
-			row.costReduction = costReduction;
+			VoxRlAssignClamped(row.rateModifier, rateModifier);
+			VoxRlAssignClamped(row.costReduction, costReduction);
 			snapshot.playerGreatPersons.push_back(row);
 		}
 		const std::vector<ResourceTypes>& monopolies = player.GetStrategicMonopolies();
@@ -1133,7 +1138,7 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.player = static_cast<i8>(playerIndex);
 			row.purchaseType = static_cast<i8>(savings[index].m_eType);
 			row.amount = savings[index].m_iAmount;
-			row.priority = savings[index].m_iPriority;
+			VoxRlAssignClamped(row.priority, savings[index].m_iPriority);
 			snapshot.playerSavings.push_back(row);
 		}
 		// Barbarian units also query their native ratings when considering pillage.
@@ -1164,7 +1169,7 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.player = static_cast<i8>(playerIndex);
 			if (!AssignCheckedI16(row.flavorId, flavor,
 				"PlayerFlavorRecord", "flavorId", 0)) return false;
-			row.value = player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor));
+			VoxRlAssignClamped(row.value, player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor)));
 			snapshot.playerFlavors.push_back(row);
 		}
 		for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
@@ -1176,7 +1181,7 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			row.player = static_cast<i8>(playerIndex);
 			if (!AssignCheckedI16(row.promotion, promotion,
 				"PlayerFreePromotionRecord", "promotion", 0)) return false;
-			row.count = count;
+			VoxRlAssignClamped(row.count, count);
 			snapshot.playerFreePromotions.push_back(row);
 		}
 		// Healing uses the actor's state religion and qualifies each owned origin city.
@@ -1199,7 +1204,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 				ZeroRecord(row);
 				row.cityOwner = static_cast<i8>(playerIndex);
 				row.cityId = city->GetID();
-				row.unitType = unitIndex;
+				if (!AssignCheckedI16(row.unitType, unitIndex,
+					"CityPurchaseCostRecord", "unitType", 0)) return false;
 				row.goldCost = gold ? city->GetPurchaseCost(static_cast<UnitTypes>(unitIndex)) : -1;
 				row.faithCost = faith ? city->GetFaithPurchaseCost(static_cast<UnitTypes>(unitIndex), true) : -1;
 				snapshot.cityPurchaseCosts.push_back(row);
@@ -1218,7 +1224,7 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 						if (!AssignCheckedI16(row.yieldType, yield,
 							"CityHealingYieldRecord", "yieldType", 0)) return false;
 						row.ownedTerritory = ownedTerritory != 0 ? 1 : 0;
-						row.yieldPer100Hp = coefficient;
+						VoxRlAssignClamped(row.yieldPer100Hp, coefficient);
 						snapshot.cityHealingYields.push_back(row);
 					}
 			const std::vector<PromotionTypes> promotions = city->getFreePromotions();
@@ -1548,7 +1554,7 @@ static bool VoxRlCollectPromotionChildRows(VoxRlStaticData& data)
 				"PromotionPlagueRecord", "domain", 0)) valid = false;
 			row.setOnAttack(native.bApplyOnAttack);
 			row.setOnDefense(native.bApplyOnDefense);
-			row.chance = native.iApplyChance;
+			VoxRlAssignClamped(row.chance, native.iApplyChance);
 			data.staticPromotionPlagues.push_back(row);
 		}
 		const std::set<int> blockedPromotions = info->GetBlockedPromotions();
@@ -1640,7 +1646,7 @@ static bool VoxRlCollectStaticPlayerMap(VoxRlStaticData& data)
 				"StaticPlayerUnitClassRecord", "unitClass", 0) ||
 				!AssignCheckedI16(classRow.replacementClass, replacement,
 				"StaticPlayerUnitClassRecord", "replacementClass")) valid = false;
-			classRow.extraCost = extraCost;
+			VoxRlAssignClamped(classRow.extraCost, extraCost);
 			data.staticPlayerUnitClasses.push_back(classRow);
 		}
 		CvPlayerTraits* traits = player.GetPlayerTraits();
@@ -1654,7 +1660,7 @@ static bool VoxRlCollectStaticPlayerMap(VoxRlStaticData& data)
 			combatRow.player = static_cast<i8>(playerIndex);
 			if (!AssignCheckedI16(combatRow.unitCombat, unitCombat,
 				"StaticPlayerUnitCombatCostRecord", "unitCombat", 0)) valid = false;
-			combatRow.modifier = modifier.first;
+			VoxRlAssignClamped(combatRow.modifier, modifier.first);
 			combatRow.goldenAgeOnly = modifier.second ? 1 : 0;
 			data.staticPlayerUnitCombatCosts.push_back(combatRow);
 		}
@@ -2348,8 +2354,8 @@ static bool AppendCampaignAttackTargets(const std::vector<CvAttackTarget>& targe
 				valid = false;
 			}
 		}
-		row.pathLength = static_cast<i32>(target.m_iPathLength);
-		row.approachScore = static_cast<i32>(target.m_iApproachScore);
+		VoxRlAssignClamped(row.pathLength, target.m_iPathLength);
+		VoxRlAssignClamped(row.approachScore, target.m_iApproachScore);
 		row.preferred = target.m_bPreferred ? 1 : 0;
 		rows.push_back(row);
 	}
@@ -2454,7 +2460,7 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.targetY = static_cast<i32>(operation->GetTargetY());
 		if (!AssignCheckedI16(row.turnStarted, operation->GetTurnStarted(),
 			"CampaignOperationRecord", "turnStarted", -1)) valid = false;
-		row.distanceMusterToTarget = static_cast<i32>(operation->GetDistanceMusterToTarget());
+		VoxRlAssignClamped(row.distanceMusterToTarget, operation->GetDistanceMusterToTarget());
 		row.abortReason = static_cast<i8>(operation->GetAbortReason());
 		if (!AssignCheckedI16(row.lastTurnMoved, operation->GetLastTurnMoved(),
 			"CampaignOperationRecord", "lastTurnMoved", -1)) valid = false;
@@ -2476,11 +2482,12 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 			CampaignArmyRecord armyRow;
 			ZeroRecord(armyRow);
 			armyRow.id = static_cast<i32>(nativeArmy->GetID());
-			armyRow.formation = static_cast<i32>(nativeArmy->GetFormationType());
+			if (!AssignCheckedI16(armyRow.formation, static_cast<int>(nativeArmy->GetFormationType()),
+				"CampaignArmyRecord", "formation", -1)) valid = false;
 			armyRow.aiState = static_cast<i8>(nativeArmy->GetArmyAIState());
 			armyRow.goalX = static_cast<i32>(nativeArmy->GetGoalX());
 			armyRow.goalY = static_cast<i32>(nativeArmy->GetGoalY());
-			armyRow.slotsFilled = static_cast<i32>(nativeArmy->GetNumSlotsFilled());
+			VoxRlAssignClamped(armyRow.slotsFilled, nativeArmy->GetNumSlotsFilled());
 			std::vector<CampaignFormationEntryRecord> slots;
 			const std::vector<CvArmyFormationSlot>& nativeSlots = nativeArmy->GetSlotStatus();
 			for (size_t slot = 0; slot < nativeSlots.size(); ++slot)
@@ -2587,7 +2594,7 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 	version.targetY = operation.GetTargetY();
 	if (!AssignCheckedI16(version.turnStarted, turnStarted,
 		"RequestOperationVersionRecord", "turnStarted", -1)) valid = false;
-	version.distanceMusterToTarget = operation.GetDistanceMusterToTarget();
+	VoxRlAssignClamped(version.distanceMusterToTarget, operation.GetDistanceMusterToTarget());
 	version.abortReason = static_cast<i8>(operation.GetAbortReason());
 	if (!AssignCheckedI16(version.lastTurnMoved, lastTurnMoved,
 		"RequestOperationVersionRecord", "lastTurnMoved", -1)) valid = false;
@@ -2607,11 +2614,12 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 		armyRow.operationOwner = static_cast<i8>(operation.GetOwner());
 		armyRow.operationId = operation.GetID();
 		armyRow.id = army->GetID();
-		armyRow.formation = army->GetFormationType();
+		if (!AssignCheckedI16(armyRow.formation, static_cast<int>(army->GetFormationType()),
+			"RequestArmyVersionRecord", "formation", -1)) valid = false;
 		armyRow.aiState = static_cast<i8>(army->GetArmyAIState());
 		armyRow.goalX = army->GetGoalX();
 		armyRow.goalY = army->GetGoalY();
-		armyRow.slotsFilled = static_cast<i32>(army->GetNumSlotsFilled());
+		VoxRlAssignClamped(armyRow.slotsFilled, army->GetNumSlotsFilled());
 		armies.push_back(armyRow);
 		const std::vector<CvArmyFormationSlot>& nativeSlots = army->GetSlotStatus();
 		if (nativeSlots.size() > 32768U) return false;
