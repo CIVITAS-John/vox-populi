@@ -1789,7 +1789,7 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	segment.lastTeamResourceRows.clear();
 	for (size_t index = 0; index < teamResources.size(); ++index)
 		segment.lastTeamResourceRows[static_cast<int>(teamResources[index].team)] = teamResources[index];
-	if (!VoxRlCollectPlayerCitySnapshot(segment.playerCitySnapshot)) return false;
+	if (!VoxRlCollectPlayerCitySnapshot(segment.playerCitySnapshot, ePlayer)) return false;
 	// The WORLD build accepts a fresh zone snapshot and the collected team
 	// passability table, so both dirty markers reset here.
 	m_zoneSnapshotDirty = false;
@@ -2709,7 +2709,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		if (!VoxRlAppendEspionageSightReplacement(capturingPlayer, segment.lastEspionageRows, data)) valid = false;
 	}
 	VoxRlPlayerCitySnapshot currentPlayerCityState;
-	if (!VoxRlCollectPlayerCitySnapshot(currentPlayerCityState)) valid = false;
+	if (!VoxRlCollectPlayerCitySnapshot(currentPlayerCityState, capturingPlayer)) valid = false;
 	else
 	{
 		std::vector<int> playerOwners;

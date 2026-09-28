@@ -41,7 +41,8 @@ struct VoxRlPlayerCitySnapshot
 };
 
 // Collects all player and city child tables and team scalars in stable owner order.
-bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot);
+// Player relations and flavors cover only the perspective (capturing) player.
+bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTypes perspectivePlayer);
 
 // Collects the active native trade roster as one complete REQUEST replacement.
 bool VoxRlCollectRequestTrade(VoxRlRequestData& data);

@@ -1040,7 +1040,7 @@ static bool VoxRlCollectPlayerTraitPromotionRows(CvPlayer& player, VoxRlPlayerCi
 }
 
 // Collects the player and city tables from native state in stable owner and type order.
-bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
+bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTypes perspectivePlayer)
 {
 	snapshot = VoxRlPlayerCitySnapshot();
 	for (int teamIndex = 0; teamIndex < MAX_TEAMS; ++teamIndex)
@@ -1141,8 +1141,9 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			VoxRlAssignClamped(row.priority, savings[index].m_iPriority);
 			snapshot.playerSavings.push_back(row);
 		}
-		// Barbarian units also query their native ratings when considering pillage.
-		for (int other = 0; other < MAX_CIV_PLAYERS; ++other)
+		// Relations and personality flavors are the capturing player's own view. A later actor
+		// binds them from its own WORLD, so other players' rows are not captured.
+		for (int other = 0; other < MAX_CIV_PLAYERS && playerIndex == perspectivePlayer; ++other)
 		{
 			if (other == playerIndex ||
 				!GET_PLAYER(static_cast<PlayerTypes>(other)).isAlive()) continue;
@@ -1162,7 +1163,7 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot)
 			}
 			snapshot.playerRelations.push_back(row);
 		}
-		for (int flavor = 0; flavor < GC.getNumFlavorTypes(); ++flavor)
+		for (int flavor = 0; flavor < GC.getNumFlavorTypes() && playerIndex == perspectivePlayer; ++flavor)
 		{
 			PlayerFlavorRecord row;
 			ZeroRecord(row);
@@ -2257,11 +2258,14 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	plotUnitTiming.Stop();
 
 	// Each alive team contributes one plot bitset; all-zero optional detection is omitted.
+	// Known visibility is mostly empty, so only teams with a set bit carry a slice.
 	ScopedWorldTiming visibilityTiming(timings != NULL ? &timings->visibilityNs : NULL);
 	const size_t bitBytes = (static_cast<size_t>(plotCount) + 7U) / 8U;
+	std::vector<u8> knownVisibleSlice(bitBytes, 0);
 	std::vector<u8>* bitsets[] = { &data.worldRevealedBits, &data.worldVisibleBits,
-		&data.worldKnownVisibleBits, &data.worldInvisibleVisibleBits };
-	for (int kind = 0; kind < 4; ++kind) bitsets[kind]->resize(bitBytes * aliveTeams.size(), 0);
+		&knownVisibleSlice, &data.worldInvisibleVisibleBits };
+	for (int kind = 0; kind < 4; ++kind)
+		if (kind != 2) bitsets[kind]->resize(bitBytes * aliveTeams.size(), 0);
 	data.worldRevealedNoneOverrideBits.assign(bitBytes * aliveTeams.size(), 0);
 	bool hasInvisibleVisibility = false;
 	bool hasRevealedNoneOverrides = false;
@@ -2272,6 +2276,8 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		ZeroRecord(row);
 		row.team = static_cast<i8>(team);
 		std::vector<RevealedOverrideRecord> overrides;
+		std::fill(knownVisibleSlice.begin(), knownVisibleSlice.end(), static_cast<u8>(0));
+		bool hasKnownVisibility = false;
 		for (int plotIndex = 0; plotIndex < plotCount; ++plotIndex)
 		{
 			CvPlot* plot = map.plotByIndex(plotIndex);
@@ -2303,9 +2309,13 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 			const bool bits[] = { plot->isRevealed(team), plot->isVisible(team),
 				plot->GetKnownVisibilityEstimate(team) > 0, plot->isInvisibleVisibleUnit(team) };
 			hasInvisibleVisibility = hasInvisibleVisibility || bits[3];
+			hasKnownVisibility = hasKnownVisibility || bits[2];
 			for (int kind = 0; kind < 4; ++kind)
-				if (bits[kind]) (*bitsets[kind])[teamIndex * bitBytes + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));
+				if (bits[kind]) (*bitsets[kind])[(kind == 2 ? 0U : teamIndex * bitBytes) + (plotIndex >> 3)] |= static_cast<u8>(1U << (plotIndex & 7));
 		}
+		row.knownVisibleOmitted = hasKnownVisibility ? 0 : 1;
+		if (hasKnownVisibility)
+			data.worldKnownVisibleBits.insert(data.worldKnownVisibleBits.end(), knownVisibleSlice.begin(), knownVisibleSlice.end());
 		if (!AppendPlotTeamRecordRevealedOverrideRange(&row, &data, overrides)) valid = false;
 		data.worldPlotTeams.push_back(row);
 	}
@@ -2343,8 +2353,13 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		if (!VoxRlCollectPlayerRecord(owner, capturingPlayer, row)) valid = false;
 		row.id = static_cast<i8>(player);
 		data.worldPlayers.push_back(row);
+		// WORLD keeps only nonzero external contributions; an omitted row means zero.
+		// REQUEST replacements stay complete so a replaced player's map is always whole.
+		std::vector<PlayerResourceRecord> resourceRows;
 		if (!CollectPlayerResources(owner, tileResourceTotals[player], ordinaryBuildingSupply[player],
-			wonderResourceConsumption[player], data.worldPlayerResources)) valid = false;
+			wonderResourceConsumption[player], resourceRows)) valid = false;
+		for (size_t index = 0; index < resourceRows.size(); ++index)
+			if (resourceRows[index].externalContribution != 0) data.worldPlayerResources.push_back(resourceRows[index]);
 		PlayerEconomicsRecord economics;
 		if (!CollectPlayerEconomics(owner, economics)) valid = false;
 		data.worldPlayerEconomics.push_back(economics);
@@ -2391,7 +2406,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 		data.worldInterceptorCaches.push_back(row);
 	}
 	VoxRlPlayerCitySnapshot playerCityState;
-	if (!VoxRlCollectPlayerCitySnapshot(playerCityState)) valid = false;
+	if (!VoxRlCollectPlayerCitySnapshot(playerCityState, capturingPlayer)) valid = false;
 	data.worldPlayerGreatPersons = playerCityState.playerGreatPersons;
 	data.worldPlayerStrategicMonopolies = playerCityState.playerStrategicMonopolies;
 	data.worldCityConnectionPlots = playerCityState.cityConnectionPlots;
