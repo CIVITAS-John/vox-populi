@@ -698,7 +698,7 @@ bool VoxRlCollectCityRecord(CvCity& city, PlayerTypes capturingPlayer, CityRecor
 	row.promisedOperationId = promise.m_iOperationID;
 	row.promisedArmyId = promise.m_iArmyID;
 	VoxRlAssignClamped(row.promisedSlotIndex, promise.m_iSlotID);
-	return AssignCheckedI16(row.promisedUnitType,
+	return VoxRlAssignChecked(row.promisedUnitType,
 		city.IsBuildingUnitForOperation() ? city.GetUnitForOperation() : NO_UNIT,
 		"CityRecord", "promisedUnitType", -1);
 }
