@@ -14549,10 +14549,6 @@ char CvPlot::GetContinentType() const
 //	--------------------------------------------------------------------------------
 void CvPlot::SetContinentType(const char cContinent)
 {
-	// Vox Deorum: capture topology invalidation marking.
-	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-		VoxRlCapture::GetInstance().NoteTopologyInvalidated();
-
 	if (MOD_EVENTS_TERRAFORMING)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_TerraformingPlot, TERRAFORMINGEVENT_CONTINENT, m_iX, m_iY, 0, cContinent, m_cContinentType, -1, -1);
 

@@ -1484,6 +1484,15 @@ bool VoxRlCollectPlayerRecord(CvPlayer& player, PlayerTypes capturingPlayer, Pla
 	const int atWarStrategy = GC.getInfoTypeForString("MILITARYAISTRATEGY_AT_WAR", true);
 	row.militaryAtWarStrategy = atWarStrategy >= 0 &&
 		player.GetMilitaryAI()->IsUsingStrategy(static_cast<MilitaryAIStrategyTypes>(atWarStrategy)) ? 1 : 0;
+	// Native doTurn gives every Found unit class the same getNewCityProductionValue amount, so
+	// the first nonzero class cost is the player's current amount.
+	for (int unitClass = 0; unitClass < GC.getNumUnitClassInfos(); ++unitClass)
+	{
+		const int extraCost = player.getUnitExtraCost(static_cast<UnitClassTypes>(unitClass));
+		if (extraCost == 0) continue;
+		row.unitExtraCost = extraCost;
+		break;
+	}
 	return true;
 }
 
@@ -1621,7 +1630,8 @@ static bool VoxRlCollectUnitCombatTypeRows(VoxRlStaticData& data)
 
 // Collects the player values that change only at rare events (trait, policy, and leader
 // changes) into the STATIC player map: one row per player slot plus sparse unit class and
-// unit combat rows.
+// unit combat rows. The extra cost amount changes every turn, so a class row only flags it
+// and PlayerRecord carries the amount.
 static bool VoxRlCollectStaticPlayerMap(VoxRlStaticData& data)
 {
 	bool valid = true;
@@ -1646,7 +1656,7 @@ static bool VoxRlCollectStaticPlayerMap(VoxRlStaticData& data)
 				"StaticPlayerUnitClassRecord", "unitClass", 0) ||
 				!AssignCheckedI16(classRow.replacementClass, replacement,
 				"StaticPlayerUnitClassRecord", "replacementClass")) valid = false;
-			VoxRlAssignClamped(classRow.extraCost, extraCost);
+			classRow.hasExtraCost = extraCost != 0 ? 1 : 0;
 			data.staticPlayerUnitClasses.push_back(classRow);
 		}
 		CvPlayerTraits* traits = player.GetPlayerTraits();
