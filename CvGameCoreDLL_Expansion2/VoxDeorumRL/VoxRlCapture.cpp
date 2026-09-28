@@ -371,6 +371,8 @@ struct VoxRlCapture::Segment
 	// The actor's espionage sight rows as the spying player, seeded by WORLD and advanced
 	// with emitted replacements.
 	std::vector<CityEspionageSightRecord> lastEspionageRows;
+	// Holds the actor's found-value rows that WORLD and earlier REQUESTs gave the reader.
+	std::vector<PlayerFoundValueRecord> lastFoundValueRows;
 	// Set while the pre-tactical REQUEST collects the actor's outside-turn state: its
 	// player map and its espionage sight rows.
 	bool collectLateTurnState;
@@ -643,7 +645,8 @@ namespace
 		data.requestBarbarianCampCreations.size() +
 		data.requestPlayerMapPlayers.size() + data.requestPlayerMapUnitClasses.size() +
 		data.requestPlayerMapUnitCombatCosts.size() +
-		data.requestCityEspionageSightReplacements.size() + data.requestCityEspionageSightRows.size();
+		data.requestCityEspionageSightReplacements.size() + data.requestCityEspionageSightRows.size() +
+		data.requestPlayerFoundValueReplacements.size() + data.requestPlayerFoundValueRows.size();
 }
 
 	// Successful completion is terminal before Kill assigns its final native reason.
@@ -1730,6 +1733,17 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			std::memcpy(&row, espionageBytes + index * sizeof(CityEspionageSightRecord), sizeof(row));
 			if (row.spyOwner == static_cast<i8>(ePlayer)) segment.lastEspionageRows.push_back(row);
 		}
+		const VoxRlSectionDirectoryEntry* foundValues = worldView.FindSection(VOX_RL_SECTION_WORLD_PLAYER_FOUND_VALUES);
+		const u32 foundValueCount = foundValues == NULL ? 0U : foundValues->count;
+		const u8* foundValueBytes = foundValueCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_PLAYER_FOUND_VALUES);
+		if (foundValueCount != 0U && foundValueBytes == NULL) return false;
+		segment.lastFoundValueRows.clear();
+		for (u32 index = 0; index < foundValueCount; ++index)
+		{
+			PlayerFoundValueRecord row;
+			std::memcpy(&row, foundValueBytes + index * sizeof(PlayerFoundValueRecord), sizeof(row));
+			if (row.player == static_cast<i8>(ePlayer)) segment.lastFoundValueRows.push_back(row);
+		}
 		const VoxRlSectionDirectoryEntry* units = worldView.FindSection(VOX_RL_SECTION_WORLD_UNITS);
 		const u32 unitCount = units == NULL ? 0U : units->count;
 		const u8* unitBytes = unitCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_UNITS);
@@ -2707,6 +2721,8 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			if (!VoxRlAppendChangedPlayerMap(member, m_playerMaps->currentMaps, data)) valid = false;
 		}
 		if (!VoxRlAppendEspionageSightReplacement(capturingPlayer, segment.lastEspionageRows, data)) valid = false;
+		// The economic AI turn usually fills the actor's found-value cache after the checkpoint.
+		if (!VoxRlAppendFoundValueReplacement(capturingPlayer, segment.lastFoundValueRows, data)) valid = false;
 	}
 	VoxRlPlayerCitySnapshot currentPlayerCityState;
 	if (!VoxRlCollectPlayerCitySnapshot(currentPlayerCityState, capturingPlayer)) valid = false;

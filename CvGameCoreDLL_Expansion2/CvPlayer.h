@@ -2789,6 +2789,10 @@ public:
 	virtual void invalidatePlotFoundValues();
 	virtual int getPlotFoundValue(int iX, int iY);
 	virtual void setPlotFoundValue(int iX, int iY, int iValue);
+	// Vox Deorum: narrow capture reads of the found-value cache. Never refreshes it, since the lazy
+	// refresh would compute it earlier than native does.
+	const std::vector<int>& VoxRlGetPlotFoundValues() const { return m_viPlotFoundValues; }
+	int VoxRlGetPlotFoundValuesUpdateTurn() const { return m_iPlotFoundValuesUpdateTurn; }
 
 	virtual void AI_chooseFreeGreatPerson() = 0;
 	virtual void AI_chooseFreeTech() = 0;

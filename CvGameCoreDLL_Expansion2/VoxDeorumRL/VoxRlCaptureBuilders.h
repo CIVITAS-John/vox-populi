@@ -297,6 +297,13 @@ bool VoxRlAppendEspionageSightReplacement(PlayerTypes spyOwner,
 // Collects the espionage sight rows of one spying player.
 bool VoxRlCollectSpyOwnerEspionageRows(PlayerTypes spyOwner, std::vector<CityEspionageSightRecord>& rows);
 
+// Collects one player's positive cached found values without refreshing the native cache.
+bool VoxRlCollectPlayerFoundValueRows(PlayerTypes player, std::vector<PlayerFoundValueRecord>& rows);
+
+// Appends one player's found-value replacement when its rows differ from the baseline.
+bool VoxRlAppendFoundValueReplacement(PlayerTypes player,
+	std::vector<PlayerFoundValueRecord>& baseline, VoxRlRequestData& data);
+
 // Reserves storage and builds one complete STATIC block from the global
 // defines, info tables, map topology, and player map. The player maps that
 // went into the block are returned, one per player slot, so capture can tell

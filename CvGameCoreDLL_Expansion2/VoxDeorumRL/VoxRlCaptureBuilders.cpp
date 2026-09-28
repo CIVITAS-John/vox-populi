@@ -1264,6 +1264,8 @@ namespace
 	VoxRlCityKey ChildRowOwner(const CityFreePromotionRecord& row) { return VoxRlCityKey(row.cityOwner, row.cityId); }
 	// Reads the spying player owning an espionage sight row.
 	int ChildRowOwner(const CityEspionageSightRecord& row) { return row.spyOwner; }
+	// Reads the player owning a found-value row.
+	int ChildRowOwner(const PlayerFoundValueRecord& row) { return row.player; }
 
 	// Sets the team for a technology replacement.
 	void SetChildReplacementOwner(RequestTeamTechnologyReplacementRecord& row, int owner) { row.team = static_cast<i8>(owner); }
@@ -1285,6 +1287,8 @@ namespace
 	{ row.cityOwner = static_cast<i8>(owner.first); row.cityId = owner.second; }
 	// Sets the spying player for an espionage sight replacement.
 	void SetChildReplacementOwner(RequestCityEspionageSightReplacementRecord& row, int owner) { row.spyOwner = static_cast<i8>(owner); }
+	// Sets the player for a found-value replacement.
+	void SetChildReplacementOwner(RequestPlayerFoundValueReplacementRecord& row, int owner) { row.player = static_cast<i8>(owner); }
 
 	// Copies a researched technology into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const TeamTechnologyRecord& source, RequestTeamTechnologyRowRecord& row)
@@ -1309,6 +1313,9 @@ namespace
 	void CopyChildReplacementRow(const CityEspionageSightRecord& source, RequestCityEspionageSightRowRecord& row)
 	{ row.cityOwner = source.cityOwner; row.cityId = source.cityId; row.surveillanceCount = source.surveillanceCount;
 		row.revealCityScreen = source.revealCityScreen; row.visionBonus = source.visionBonus; }
+	// Copies a cached found value into its owner-qualified REQUEST row.
+	void CopyChildReplacementRow(const PlayerFoundValueRecord& source, RequestPlayerFoundValueRowRecord& row)
+	{ row.plotIndex = source.plotIndex; row.value = source.value; }
 	// Copies a free promotion count into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFreePromotionRecord& source, RequestPlayerFreePromotionRowRecord& row)
 	{ row.promotion = source.promotion; row.count = source.count; }
@@ -2009,6 +2016,38 @@ bool VoxRlAppendEspionageSightReplacement(PlayerTypes spyOwner,
 		data.requestCityEspionageSightReplacements, data, &AppendRequestCityEspionageSightReplacementRecordRowRange);
 }
 
+// Collects one player's positive cached found values in plot order. The read never refreshes the
+// native lazy cache, because an early refresh would change which values native later reads.
+bool VoxRlCollectPlayerFoundValueRows(PlayerTypes player, std::vector<PlayerFoundValueRecord>& rows)
+{
+	rows.clear();
+	if (player < 0 || player >= MAX_PLAYERS) return true;
+	const std::vector<int>& values = GET_PLAYER(player).VoxRlGetPlotFoundValues();
+	for (size_t index = 0; index < values.size(); ++index)
+	{
+		if (values[index] <= 0) continue;
+		PlayerFoundValueRecord row;
+		ZeroRecord(row);
+		row.player = static_cast<i8>(player);
+		if (!AssignCheckedI16(row.plotIndex, static_cast<int>(index),
+			"PlayerFoundValueRecord", "plotIndex", 0)) return false;
+		row.value = values[index];
+		rows.push_back(row);
+	}
+	return true;
+}
+
+// Appends one player's found-value replacement when its current rows differ from the baseline,
+// and advances the baseline to the current rows.
+bool VoxRlAppendFoundValueReplacement(PlayerTypes player,
+	std::vector<PlayerFoundValueRecord>& baseline, VoxRlRequestData& data)
+{
+	std::vector<PlayerFoundValueRecord> current;
+	if (!VoxRlCollectPlayerFoundValueRows(player, current)) return false;
+	return AppendChangedChildFamily(baseline, current, std::vector<int>(1, static_cast<int>(player)),
+		data.requestPlayerFoundValueReplacements, data, &AppendRequestPlayerFoundValueReplacementRecordRowRange);
+}
+
 // Collects native WORLD state in stable owner and plot order for the generated writer.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
@@ -2422,6 +2461,8 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldPlayerFlavors = playerCityState.playerFlavors;
 	data.worldPlayerFreePromotions = playerCityState.playerFreePromotions;
 	if (!VoxRlCollectCityEspionageSightRows(data.worldCityEspionageSights, 0, MAX_MAJOR_CIVS)) valid = false;
+	// Found values are the capturing player's own settle cache, so other players' rows are not captured.
+	if (!VoxRlCollectPlayerFoundValueRows(capturingPlayer, data.worldPlayerFoundValues)) valid = false;
 	// The WORLD player map mirrors share the STATIC row layouts.
 	for (size_t mapIndex = 0; mapIndex < playerMapOverrides.size(); ++mapIndex)
 	{
