@@ -1143,6 +1143,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTyp
 		}
 		// Relations and personality flavors are the capturing player's own view. A later actor
 		// binds them from its own WORLD, so other players' rows are not captured.
+		const std::vector<PlayerTypes> noSettlePlayers = playerIndex == perspectivePlayer ?
+			player.GetDiplomacyAI()->GetPlayersWithNoSettlePolicy() : std::vector<PlayerTypes>();
 		for (int other = 0; other < MAX_CIV_PLAYERS && playerIndex == perspectivePlayer; ++other)
 		{
 			if (other == playerIndex ||
@@ -1153,6 +1155,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTyp
 			row.otherPlayer = static_cast<i8>(other);
 			row.rawMilitaryStrengthComparedToUs = static_cast<i8>(player.GetDiplomacyAI()->GetRawMilitaryStrengthComparedToUs(static_cast<PlayerTypes>(other)));
 			row.rawTargetValue = static_cast<i8>(player.GetDiplomacyAI()->GetRawTargetValue(static_cast<PlayerTypes>(other)));
+			for (size_t index = 0; index < noSettlePlayers.size(); ++index)
+				if (noSettlePlayers[index] == static_cast<PlayerTypes>(other)) row.noSettlePolicy = 1;
 			if (playerIndex < MAX_MAJOR_CIVS && other < MAX_MAJOR_CIVS)
 			{
 				row.approach = static_cast<i8>(player.GetDiplomacyAI()->GetCivApproach(static_cast<PlayerTypes>(other)));
@@ -1305,7 +1309,7 @@ namespace
 		row.visibleApproachTowardsUs = source.visibleApproachTowardsUs; row.opinion = source.opinion;
 		row.potentialMilitaryTargetOrThreat = source.potentialMilitaryTargetOrThreat;
 		row.rawMilitaryStrengthComparedToUs = source.rawMilitaryStrengthComparedToUs;
-		row.rawTargetValue = source.rawTargetValue; }
+		row.rawTargetValue = source.rawTargetValue; row.noSettlePolicy = source.noSettlePolicy; }
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
 	{ row.flavorId = source.flavorId; row.value = source.value; }
