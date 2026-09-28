@@ -7,6 +7,7 @@
 #include "CvGrandStrategyAI.h"
 #include "CvDiplomacyAI.h"
 #include "CvMilitaryAI.h"
+#include "CvEconomicAI.h"
 #include "CvGreatPersonInfo.h"
 #include "../VoxRlCaptureBuilders.h"
 #include "VoxRlBuilders.generated.h"
