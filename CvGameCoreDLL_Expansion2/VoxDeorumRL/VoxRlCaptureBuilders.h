@@ -260,22 +260,57 @@ bool VoxRlAssignChecked(Target& destination, i32 value, const char* record, cons
 	return true;
 }
 
-// Reserves storage and builds one complete STATIC block from the global
-// defines, info tables, map topology, and player map. The player map signature
-// that went into the block is returned so capture can detect a later change.
-bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
-	VoxRlOwnedBlockStorage& storage, unsigned int& length, std::vector<char>& playerSignature);
+// Holds one player's complete map: its STATIC player row and its sparse unit class and
+// unit combat cost rows, in collection order. Rows are zeroed before collection, so two
+// maps compare byte for byte.
+struct VoxRlPlayerMapRows
+{
+	StaticPlayerRecord player;
+	std::vector<StaticPlayerUnitClassRecord> unitClasses;
+	std::vector<StaticPlayerUnitCombatCostRecord> unitCombatCosts;
+};
 
-// Encodes the current STATIC player map. Capture compares it with the signature of the
-// written STATIC at every segment start and writes a new generation when they differ.
-bool VoxRlCollectStaticPlayerSignature(std::vector<char>& signature);
+// Collects one player's current map rows.
+bool VoxRlCollectPlayerMapRows(PlayerTypes player, VoxRlPlayerMapRows& rows);
+
+// Reports whether two player maps hold the same rows.
+bool VoxRlPlayerMapRowsEqual(const VoxRlPlayerMapRows& left, const VoxRlPlayerMapRows& right);
+
+// Appends one player's complete map to a REQUEST as its replacement.
+void VoxRlAppendPlayerMapReplacement(const VoxRlPlayerMapRows& rows, VoxRlRequestData& data);
+
+// Appends one player's map replacement when its current map differs from the cached one, and
+// advances the cache to the current map.
+bool VoxRlAppendChangedPlayerMap(PlayerTypes player, std::map<int, VoxRlPlayerMapRows>& cache,
+	VoxRlRequestData& data);
+
+// Selects the cached player maps that differ from the maps STATIC holds, for WORLD overrides.
+void VoxRlCollectPlayerMapOverrides(const std::map<int, VoxRlPlayerMapRows>& staticMaps,
+	const std::map<int, VoxRlPlayerMapRows>& currentMaps, std::vector<VoxRlPlayerMapRows>& overrides);
+
+// Appends one spying player's espionage sight replacement when its current rows differ
+// from the baseline, and advances the baseline to the current rows.
+bool VoxRlAppendEspionageSightReplacement(PlayerTypes spyOwner,
+	std::vector<CityEspionageSightRecord>& baseline, VoxRlRequestData& data);
+
+// Collects the espionage sight rows of one spying player.
+bool VoxRlCollectSpyOwnerEspionageRows(PlayerTypes spyOwner, std::vector<CityEspionageSightRecord>& rows);
+
+// Reserves storage and builds one complete STATIC block from the global
+// defines, info tables, map topology, and player map. The player maps that
+// went into the block are returned, one per player slot, so capture can tell
+// which later maps differ from STATIC.
+bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
+	VoxRlOwnedBlockStorage& storage, unsigned int& length, std::vector<VoxRlPlayerMapRows>& playerMaps);
 
 // Builds one complete WORLD block at the pre-refresh checkpoint for the
-// capturing player.
+// capturing player. Each supplied player map differs from STATIC and
+// replaces that player's STATIC map for this WORLD.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
 	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
 	std::vector<TeamResourceRecord>& teamResourceSnapshot,
+	const std::vector<VoxRlPlayerMapRows>& playerMapOverrides,
 	VoxRlWorldBuildTimings* timings = NULL);
 
 // Builds one complete CAMPAIGN block at the UpdateOperations entry for the

@@ -368,6 +368,12 @@ struct VoxRlCapture::Segment
 	std::vector<TradePathPlotRecord> lastTradePathPlots;
 	// Latest player rows, seeded by WORLD and advanced with emitted replacements.
 	std::map<int, PlayerRecord> lastPlayerRows;
+	// The actor's espionage sight rows as the spying player, seeded by WORLD and advanced
+	// with emitted replacements.
+	std::vector<CityEspionageSightRecord> lastEspionageRows;
+	// Set while the pre-tactical REQUEST collects the actor's outside-turn state: its
+	// player map and its espionage sight rows.
+	bool collectLateTurnState;
 	// Latest native healing result for each serialized unit. ActualHealRate depends on
 	// nearby units and mutable plot and city state, so setter hooks cannot identify every
 	// unit whose complete row must be refreshed.
@@ -435,7 +441,7 @@ struct VoxRlCapture::Segment
 		: player(NO_PLAYER), turn(-1), staticGeneration(0), worldGeneration(0), campaignGeneration(0),
 		staticFramedLength(0), campaignFramedLength(0), worldFramedLength(0),
 		nextDeltaSequence(0), published(false), failed(false), closed(false), campaignSeamReached(false),
-		worldReplacement(false), hasDecision(false),
+		worldReplacement(false), hasDecision(false), collectLateTurnState(false),
 		pendingCount(0), committedFrameCount(0), committedDecisionCount(0), committedCoverageCount(0),
 		commitId(0), firstRequestSequence(0), lastRequestSequence(0), hasRequests(false),
 		stagingRequest(false)
@@ -443,6 +449,15 @@ struct VoxRlCapture::Segment
 		std::memset(&lastGameState, 0, sizeof(lastGameState));
 		closureReason[0] = '\0';
 	}
+};
+
+// Player maps by player slot: the rows the current STATIC holds, and each player's latest
+// rows. A player's map changes only in its own turn, so capture refreshes that player's
+// entry at its turn completion and compares it at its pre-tactical REQUEST.
+struct VoxRlCapture::PlayerMapCache
+{
+	std::map<int, VoxRlPlayerMapRows> staticMaps;
+	std::map<int, VoxRlPlayerMapRows> currentMaps;
 };
 
 // One caller engagement: all attempts of one FindAndExecuteBestUnitAssignments
@@ -625,7 +640,10 @@ namespace
 		data.requestEventUnitBlockedPromotions.size() + data.requestEventUnitAttackCounts.size() +
 		data.requestEventUnitMissions.size() + data.requestEventUnitPromotionTurns.size() +
 		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
-		data.requestBarbarianCampCreations.size();
+		data.requestBarbarianCampCreations.size() +
+		data.requestPlayerMapPlayers.size() + data.requestPlayerMapUnitClasses.size() +
+		data.requestPlayerMapUnitCombatCosts.size() +
+		data.requestCityEspionageSightReplacements.size() + data.requestCityEspionageSightRows.size();
 }
 
 	// Successful completion is terminal before Kill assigns its final native reason.
@@ -703,6 +721,7 @@ VoxRlCapture::VoxRlCapture()
 	m_segmentStreamBytes(0),
 	m_segment(NULL),
 	m_engagement(NULL),
+	m_playerMaps(NULL),
 	m_operationState(NULL),
 	m_operationCauseStack(NULL),
 	m_searchActive(false),
@@ -715,6 +734,7 @@ VoxRlCapture::VoxRlCapture()
 	std::memset(m_gameUuidText, 0, sizeof(m_gameUuidText));
 	m_operationState = new OperationCaptureState();
 	m_operationCauseStack = new std::vector<OperationCauseContext>();
+	m_playerMaps = new PlayerMapCache();
 }
 
 VoxRlCapture::~VoxRlCapture()
@@ -727,6 +747,8 @@ VoxRlCapture::~VoxRlCapture()
 	m_operationState = NULL;
 	delete m_operationCauseStack;
 	m_operationCauseStack = NULL;
+	delete m_playerMaps;
+	m_playerMaps = NULL;
 }
 
 bool VoxRlCapture::IsObserving(PlayerTypes ePlayer) const
@@ -915,7 +937,8 @@ void VoxRlCapture::OnGameStartOrLoad()
 	std::memset(m_gameUuidText, 0, sizeof(m_gameUuidText));
 	m_staticGeneration = 0;
 	m_staticGenerationWritten = false;
-	m_staticPlayerSignature.clear();
+	m_playerMaps->staticMaps.clear();
+	m_playerMaps->currentMaps.clear();
 	m_campaignTurnPlayer = 0xFFFFFFFF;
 	m_campaignTurn = -1;
 	m_campaignStaticGeneration = 0;
@@ -1203,7 +1226,27 @@ void VoxRlCapture::OnPreTacticalReconciliation(PlayerTypes ePlayer)
 		FailSegment("preTacticalOperationCollect");
 		return;
 	}
+	// This REQUEST carries the actor's map and espionage changes from the city turns,
+	// policies, research, and espionage that ran after the military checkpoint.
+	m_segment->collectLateTurnState = true;
 	EmitSynchronizationRequest();
+	if (m_segment != NULL) m_segment->collectLateTurnState = false;
+}
+
+// Refreshes the cached maps of one player and its living teammates once STATIC exists.
+// Native CvTeam::processTech reinitializes the traits of every team member, so a teammate's
+// map can change during this player's turn.
+void VoxRlCapture::RefreshTeamPlayerMaps(PlayerTypes ePlayer)
+{
+	if (!m_staticGenerationWritten || ePlayer < 0 || ePlayer >= MAX_PLAYERS) return;
+	const TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+	for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
+	{
+		const PlayerTypes eMember = static_cast<PlayerTypes>(playerIndex);
+		if (eMember != ePlayer && (!GET_PLAYER(eMember).isAlive() || GET_PLAYER(eMember).getTeam() != eTeam)) continue;
+		VoxRlPlayerMapRows rows;
+		if (VoxRlCollectPlayerMapRows(eMember, rows)) m_playerMaps->currentMaps[playerIndex] = rows;
+	}
 }
 
 void VoxRlCapture::OnOperationInvocationComplete(PlayerTypes ePlayer, int operationId, int result)
@@ -1581,10 +1624,16 @@ bool VoxRlCapture::BuildAndWriteStatic()
 	char fileName[32];
 	{
 		ScopedTiming timing(m_config.timings, m_staticConstructNs);
-		if (!VoxRlBuildStaticBlock(identity, storage, length, m_staticPlayerSignature))
+		std::vector<VoxRlPlayerMapRows> playerMaps;
+		if (!VoxRlBuildStaticBlock(identity, storage, length, playerMaps))
 		{
 			return false;
 		}
+		// A new STATIC absorbs every player's current map.
+		m_playerMaps->staticMaps.clear();
+		for (size_t index = 0; index < playerMaps.size(); ++index)
+			m_playerMaps->staticMaps[static_cast<int>(playerMaps[index].player.player)] = playerMaps[index];
+		m_playerMaps->currentMaps = m_playerMaps->staticMaps;
 	}
 	{
 		ScopedTiming timing(m_config.timings, m_staticWriteFlushNs);
@@ -1632,8 +1681,11 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	{
 		ScopedTiming timing(m_config.timings, m_segment->timings.worldBuildNs);
 		VoxRlWorldBuildTimings* phases = m_config.timings ? &segment.timings.worldPhases : NULL;
+		// WORLD carries every cached player map that differs from the one STATIC holds.
+		std::vector<VoxRlPlayerMapRows> overrides;
+		VoxRlCollectPlayerMapOverrides(m_playerMaps->staticMaps, m_playerMaps->currentMaps, overrides);
 		if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot,
-			teamPassability, teamResources, phases))
+			teamPassability, teamResources, overrides, phases))
 		{
 			return false;
 		}
@@ -1666,6 +1718,17 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			PlayerRecord row;
 			std::memcpy(&row, playerBytes + index * sizeof(PlayerRecord), sizeof(row));
 			if (!segment.lastPlayerRows.insert(std::make_pair(static_cast<int>(row.id), row)).second) return false;
+		}
+		const VoxRlSectionDirectoryEntry* espionage = worldView.FindSection(VOX_RL_SECTION_WORLD_CITY_ESPIONAGE_SIGHTS);
+		const u32 espionageCount = espionage == NULL ? 0U : espionage->count;
+		const u8* espionageBytes = espionageCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_CITY_ESPIONAGE_SIGHTS);
+		if (espionageCount != 0U && espionageBytes == NULL) return false;
+		segment.lastEspionageRows.clear();
+		for (u32 index = 0; index < espionageCount; ++index)
+		{
+			CityEspionageSightRecord row;
+			std::memcpy(&row, espionageBytes + index * sizeof(CityEspionageSightRecord), sizeof(row));
+			if (row.spyOwner == static_cast<i8>(ePlayer)) segment.lastEspionageRows.push_back(row);
 		}
 		const VoxRlSectionDirectoryEntry* units = worldView.FindSection(VOX_RL_SECTION_WORLD_UNITS);
 		const u32 unitCount = units == NULL ? 0U : units->count;
@@ -1960,15 +2023,9 @@ void VoxRlCapture::OnPreDangerCheckpoint(PlayerTypes ePlayer)
 		return;
 	}
 	m_gameDirectory = m_captureRoot + "/" + m_gameUuidText;
-	// STATIC is reused until a topology invalidation or a player map change replaces it.
-	bool playerMapChanged = false;
-	if (m_staticGenerationWritten && !m_topologyInvalidated)
-	{
-		std::vector<char> playerSignature;
-		playerMapChanged = !VoxRlCollectStaticPlayerSignature(playerSignature) ||
-			playerSignature != m_staticPlayerSignature;
-	}
-	if (!m_staticGenerationWritten || m_topologyInvalidated || playerMapChanged)
+	// STATIC is reused until a topology invalidation replaces it; WORLD and REQUEST carry
+	// the player maps that changed since.
+	if (!m_staticGenerationWritten || m_topologyInvalidated)
 	{
 		const std::string directory = m_gameDirectory + "/baselines/static";
 		const unsigned int generation = ReserveGeneration(directory, "static");
@@ -1989,6 +2046,9 @@ void VoxRlCapture::OnPreDangerCheckpoint(PlayerTypes ePlayer)
 // Ends board and danger capture while retaining attachment-scoped military evidence.
 void VoxRlCapture::OnTurnComplete(PlayerTypes ePlayer)
 {
+	// Every player's team maps are refreshed at its own turn end, observed or not, so a later
+	// WORLD can carry the change.
+	RefreshTeamPlayerMaps(ePlayer);
 	if (m_segment == NULL || m_segment->player != ePlayer)
 	{
 		return;
@@ -2542,6 +2602,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 	VoxRlAssignClamped(gameState.elapsedGameTurns, GC.getGame().getGameTurn());
 	VoxRlAssignClamped(gameState.maxTurns, GC.getGame().getMaxTurns());
 	VoxRlAssignClamped(gameState.currentEra, GC.getGame().getCurrentEra());
+	gameState.activePlayer = static_cast<i8>(GC.getGame().getActivePlayer());
 	if (std::memcmp(&gameState, &segment.lastGameState, sizeof(gameState)) != 0)
 	{
 		std::memcpy(&data.requestGameState, &gameState, sizeof(gameState));
@@ -2631,6 +2692,21 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		std::memcpy(&delta, &row, sizeof(delta));
 		data.requestDeltaPlayers.push_back(delta);
 		baseline->second = row;
+	}
+	if (segment.collectLateTurnState)
+	{
+		// The actor's map and spy rows change only through its own city turns, policies,
+		// research, and espionage, so the pre-tactical REQUEST compares them once. Research
+		// also reinitializes every teammate's traits, so living teammates' maps are compared
+		// too. The cached map is the one this segment's WORLD and earlier REQUESTs gave the reader.
+		const TeamTypes captureTeam = GET_PLAYER(capturingPlayer).getTeam();
+		for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
+		{
+			const PlayerTypes member = static_cast<PlayerTypes>(playerIndex);
+			if (member != capturingPlayer && (!GET_PLAYER(member).isAlive() || GET_PLAYER(member).getTeam() != captureTeam)) continue;
+			if (!VoxRlAppendChangedPlayerMap(member, m_playerMaps->currentMaps, data)) valid = false;
+		}
+		if (!VoxRlAppendEspionageSightReplacement(capturingPlayer, segment.lastEspionageRows, data)) valid = false;
 	}
 	VoxRlPlayerCitySnapshot currentPlayerCityState;
 	if (!VoxRlCollectPlayerCitySnapshot(currentPlayerCityState)) valid = false;

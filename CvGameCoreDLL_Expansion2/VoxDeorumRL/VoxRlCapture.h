@@ -261,6 +261,7 @@ private:
 	class PendingRequest;
 	struct Engagement;
 	struct OperationCaptureState;
+	struct PlayerMapCache;
 	struct OperationCauseContext;
 
 	// Per-attachment turn-scoped campaign reuse: one CAMPAIGN block serves
@@ -388,9 +389,8 @@ private:
 	std::string m_staticRelPath;
 	unsigned int m_staticFramedLength;
 	bool m_topologyInvalidated;
-	// Player map signature inside the written STATIC. A different signature at a segment
-	// start writes a new STATIC generation.
-	std::vector<char> m_staticPlayerSignature;
+	// Holds the player maps written into the current STATIC and each player's latest map.
+	PlayerMapCache* m_playerMaps;
 	// A war change marks the next pre-refresh moment as a WORLD
 	// replacement checkpoint.
 	bool m_worldReplacementPending;
@@ -410,6 +410,8 @@ private:
 	Segment* m_segment;
 	Engagement* m_engagement;
 	OperationCaptureState* m_operationState;
+	// Refreshes the cached maps of one player and its living teammates from native state.
+	void RefreshTeamPlayerMaps(PlayerTypes ePlayer);
 	std::vector<OperationCauseContext>* m_operationCauseStack;
 	// Nested danger refreshes belong to the active search request.
 	bool m_searchActive;
