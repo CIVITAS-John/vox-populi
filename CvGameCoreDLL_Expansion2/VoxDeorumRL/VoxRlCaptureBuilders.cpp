@@ -1319,6 +1319,7 @@ namespace
 		row.rawTargetValue = source.rawTargetValue; row.noSettlePolicy = source.noSettlePolicy;
 		row.armyInPlaceForAttack = source.armyInPlaceForAttack;
 		row.militaryAggressivePosture = source.militaryAggressivePosture;
+		row.numTimesNuked = source.numTimesNuked; row.numTimesNukedThem = source.numTimesNukedThem;
 		row.warmongerThreat = source.warmongerThreat; }
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
