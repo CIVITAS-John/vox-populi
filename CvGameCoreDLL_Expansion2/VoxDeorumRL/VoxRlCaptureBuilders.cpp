@@ -1164,6 +1164,13 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTyp
 				row.opinion = static_cast<i8>(player.GetDiplomacyAI()->GetCivOpinion(static_cast<PlayerTypes>(other)));
 				row.potentialMilitaryTargetOrThreat =
 					player.GetDiplomacyAI()->IsPotentialMilitaryTargetOrThreat(static_cast<PlayerTypes>(other), false) ? 1 : 0;
+				row.armyInPlaceForAttack = player.GetDiplomacyAI()->IsArmyInPlaceForAttack(static_cast<PlayerTypes>(other)) ? 1 : 0;
+				row.militaryAggressivePosture = static_cast<i8>(player.GetDiplomacyAI()->GetMilitaryAggressivePosture(static_cast<PlayerTypes>(other)));
+				row.warmongerThreat = static_cast<i8>(player.GetDiplomacyAI()->GetWarmongerThreat(static_cast<PlayerTypes>(other)));
+				// Relation rows exist only for the capturing player, so this row carries the nuclear
+				// grudge counter in both directions; native reads the other player's own counter too.
+				row.numTimesNuked = static_cast<i16>(player.GetDiplomacyAI()->GetNumTimesNuked(static_cast<PlayerTypes>(other)));
+				row.numTimesNukedThem = static_cast<i16>(GET_PLAYER(static_cast<PlayerTypes>(other)).GetDiplomacyAI()->GetNumTimesNuked(static_cast<PlayerTypes>(playerIndex)));
 			}
 			snapshot.playerRelations.push_back(row);
 		}
@@ -1309,7 +1316,10 @@ namespace
 		row.visibleApproachTowardsUs = source.visibleApproachTowardsUs; row.opinion = source.opinion;
 		row.potentialMilitaryTargetOrThreat = source.potentialMilitaryTargetOrThreat;
 		row.rawMilitaryStrengthComparedToUs = source.rawMilitaryStrengthComparedToUs;
-		row.rawTargetValue = source.rawTargetValue; row.noSettlePolicy = source.noSettlePolicy; }
+		row.rawTargetValue = source.rawTargetValue; row.noSettlePolicy = source.noSettlePolicy;
+		row.armyInPlaceForAttack = source.armyInPlaceForAttack;
+		row.militaryAggressivePosture = source.militaryAggressivePosture;
+		row.warmongerThreat = source.warmongerThreat; }
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
 	{ row.flavorId = source.flavorId; row.value = source.value; }
