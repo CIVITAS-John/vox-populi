@@ -47,7 +47,9 @@ namespace
 		return true;
 	}
 
-	// Tracks the city scalar inputs that can change without a city setter notification.
+	// Tracks the city scalar inputs that can change without a city setter notification,
+	// including the military operands: heal rate, resistance, always-heal, building
+	// defense percent, and remaining sapped (forced blockade) turns.
 	struct CityCheckpointScalars
 	{
 		int productionAccumulated;
@@ -59,6 +61,11 @@ namespace
 		int civilianUnitPurchaseCooldownMod;
 		int unitFaithPurchaseCooldown;
 		int civilianUnitFaithPurchaseCooldown;
+		int healRate;
+		int resistance;
+		int alwaysHeal;
+		int buildingDefenseMod;
+		int sappedTurns;
 		// Copies the exact values carried by a WORLD or REQUEST city row.
 		explicit CityCheckpointScalars(const CityRecord& row)
 			: productionAccumulated(row.productionAccumulated),
@@ -68,7 +75,9 @@ namespace
 			unitPurchaseCooldownMod(row.unitPurchaseCooldownMod),
 			civilianUnitPurchaseCooldownMod(row.civilianUnitPurchaseCooldownMod),
 			unitFaithPurchaseCooldown(row.unitFaithPurchaseCooldown),
-			civilianUnitFaithPurchaseCooldown(row.civilianUnitFaithPurchaseCooldown) {}
+			civilianUnitFaithPurchaseCooldown(row.civilianUnitFaithPurchaseCooldown),
+			healRate(row.healRate), resistance(row.resistance), alwaysHeal(row.alwaysHeal),
+			buildingDefenseMod(row.buildingDefenseMod), sappedTurns(row.sappedTurns) {}
 		// Reads the current native values before deciding whether to mark a city dirty.
 		explicit CityCheckpointScalars(CvCity& city)
 			: productionAccumulated(city.getProduction()),
@@ -78,7 +87,11 @@ namespace
 			unitPurchaseCooldownMod(city.GetUnitPurchaseCooldownMod(false)),
 			civilianUnitPurchaseCooldownMod(city.GetUnitPurchaseCooldownMod(true)),
 			unitFaithPurchaseCooldown(city.GetUnitFaithPurchaseCooldown(false)),
-			civilianUnitFaithPurchaseCooldown(city.GetUnitFaithPurchaseCooldown(true)) {}
+			civilianUnitFaithPurchaseCooldown(city.GetUnitFaithPurchaseCooldown(true)),
+			healRate(city.getHealRate()), resistance(city.IsResistance() ? 1 : 0),
+			alwaysHeal(city.GetAlwaysHeal()),
+			buildingDefenseMod(city.GetCityBuildings()->GetBuildingDefenseMod()),
+			sappedTurns(city.GetSappedTurns()) {}
 		// Compares the scalar inputs whose native setters do not notify capture.
 		bool operator!=(const CityCheckpointScalars& other) const
 		{ return productionAccumulated != other.productionAccumulated ||
@@ -88,7 +101,10 @@ namespace
 			unitPurchaseCooldownMod != other.unitPurchaseCooldownMod ||
 			civilianUnitPurchaseCooldownMod != other.civilianUnitPurchaseCooldownMod ||
 			unitFaithPurchaseCooldown != other.unitFaithPurchaseCooldown ||
-			civilianUnitFaithPurchaseCooldown != other.civilianUnitFaithPurchaseCooldown; }
+			civilianUnitFaithPurchaseCooldown != other.civilianUnitFaithPurchaseCooldown ||
+			healRate != other.healRate || resistance != other.resistance ||
+			alwaysHeal != other.alwaysHeal || buildingDefenseMod != other.buildingDefenseMod ||
+			sappedTurns != other.sappedTurns; }
 	};
 
 	// Keeps lazy native danger queries from reentering capture during collection.
