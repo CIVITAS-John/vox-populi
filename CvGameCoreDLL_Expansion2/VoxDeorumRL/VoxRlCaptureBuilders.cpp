@@ -1508,6 +1508,53 @@ int VoxRlMilitaryUnitCountCorrection(CvPlayer& player)
 	return player.getNumMilitaryUnits() - capturedCount;
 }
 
+// Captures the state-religion and secondary-pantheon heal contribution. The independent
+// permanent pantheon stays separate so native healing can apply it without a state religion.
+// The CPO branch resolves religion from a nearby city, so its per-player contribution stays zero.
+int VoxRlReligionFriendlyHealChange(CvPlayer& player)
+{
+	if (!MOD_BALANCE_VP) return 0;
+	CvCity* pCapital = player.getCapitalCity();
+	if (pCapital == NULL) return 0;
+
+	const PlayerTypes ePlayer = player.GetID();
+	const ReligionTypes eApplicableReligion = player.GetReligions()->GetStateReligion();
+	const BeliefTypes eSecondaryPantheon = eApplicableReligion != NO_RELIGION
+		? pCapital->GetCityReligions()->GetSecondaryReligionPantheonBelief()
+		: NO_BELIEF;
+
+	int iExtraFriendlyHeal = 0;
+	const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eApplicableReligion, ePlayer);
+	if (pReligion)
+	{
+		iExtraFriendlyHeal += pReligion->m_Beliefs.GetFriendlyHealChange(ePlayer, pReligion->GetHolyCity());
+		iExtraFriendlyHeal += eSecondaryPantheon != NO_BELIEF ? GC.GetGameBeliefs()->GetEntry(eSecondaryPantheon)->GetFriendlyHealChange() : 0;
+	}
+
+	return iExtraFriendlyHeal;
+}
+
+// Captures the independent permanent pantheon belief after native double-counting checks.
+int VoxRlPermanentPantheonHealBelief(CvPlayer& player)
+{
+	if (!MOD_BALANCE_VP || !MOD_BALANCE_PERMANENT_PANTHEONS) return NO_BELIEF;
+	CvCity* pCapital = player.getCapitalCity();
+	if (pCapital == NULL) return NO_BELIEF;
+	const PlayerTypes ePlayer = player.GetID();
+	if (!GC.getGame().GetGameReligions()->HasCreatedPantheon(ePlayer)) return NO_BELIEF;
+	const CvReligion* pPantheon = GC.getGame().GetGameReligions()->GetReligion(RELIGION_PANTHEON, ePlayer);
+	const BeliefTypes ePantheonBelief = GC.getGame().GetGameReligions()->GetBeliefInPantheon(ePlayer);
+	if (pPantheon == NULL || ePantheonBelief == NO_BELIEF) return NO_BELIEF;
+	const ReligionTypes eReligion = player.GetReligions()->GetStateReligion();
+	const BeliefTypes eSecondaryPantheon = eReligion != NO_RELIGION
+		? pCapital->GetCityReligions()->GetSecondaryReligionPantheonBelief() : NO_BELIEF;
+	if (ePantheonBelief == eSecondaryPantheon) return NO_BELIEF;
+	const CvReligion* pReligion = GC.getGame().GetGameReligions()->GetReligion(eReligion, ePlayer);
+	if (pReligion != NULL && pReligion->m_Beliefs.IsPantheonBeliefInReligion(ePantheonBelief, eReligion, ePlayer))
+		return NO_BELIEF;
+	return ePantheonBelief;
+}
+
 // Collects one player row, including the military strategy used by purchases.
 bool VoxRlCollectPlayerRecord(CvPlayer& player, PlayerTypes capturingPlayer, PlayerRecord& row)
 {
@@ -1818,6 +1865,24 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 		row.nameLength = static_cast<u16>(name.length());
 		data.staticFlavorNames.insert(data.staticFlavorNames.end(), name.begin(), name.end());
 		data.staticFlavorInfos.push_back(row);
+	}
+	// City-state personalities are randomized at game start and never change, and native
+	// grand strategy runs only for majors, so STATIC carries every city-state's flavors once.
+	for (int playerIndex = MAX_MAJOR_CIVS; playerIndex < MAX_CIV_PLAYERS; ++playerIndex)
+	{
+		CvPlayerAI& player = GET_PLAYER(static_cast<PlayerTypes>(playerIndex));
+		if (!player.isAlive() || !player.isMinorCiv()) continue;
+		for (int flavor = 0; flavor < GC.getNumFlavorTypes(); ++flavor)
+		{
+			StaticMinorFlavorRecord row;
+			ZeroRecord(row);
+			row.player = static_cast<i8>(playerIndex);
+			if (!AssignCheckedI16(row.flavorId, flavor, "StaticMinorFlavorRecord", "flavorId", 0)) valid = false;
+			VoxRlAssignClamped(row.value, player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor)));
+			VoxRlAssignClamped(row.personalityAndGrandStrategyValue,
+				player.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(static_cast<FlavorTypes>(flavor)));
+			data.staticMinorFlavors.push_back(row);
+		}
 	}
 	if (!VoxRlCollectNativeInfoTables(data)) valid = false;
 	if (!VoxRlCollectPromotionTypeRows(data)) valid = false;

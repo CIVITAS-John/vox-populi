@@ -130,6 +130,18 @@ namespace
         return false;
     }
 
+    // Resolves the segment that carries a unit's event: its admitted major owner, or
+    // the first committing admitted major for a city-state, like barbarian spawns.
+    bool ResolveEventReceiver(const CvUnit& unit, int& receiver)
+    {
+        const PlayerTypes owner = unit.getOwner();
+        if (VoxRlCapture::GetInstance().AdmitsMilitaryEvents(owner)) { receiver = owner; return true; }
+        if (owner < MAX_MAJOR_CIVS || owner >= MAX_CIV_PLAYERS || owner == BARBARIAN_PLAYER) return false;
+        if (!GET_PLAYER(owner).isMinorCiv() || !HasMajorCarrier()) return false;
+        receiver = -1;
+        return true;
+    }
+
     // Finds the latest provisional arrival that caller completion may still update.
     MilitaryEvent* PendingArrival(const CvUnit& unit)
     {
@@ -318,11 +330,14 @@ void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source
     else lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(unit.getOwner(), unit.GetID());
     if (reason == REASON_BUY || reason == REASON_FAITH_BUY || reason == REASON_UPGRADE) return;
     if (unit.getOwner() == BARBARIAN_PLAYER) return;
-    // Minor arrivals have no receiving capture segment.
-    if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(unit.getOwner())) return;
+    // City-state arrivals are shared evidence for the next admitted major segment.
+    int receiver;
+    if (!ResolveEventReceiver(unit, receiver)) return;
     const int cause = reason == REASON_TRAIN ? VOX_RL_EVENT_PRODUCTION : reason == REASON_GIFT ? VOX_RL_EVENT_GIFT :
         reason == REASON_CONVERT ? VOX_RL_EVENT_CONVERSION : VOX_RL_EVENT_UNKNOWN;
-    events.push_back(MakeEvent(unit, 0, cause));
+    MilitaryEvent event = MakeEvent(unit, 0, cause);
+    event.receiver = receiver;
+    events.push_back(event);
 }
 
 // Records a new camp with an identity distinct from every earlier camp at the plot.
@@ -391,6 +406,19 @@ void VoxRlNoteMilitaryGiftArrival(CvUnit& unit, PlayerTypes donor)
     MilitaryEvent* event = PendingArrival(unit);
     if (event == NULL) return;
     event->row.cause = VOX_RL_EVENT_GIFT; event->row.donorPlayer = static_cast<i8>(donor);
+    // A city-state buyout records the donor's departure before the replacement exists.
+    if (event->row.transferId != 0) return;
+    for (size_t i = events.size(); i > 0; --i)
+    {
+        const MilitaryEvent& departure = events[i - 1];
+        if (departure.kind == 1 && departure.row.transferId != 0 && departure.row.sourceOwner == donor &&
+            departure.row.donorPlayer == unit.getOwner() && departure.row.lineageOwner == event->row.lineageOwner &&
+            departure.row.lineageUnitId == event->row.lineageUnitId)
+        {
+            event->row.transferId = departure.row.transferId;
+            return;
+        }
+    }
 }
 
 // Resolves a captured replacement against the removed source's recorded identity.
@@ -408,16 +436,19 @@ void VoxRlCompleteMilitaryCapture(CvUnit& unit, PlayerTypes sourceOwner, int sou
 // Captures a departure before the native unit is removed from its original owner.
 void VoxRlNoteMilitaryDeparture(CvUnit& unit, int receiver, int cause)
 {
-    if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(unit.getOwner())) return;
+    int eventReceiver;
+    if (!ResolveEventReceiver(unit, eventReceiver)) return;
     MilitaryEvent event = MakeEvent(unit, 1, cause);
+    event.receiver = eventReceiver;
     event.row.initializationComplete = 1;
     if (cause == VOX_RL_EVENT_GIFT) event.row.transferId = nextTransfer++;
     event.row.donorPlayer = static_cast<i8>(cause == VOX_RL_EVENT_GIFT ? receiver : -1);
     events.push_back(event);
-    // Immediate gifts share the transfer identity with their source departure.
+    // Immediate gifts share the transfer identity with their source departure. The
+    // arrival is matched by its owner, since a city-state arrival has a shared receiver.
     if (event.row.transferId != 0)
         for (size_t i = 0; i + 1 < events.size(); ++i)
-            if (events[i].kind == 0 && events[i].receiver == receiver &&
+            if (events[i].kind == 0 && events[i].row.sourceOwner == receiver &&
                 events[i].row.lineageOwner == event.row.lineageOwner && events[i].row.lineageUnitId == event.row.lineageUnitId)
                 events[i].row.transferId = event.row.transferId;
 }
@@ -594,7 +625,8 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
     data.requestBarbarianCampCreations.insert(data.requestBarbarianCampCreations.end(), campCreations.begin(), campCreations.begin() + collectedCamps);
     // Economic evidence belongs to the shared game timeline. The next admitted
     // segment carries every player's rows; row.player identifies the affected treasury.
-    // Unit arrivals and departures instead wait for their receiving observer above.
+    // Unit arrivals and departures instead wait for their receiving observer above,
+    // except city-state and barbarian events, which the first committing segment carries.
     data.requestMilitaryGoldTransactions.insert(data.requestMilitaryGoldTransactions.end(), goldTransactions.begin(), goldTransactions.end());
     data.requestEconomicBatches.insert(data.requestEconomicBatches.end(), economicBatches.begin(), economicBatches.end());
     return true;

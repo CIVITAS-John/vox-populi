@@ -37020,6 +37020,10 @@ void CvPlayer::AddIncomingUnit(PlayerTypes eFromPlayer, CvUnit* pUnit)
 		int iY = pUnit->getY();
 		UnitTypes eType = pUnit->getUnitType();
 
+		// Vox Deorum: the minor's unit leaves as a gift before the native replacement.
+		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			VoxRlNoteMilitaryDeparture(*pUnit, GetID(), VOX_RL_EVENT_GIFT);
+
 		// Get rid of the old unit
 		pUnit->kill(true);
 
@@ -37038,9 +37042,12 @@ void CvPlayer::AddIncomingUnit(PlayerTypes eFromPlayer, CvUnit* pUnit)
 				{
 					pNewUnit->setOriginCity(getCapitalCity()->GetID());
 				}
-				// Vox Deorum: retain the original lineage and completed gift placement.
+				// Vox Deorum: retain the original lineage, then label the arrival as the minor's gift.
 				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+				{
 					VoxRlCompleteMilitaryUnit(*pNewUnit, pUnit);
+					VoxRlNoteMilitaryGiftArrival(*pNewUnit, eFromPlayer);
+				}
 			}
 		}
 	}

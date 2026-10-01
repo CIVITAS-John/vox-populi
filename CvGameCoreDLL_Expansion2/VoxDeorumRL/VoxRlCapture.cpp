@@ -180,26 +180,6 @@ namespace
 			teams.count(static_cast<int>(relation.otherTeam)) != 0;
 	}
 
-	// Marks every retained unit whose native current-plot healing result changed.
-	void RefreshChangedActualHealRates(std::map<VoxRlEntityKey, int>& previous,
-		std::set<VoxRlEntityKey>& dirtyUnits)
-	{
-		for (std::map<VoxRlEntityKey, int>::iterator baseline = previous.begin();
-			baseline != previous.end(); ++baseline)
-		{
-			const VoxRlEntityKey& key = baseline->first;
-			CvUnit* pUnit = GET_PLAYER(static_cast<PlayerTypes>(key.owner)).getUnit(key.id);
-			if (pUnit == NULL || pUnit->plot() == NULL || pUnit->isDelayedDeath()) continue;
-			// Native current-plot healing is always zero for a healthy unit. A retained
-			// nonzero value still needs recomputation so healing to full clears the row.
-			if (baseline->second == 0 && !pUnit->IsHurt()) continue;
-			const int actualHealRate = pUnit->ActualHealRate(pUnit->plot(), false);
-			if (baseline->second == actualHealRate) continue;
-			dirtyUnits.insert(key);
-			baseline->second = actualHealRate;
-		}
-	}
-
 	// Marks retained cities whose derived military garrison need changed.
 	void RefreshChangedNeedsGarrison(std::map<VoxRlEntityKey, unsigned char>& previous,
 		std::set<VoxRlEntityKey>& dirtyCities)
@@ -376,11 +356,6 @@ struct VoxRlCapture::Segment
 	// Set while the pre-tactical REQUEST collects the actor's outside-turn state: its
 	// player map and its espionage sight rows.
 	bool collectLateTurnState;
-	// Latest native healing result for each serialized unit. ActualHealRate depends on
-	// nearby units and mutable plot and city state, so setter hooks cannot identify every
-	// unit whose complete row must be refreshed.
-	std::map<VoxRlEntityKey, int> lastUnitActualHealRates;
-
 	// The zone-id-to-row decode table of the currently accepted zone snapshot;
 	// rebuilt only when a replacement accepts a new table.
 	std::map<int, unsigned int> zoneRowByZoneId;
@@ -1744,19 +1719,6 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 			std::memcpy(&row, foundValueBytes + index * sizeof(PlayerFoundValueRecord), sizeof(row));
 			if (row.player == static_cast<i8>(ePlayer)) segment.lastFoundValueRows.push_back(row);
 		}
-		const VoxRlSectionDirectoryEntry* units = worldView.FindSection(VOX_RL_SECTION_WORLD_UNITS);
-		const u32 unitCount = units == NULL ? 0U : units->count;
-		const u8* unitBytes = unitCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_UNITS);
-		if (unitCount != 0U && unitBytes == NULL) return false;
-		segment.lastUnitActualHealRates.clear();
-		for (u32 index = 0; index < unitCount; ++index)
-		{
-			UnitWireRecord row;
-			std::memcpy(&row, unitBytes + index * sizeof(UnitWireRecord), sizeof(row));
-			const VoxRlEntityKey key(static_cast<int>(row.owner), row.id);
-			if (!segment.lastUnitActualHealRates.insert(
-				std::make_pair(key, static_cast<int>(row.actualHealRate))).second) return false;
-		}
 		const VoxRlSectionDirectoryEntry* cities = worldView.FindSection(VOX_RL_SECTION_WORLD_CITIES);
 		const u32 cityCount = cities == NULL ? 0U : cities->count;
 		const u8* cityBytes = cityCount == 0U ? NULL : worldView.SectionBytes(VOX_RL_SECTION_WORLD_CITIES);
@@ -2750,9 +2712,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		if (!VoxRlAppendPlayerCityReplacements(segment.playerCitySnapshot, currentPlayerCityState,
 			playerOwners, teamOwners, cityOwners, data)) valid = false;
 	}
-	// Native healing depends on nearby units and mutable plot, city, diplomacy, and player
-	// state. Recompute it at the safe boundary so changes also refresh affected recipients.
-	RefreshChangedActualHealRates(segment.lastUnitActualHealRates, segment.dirtyUnits);
 	RefreshChangedNeedsGarrison(segment.lastCityNeedsGarrison, segment.dirtyCities);
 	for (int playerIndex = 0; playerIndex < MAX_PLAYERS; ++playerIndex)
 	{
@@ -2887,7 +2846,6 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 			continue;
 		}
 		data.requestDeltaUnits.push_back(delta);
-		segment.lastUnitActualHealRates[*key] = record.actualHealRate;
 		// A changed unit replaces both child tables in full. Empty ranges clear a
 		// queue or timed-promotion set left by an earlier checkpoint.
 		std::vector<UnitMissionRecord> missions;
@@ -3971,7 +3929,6 @@ void VoxRlCapture::NoteUnitRemoved(PlayerTypes eOwner, int iUnitId)
 		if (city->second.garrisonOwner == eOwner && city->second.garrisonUnitId == iUnitId)
 			m_segment->dirtyCities.insert(city->first);
 	}
-	m_segment->lastUnitActualHealRates.erase(key);
 	m_segment->dirtyUnits.erase(key);
 	// Only a unit the replica knows needs a removal row: one present since the WORLD
 	// build or already flushed as a creation. Forgetting it here makes the mark

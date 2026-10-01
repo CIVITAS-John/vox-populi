@@ -59,6 +59,12 @@ bool VoxRlCollectPlayerRecord(class CvPlayer& player, PlayerTypes capturingPlaye
 // Returns native military-support units omitted from the live unit rows.
 int VoxRlMilitaryUnitCountCorrection(class CvPlayer& player);
 
+// Returns the collapsed friendly-territory religion heal native CvUnit::healRate adds.
+int VoxRlReligionFriendlyHealChange(class CvPlayer& player);
+
+// Returns the permanent pantheon belief eligible for an independent friendly heal contribution.
+int VoxRlPermanentPantheonHealBelief(class CvPlayer& player);
+
 
 // Saturates a native integer to the destination schema field's storage range before
 // narrowing. Wide bounds keep signed inputs comparable with unsigned field limits.
