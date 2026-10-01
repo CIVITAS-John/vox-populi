@@ -1182,6 +1182,8 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTyp
 			if (!AssignCheckedI16(row.flavorId, flavor,
 				"PlayerFlavorRecord", "flavorId", 0)) return false;
 			VoxRlAssignClamped(row.value, player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor)));
+			VoxRlAssignClamped(row.personalityAndGrandStrategyValue,
+				player.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(static_cast<FlavorTypes>(flavor)));
 			snapshot.playerFlavors.push_back(row);
 		}
 		for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
