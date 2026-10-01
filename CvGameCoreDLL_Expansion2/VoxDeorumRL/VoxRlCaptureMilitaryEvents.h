@@ -75,4 +75,19 @@ private:
     VoxRlMilitaryGoldScope& operator=(const VoxRlMilitaryGoldScope&);
 };
 
+// Labels unit creations as upgrades when native creates a replacement under another reason, such
+// as the goody-hut upgrade, which native creates as a gift before converting the old unit into it.
+class VoxRlMilitaryUpgradeScope
+{
+public:
+    // Disabled scopes do no capture work.
+    explicit VoxRlMilitaryUpgradeScope(bool enabled);
+    // Restores the enclosing classification.
+    ~VoxRlMilitaryUpgradeScope();
+private:
+    bool m_enabled;
+    VoxRlMilitaryUpgradeScope(const VoxRlMilitaryUpgradeScope&);
+    VoxRlMilitaryUpgradeScope& operator=(const VoxRlMilitaryUpgradeScope&);
+};
+
 #endif

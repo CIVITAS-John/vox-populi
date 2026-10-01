@@ -12894,7 +12894,12 @@ void CvPlayer::receiveGoody(CvPlot* pPlot, GoodyTypes eGoody, CvUnit* pUnit)
 				}
 			}
 
-			CvUnit* pNewUnit = initUnit(eUpgradeUnit, pPlot->getX(), pPlot->getY(), newAIDefault, REASON_GIFT, false, false, 0, pUnit->GetNumGoodyHutsPopped());
+			CvUnit* pNewUnit = NULL;
+			{
+				// Vox Deorum: capture records the goody-hut replacement as an upgrade, not a gift arrival.
+				VoxRlMilitaryUpgradeScope captureUpgrade(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled);
+				pNewUnit = initUnit(eUpgradeUnit, pPlot->getX(), pPlot->getY(), newAIDefault, REASON_GIFT, false, false, 0, pUnit->GetNumGoodyHutsPopped());
+			}
 			pUnit->finishMoves();
 			pUnit->SetBeenPromotedFromGoody(true);
 

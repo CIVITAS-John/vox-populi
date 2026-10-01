@@ -97,6 +97,7 @@ namespace
     unsigned int nextCreatedCamp = 0x80000001u;
     unsigned int goldDepth = 0;
     int goldCause = 0;
+    unsigned int upgradeDepth = 0;
     bool captureFailed = false;
 
     // Starts a new bounded schedule only when this actor enters a different turn.
@@ -278,7 +279,7 @@ void VoxRlResetMilitaryEvents()
     lineage.clear(); events.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
     collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
     for (int actor = 0; actor < MAX_PLAYERS; ++actor) actorTurnSchedules[actor] = ActorTurnSchedule();
-    eventActor = -1; eventPhase = 0; eventTurn = -1; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; captureFailed = false;
+    eventActor = -1; eventPhase = 0; eventTurn = -1; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; upgradeDepth = 0; captureFailed = false;
 }
 
 // Uses the first observed owner-qualified unit identity within the source game.
@@ -328,7 +329,7 @@ void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source
         lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(owner, id);
     }
     else lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(unit.getOwner(), unit.GetID());
-    if (reason == REASON_BUY || reason == REASON_FAITH_BUY || reason == REASON_UPGRADE) return;
+    if (reason == REASON_BUY || reason == REASON_FAITH_BUY || reason == REASON_UPGRADE || upgradeDepth != 0) return;
     if (unit.getOwner() == BARBARIAN_PLAYER) return;
     // City-state arrivals are shared evidence for the next admitted major segment.
     int receiver;
@@ -661,4 +662,16 @@ VoxRlMilitaryGoldScope::VoxRlMilitaryGoldScope(bool enabled, int cause) : m_enab
 VoxRlMilitaryGoldScope::~VoxRlMilitaryGoldScope()
 {
     if (m_enabled) { --goldDepth; goldCause = m_previousCause; }
+}
+
+// Labels creations in the scope as upgrades, which keep lineage but record no arrival.
+VoxRlMilitaryUpgradeScope::VoxRlMilitaryUpgradeScope(bool enabled) : m_enabled(enabled)
+{
+    if (m_enabled) ++upgradeDepth;
+}
+
+// Restores the enclosing creation classification.
+VoxRlMilitaryUpgradeScope::~VoxRlMilitaryUpgradeScope()
+{
+    if (m_enabled) --upgradeDepth;
 }
