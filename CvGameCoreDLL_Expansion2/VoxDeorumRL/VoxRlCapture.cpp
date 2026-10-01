@@ -626,6 +626,7 @@ namespace
 		data.requestOperationVersions.size() + data.requestArmyVersions.size() +
 		data.requestFormationEntryVersions.size() + data.requestCampaignBoundaries.size() +
 		data.requestZoneChoices.size() + data.requestFocusAreas.size() +
+		data.requestWorkerAssignments.size() +
 		data.requestCityResources.size() + data.requestPlayerResources.size() +
 		data.requestPlayerEconomics.size() + data.requestEconomicBatches.size() +
 		data.requestMilitaryGoldTransactions.size() + data.requestEventUnits.size() +
@@ -1364,6 +1365,36 @@ void VoxRlCapture::OnZoneReinforcementComplete(PlayerTypes ePlayer)
 	boundary.observationWorldGeneration = m_segment->worldGeneration;
 	boundary.observationDeltaSequence = m_segment->nextDeltaSequence;
 	m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)].requestCampaignBoundaries.push_back(boundary);
+	EmitSynchronizationRequest();
+}
+
+void VoxRlCapture::NoteWorkerAssignment(PlayerTypes ePlayer, const CvUnit* pUnit, int plotIndex,
+	int buildType, int directiveType, int source, int sentryKind, int sentryWeight)
+{
+	if (pUnit == NULL || !IsObserving(ePlayer)) return;
+	if (plotIndex < 0 || plotIndex > 32767 || buildType < -1 || buildType > 32767) return;
+	if (directiveType < 0 || directiveType > 6) return;
+	RequestWorkerAssignmentRecord row;
+	std::memset(&row, 0, sizeof(row));
+	row.owner = static_cast<i8>(ePlayer);
+	row.unitId = pUnit->GetID();
+	row.unitType = static_cast<i16>(pUnit->getUnitType());
+	row.plotIndex = static_cast<i16>(plotIndex);
+	row.buildType = static_cast<i16>(buildType);
+	row.directiveType = static_cast<u8>(directiveType);
+	row.source = static_cast<u8>(source);
+	row.sentryKind = static_cast<u8>(sentryKind);
+	row.sentryWeight = sentryWeight;
+	m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)].requestWorkerAssignments.push_back(row);
+}
+
+void VoxRlCapture::OnWorkerMovesComplete(PlayerTypes ePlayer)
+{
+	if (!IsObserving(ePlayer)) return;
+	std::map<int, VoxRlRequestData>::const_iterator pending =
+		m_operationState->pendingRowsByOwner.find(static_cast<int>(ePlayer));
+	if (pending == m_operationState->pendingRowsByOwner.end() ||
+		pending->second.requestWorkerAssignments.empty()) return;
 	EmitSynchronizationRequest();
 }
 
@@ -2620,6 +2651,7 @@ bool VoxRlCapture::CollectDelta(VoxRlRequestData& data)
 		data.requestCampaignBoundaries = operationalRows->second.requestCampaignBoundaries;
 		data.requestZoneChoices = operationalRows->second.requestZoneChoices;
 		data.requestFocusAreas = operationalRows->second.requestFocusAreas;
+		data.requestWorkerAssignments = operationalRows->second.requestWorkerAssignments;
 	}
 	// Team resource capabilities can change through technology, policy, or team state.
 	// Compare the complete checkpoint roster on every request because those mutations do

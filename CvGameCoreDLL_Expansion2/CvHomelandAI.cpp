@@ -17,6 +17,7 @@
 #include "cvStopWatch.h"
 #include "CvTypes.h"
 #include "CvMilitaryAI.h"
+#include "VoxDeorumRL/VoxRlCapture.h"
 
 // must be included after all other headers
 #include "LintFree.h"
@@ -3462,6 +3463,11 @@ void CvHomelandAI::ExecuteWorkerMoves()
 				UnitProcessed(iUnitId);
 
 				CvPlot* pDirectivePlot = GC.getMap().plot(eDirective.m_sX, eDirective.m_sY);
+				// Vox Deorum: record the worker's walk target for simulator replay.
+				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+					VoxRlCapture::GetInstance().NoteWorkerAssignment(m_pPlayer->GetID(), pUnit, pDirectivePlot->GetPlotIndex(),
+						eDirective.m_eBuild, eDirective.m_eDirectiveType, VOX_RL_WORKER_ASSIGNMENT_ASSIGNED,
+						VOX_RL_WORKER_SENTRY_NONE, 0);
 
 				processedWorkers.insert(iUnitId);
 				ignoredDirectives.insert(eDirective);
@@ -3488,6 +3494,10 @@ void CvHomelandAI::ExecuteWorkerMoves()
 			if (pTargetPlot && ExecuteMoveToTarget(pUnit, pTargetPlot, CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY | CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER, false))
 			{
 				processedWorkers.insert(pUnit->GetID());
+				// Vox Deorum: record the worker's region target for simulator replay.
+				if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+					VoxRlCapture::GetInstance().NoteWorkerAssignment(m_pPlayer->GetID(), pUnit, pTargetPlot->GetPlotIndex(),
+						NO_BUILD, 0, VOX_RL_WORKER_ASSIGNMENT_REGION, VOX_RL_WORKER_SENTRY_NONE, 0);
 			}
 		}
 	}
@@ -3523,11 +3533,14 @@ void CvHomelandAI::ExecuteWorkerMoves()
 					processedWorkers.insert(pBuilder->GetID());
 					ignoredDirectives.insert(eDirective);
 
+					// Vox Deorum: track the sentry point kind for simulator replay.
+					int iVoxRlSentryKind = VOX_RL_WORKER_SENTRY_NONE;
 					// Add a sentry point here
 					if (pDirectivePlot->getOwner() != m_pPlayer->GetID() || pDirectivePlot->IsAdjacentOwnedByTeamOtherThan(m_pPlayer->getTeam(), true, true, true, true))
 					{
 						int iWeight = plotBuildScore.GetPriorityScore();
 						CvHomelandTarget newTarget;
+						iVoxRlSentryKind = pDirectivePlot->isWater() ? VOX_RL_WORKER_SENTRY_NAVAL : VOX_RL_WORKER_SENTRY_LAND;
 						if (pDirectivePlot->isWater())
 						{
 							newTarget.SetTargetType(AI_HOMELAND_TARGET_SENTRY_POINT_NAVAL);
@@ -3545,6 +3558,11 @@ void CvHomelandAI::ExecuteWorkerMoves()
 							m_TargetedSentryPoints.push_back(newTarget);
 						}
 					}
+					// Vox Deorum: record the worker's walk target and native sentry weight for simulator replay.
+					if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+						VoxRlCapture::GetInstance().NoteWorkerAssignment(m_pPlayer->GetID(), pBuilder, pDirectivePlot->GetPlotIndex(),
+							eDirective.m_eBuild, eDirective.m_eDirectiveType, VOX_RL_WORKER_ASSIGNMENT_WEIGHTED,
+							iVoxRlSentryKind, plotBuildScore.GetPriorityScore());
 				}
 				else
 				{
@@ -4045,6 +4063,10 @@ void CvHomelandAI::ExecuteWorkerMoves()
 				UnitProcessed(pUnit->GetID());
 		}
 	}
+
+	// Vox Deorum: publish this pass's worker assignments.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().OnWorkerMovesComplete(m_pPlayer->GetID());
 }
 
 /// Heal chosen units

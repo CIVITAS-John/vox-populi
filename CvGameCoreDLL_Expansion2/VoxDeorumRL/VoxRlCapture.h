@@ -182,6 +182,11 @@ public:
 	void OnFirstZoneDispatch(PlayerTypes ePlayer);
 	// Emits the completed zone reinforcement batch, including an empty batch.
 	void OnZoneReinforcementComplete(PlayerTypes ePlayer);
+	// Retains one worker that native walked toward a build directive.
+	void NoteWorkerAssignment(PlayerTypes ePlayer, const CvUnit* pUnit, int plotIndex, int buildType,
+		int directiveType, int source, int sentryKind, int sentryWeight);
+	// Emits one homeland pass's worker assignments when any were retained.
+	void OnWorkerMovesComplete(PlayerTypes ePlayer);
 
 	// Nested operation causes restore the enclosing owner-qualified context.
 	void PushOperationChangeCause(PlayerTypes eOwner, PlayerTypes eInitiatingPlayer, int cause,
