@@ -1372,19 +1372,24 @@ void VoxRlCapture::NoteWorkerAssignment(PlayerTypes ePlayer, const CvUnit* pUnit
 	int buildType, int directiveType, int source, int sentryKind, int sentryWeight)
 {
 	if (pUnit == NULL || !IsObserving(ePlayer)) return;
-	if (plotIndex < 0 || plotIndex > 32767 || buildType < -1 || buildType > 32767) return;
-	if (directiveType < 0 || directiveType > 6) return;
+	// Only the narrowing casts are guarded here; the generated validator owns the manifest rules.
+	const int unitType = pUnit->getUnitType();
+	if (unitType < SHRT_MIN || unitType > SHRT_MAX || plotIndex < SHRT_MIN || plotIndex > SHRT_MAX ||
+		buildType < SHRT_MIN || buildType > SHRT_MAX) return;
+	if (directiveType < 0 || directiveType > UCHAR_MAX || source < 0 || source > UCHAR_MAX ||
+		sentryKind < 0 || sentryKind > UCHAR_MAX) return;
 	RequestWorkerAssignmentRecord row;
 	std::memset(&row, 0, sizeof(row));
 	row.owner = static_cast<i8>(ePlayer);
 	row.unitId = pUnit->GetID();
-	row.unitType = static_cast<i16>(pUnit->getUnitType());
+	row.unitType = static_cast<i16>(unitType);
 	row.plotIndex = static_cast<i16>(plotIndex);
 	row.buildType = static_cast<i16>(buildType);
 	row.directiveType = static_cast<u8>(directiveType);
 	row.source = static_cast<u8>(source);
 	row.sentryKind = static_cast<u8>(sentryKind);
 	row.sentryWeight = sentryWeight;
+	if (!VoxRlIsValidRequestWorkerAssignmentRecord(row)) return;
 	m_operationState->pendingRowsByOwner[static_cast<int>(ePlayer)].requestWorkerAssignments.push_back(row);
 }
 
