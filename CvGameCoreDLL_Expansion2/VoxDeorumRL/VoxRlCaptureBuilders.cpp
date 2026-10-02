@@ -371,6 +371,8 @@ namespace
 		if (!AssignCheckedI16(row.economicIntervalTurn, intervalTurn,
 			"PlayerEconomicsRecord", "economicIntervalTurn", -1)) return false;
 		row.externalGoldAccruedTimes100 = accruedGold;
+		row.baseBuildingMaintenance = player.GetTreasury()->GetBaseBuildingGoldMaintenance();
+		row.buildingMaintenance = player.GetTreasury()->GetBuildingGoldMaintenance();
 		return true;
 	}
 
