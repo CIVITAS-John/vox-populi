@@ -180,7 +180,6 @@ CvTraitEntry::CvTraitEntry() :
 	m_iTradeBuildingModifier(0),
 
 	m_eFreeUnitPrereqTech(NO_TECH),
-	// Vox Deorum: initialize so traits without CombatBonusImprovement report NO_IMPROVEMENT instead of garbage
 	m_eCombatBonusImprovement(NO_IMPROVEMENT),
 	m_eFreeBuilding(NO_BUILDING),
 	m_eFreeCapitalBuilding(NO_BUILDING),
@@ -5116,7 +5115,6 @@ void CvPlayerTraits::InitPlayerTraits()
 				m_aFreeTraitUnits.push_back(traitUnit);
 			}
 
-			// Vox Deorum: only take a set value, so a later trait without one does not clear an earlier trait's improvement
 			if (trait->GetCombatBonusImprovement() != NO_IMPROVEMENT)
 				m_eCombatBonusImprovement = trait->GetCombatBonusImprovement();
 
