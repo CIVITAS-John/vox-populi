@@ -329,12 +329,15 @@ void VoxRlNoteMilitaryUnitCreated(CvUnit& unit, int reason, const CvUnit* source
         lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(owner, id);
     }
     else lineage[UnitKey(unit.getOwner(), unit.GetID())] = UnitKey(unit.getOwner(), unit.GetID());
-    if (reason == REASON_BUY || reason == REASON_FAITH_BUY || reason == REASON_UPGRADE || upgradeDepth != 0) return;
+    if (reason == REASON_UPGRADE || upgradeDepth != 0) return;
     if (unit.getOwner() == BARBARIAN_PLAYER) return;
     // City-state arrivals are shared evidence for the next admitted major segment.
     int receiver;
     if (!ResolveEventReceiver(unit, receiver)) return;
+    // A purchase is an arrival like production, so a replay can deliver one native made outside the
+    // branch's own selectors, such as the economic AI's purchases before the military checkpoint.
     const int cause = reason == REASON_TRAIN ? VOX_RL_EVENT_PRODUCTION : reason == REASON_GIFT ? VOX_RL_EVENT_GIFT :
+        reason == REASON_BUY || reason == REASON_FAITH_BUY ? VOX_RL_EVENT_PURCHASE :
         reason == REASON_CONVERT ? VOX_RL_EVENT_CONVERSION : VOX_RL_EVENT_UNKNOWN;
     MilitaryEvent event = MakeEvent(unit, 0, cause);
     event.receiver = receiver;
