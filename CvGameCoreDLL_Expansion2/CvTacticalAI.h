@@ -1064,6 +1064,14 @@ struct AttackKeyHash
 	}
 };
 
+//cached outcome of a simulated attack
+struct AttackResult
+{
+	int iUnitDamageDealt;
+	int iCityDamageDealt;
+	int iDamageTaken;
+};
+
 class CDangerCache {
 public:
 	void clear();
@@ -1081,7 +1089,7 @@ public:
 	bool findAttack(int iAttackerId, int iAttackerPlot, int iDefenderId, int iGarrisonId, int iPrevSelfDamage, int iPrevUnitDamage, int iPrevCityDamage, int& iUnitDamageDealt, int& iCityDamageDealt, int& iDamageTaken) const;
 protected:
 	//key is attacker id
-	std::tr1::unordered_map<AttackKey, vector<int>, AttackKeyHash> attackStats;
+	std::tr1::unordered_map<AttackKey, AttackResult, AttackKeyHash> attackStats;
 };
 
 //copy-on-write for often reused seldom updated fields in tactical positions
@@ -1452,7 +1460,7 @@ public:
 	bool makeNextAssignments(int iMaxBranches, int iMaxChoicesPerUnit, CvSupportPosStorage& storage,
 		vector<CvSupportPosition*>& openPositionsHeap, vector<CvSupportPosition*>& completedPositions,
 		const PrPositionSortHeapGeneration& heapSort,
-		const map<const CvTacticalPosition*, const CvTacticalPosition*> nextAttackPosition);
+		const map<const CvTacticalPosition*, const CvTacticalPosition*>& nextAttackPosition);
 	void getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount, bool bLastPosition) const;
 
 	bool HasCombatBonus(int iPlotIndex, DomainTypes eDomain) const;
