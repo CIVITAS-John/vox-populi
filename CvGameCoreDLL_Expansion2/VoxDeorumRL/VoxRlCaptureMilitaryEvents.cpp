@@ -76,8 +76,30 @@ namespace
         // Starts without a captured actor-turn context.
         ActorTurnSchedule() : turn(-1), phase(0), nextOrder(0), initialized(false) {}
     };
+    // One unit an open fight damaged: its native identity and the row its first change began.
+    struct FightUnit
+    {
+        int owner;
+        int id;
+        RequestFightRecord row;
+    };
+    // One open fight: its two sides and the units it damaged, in first-change order.
+    struct OpenFight
+    {
+        int attacker;
+        int defender;
+        std::vector<FightUnit> units;
+    };
+    // One finished fight row and the admitted major whose segment carries it.
+    struct FightRow
+    {
+        int receiver;
+        RequestFightRecord row;
+    };
     std::map<UnitKey, UnitKey> lineage;
     std::vector<MilitaryEvent> events;
+    std::vector<OpenFight> openFights;
+    std::vector<FightRow> fights;
     std::vector<RequestBarbarianCampCreationRecord> campCreations;
     std::map<int, unsigned int> campIds;
     std::vector<RequestMilitaryGoldTransactionRecord> goldTransactions;
@@ -89,6 +111,7 @@ namespace
     size_t collectedCamps = 0;
     size_t collectedGold = 0;
     size_t collectedEconomics = 0;
+    size_t collectedFights = 0;
     int eventActor = -1;
     int eventPhase = 0;
     int eventTurn = -1;
@@ -271,13 +294,23 @@ namespace
         data.requestEventUnits.push_back(row);
         return true;
     }
+
+    // Queues one finished row for a fight side whose segment admits military events.
+    void QueueFightRow(int receiver, const RequestFightRecord& row)
+    {
+        if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(static_cast<PlayerTypes>(receiver))) return;
+        FightRow queued;
+        queued.receiver = receiver;
+        queued.row = row;
+        fights.push_back(queued);
+    }
 }
 
 // Clears all evidence when the native attachment changes.
 void VoxRlResetMilitaryEvents()
 {
-    lineage.clear(); events.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
-    collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
+    lineage.clear(); events.clear(); openFights.clear(); fights.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
+    collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedFights = 0;
     for (int actor = 0; actor < MAX_PLAYERS; ++actor) actorTurnSchedules[actor] = ActorTurnSchedule();
     eventActor = -1; eventPhase = 0; eventTurn = -1; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; upgradeDepth = 0; captureFailed = false;
 }
@@ -587,6 +620,39 @@ void VoxRlBeginMilitaryEconomicTurn(PlayerTypes player)
     interval.turn = turn; interval.external = 0;
 }
 
+// Reads the unit in a combat role first, then the city, as the attacker or defender may be either.
+PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role)
+{
+    const CvUnit* unit = info.getUnit(role);
+    if (unit != NULL) return unit->getOwner();
+    const CvCity* city = info.getCity(role);
+    return city != NULL ? city->getOwner() : NO_PLAYER;
+}
+
+// Keeps the unit's identity and damage before its first change in the innermost open fight.
+void VoxRlNoteFightDamage(const CvUnit& unit, int oldDamage)
+{
+    if (openFights.empty()) return;
+    OpenFight& fight = openFights.back();
+    for (size_t i = 0; i < fight.units.size(); ++i)
+        if (fight.units[i].owner == unit.getOwner() && fight.units[i].id == unit.GetID()) return;
+    FightUnit entry;
+    entry.owner = unit.getOwner();
+    entry.id = unit.GetID();
+    entry.row = RequestFightRecord();
+    entry.row.unitOwner = static_cast<i8>(unit.getOwner());
+    int owner, id;
+    VoxRlGetUnitLineage(unit, owner, id);
+    entry.row.lineageOwner = static_cast<i8>(owner);
+    entry.row.lineageUnitId = id;
+    if (!VoxRlAssignChecked(entry.row.unitType, static_cast<int>(unit.getUnitType()), "RequestFightRecord", "unitType", 0) ||
+        !VoxRlAssignChecked(entry.row.level, unit.getLevel(), "RequestFightRecord", "level", 0) ||
+        !VoxRlAssignChecked(entry.row.maxHitPoints, unit.GetMaxHitPoints(), "RequestFightRecord", "maxHitPoints", 1) ||
+        !VoxRlAssignChecked(entry.row.damageBefore, oldDamage, "RequestFightRecord", "damageBefore", 0))
+        captureFailed = true;
+    fight.units.push_back(entry);
+}
+
 // Stages event evidence separately from live upserts, retaining receiver buffers.
 bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
 {
@@ -595,10 +661,14 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
     // Their evidence becomes publishable only after the enclosing action completes.
     if (goldDepth != 0)
     {
-        collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
+        collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedFights = 0;
         return true;
     }
     collectedEvents = events.size(); collectedCamps = campCreations.size(); collectedGold = goldTransactions.size(); collectedEconomics = economicBatches.size();
+    collectedFights = fights.size();
+    // Each fight row already names the one admitted side whose segment carries it.
+    for (size_t i = 0; i < collectedFights; ++i)
+        if (fights[i].receiver == observer) data.requestFights.push_back(fights[i].row);
     for (size_t i = 0; i < collectedEvents; ++i)
     {
         const MilitaryEvent& event = events[i];
@@ -647,12 +717,65 @@ void VoxRlCommitMilitaryEvents(PlayerTypes observer)
         ++retained;
     }
     events.resize(retained);
+    retained = 0;
+    for (size_t i = 0; i < fights.size(); ++i)
+    {
+        if (i < collectedFights && fights[i].receiver == observer) continue;
+        if (retained != i) fights[retained] = fights[i];
+        ++retained;
+    }
+    fights.resize(retained);
     campCreations.erase(campCreations.begin(), campCreations.begin() + collectedCamps);
     // This segment carried all players' economic prefixes, so consume each once
     // even when its treasury belongs to a different player from the segment.
     goldTransactions.erase(goldTransactions.begin(), goldTransactions.begin() + collectedGold);
     economicBatches.erase(economicBatches.begin(), economicBatches.begin() + collectedEconomics);
-    collectedEvents = collectedCamps = collectedGold = collectedEconomics = 0;
+    collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedFights = 0;
+}
+
+// Skips fights no admitted segment would carry, so they cost nothing.
+VoxRlFightScope::VoxRlFightScope(bool enabled, PlayerTypes attacker, PlayerTypes defender) : m_open(false)
+{
+    VoxRlCapture& capture = VoxRlCapture::GetInstance();
+    m_open = enabled && (capture.AdmitsMilitaryEvents(attacker) || capture.AdmitsMilitaryEvents(defender));
+    if (!m_open) return;
+    OpenFight fight;
+    fight.attacker = attacker;
+    fight.defender = defender;
+    openFights.push_back(fight);
+}
+
+// Reads each damaged unit's final damage, where a unit that is gone or dying counts as killed,
+// and queues the rows for each admitted side. Every row of the fight shares one occurrence.
+VoxRlFightScope::~VoxRlFightScope()
+{
+    if (!m_open || openFights.empty()) return;
+    OpenFight fight;
+    fight.attacker = openFights.back().attacker;
+    fight.defender = openFights.back().defender;
+    fight.units.swap(openFights.back().units);
+    openFights.pop_back();
+    if (fight.units.empty()) return;
+    RequestFightRecord shared = RequestFightRecord();
+    SetOccurrence(shared);
+    for (size_t i = 0; i < fight.units.size(); ++i)
+    {
+        RequestFightRecord row = fight.units[i].row;
+        row.occurrenceTurn = shared.occurrenceTurn;
+        row.occurrenceActor = shared.occurrenceActor;
+        row.occurrencePhase = shared.occurrencePhase;
+        row.occurrenceOrder = shared.occurrenceOrder;
+        row.attackerOwner = static_cast<i8>(fight.attacker);
+        row.defenderOwner = static_cast<i8>(fight.defender);
+        const int owner = fight.units[i].owner;
+        const CvUnit* unit = owner >= 0 && owner < MAX_PLAYERS
+            ? GET_PLAYER(static_cast<PlayerTypes>(owner)).getUnit(fight.units[i].id) : NULL;
+        row.killed = unit == NULL || unit->isDelayedDeath() || unit->IsDead() ? 1 : 0;
+        if (!VoxRlAssignChecked(row.damageAfter, row.killed ? row.maxHitPoints : unit->getDamage(),
+            "RequestFightRecord", "damageAfter", 0)) captureFailed = true;
+        QueueFightRow(fight.attacker, row);
+        if (fight.defender != fight.attacker) QueueFightRow(fight.defender, row);
+    }
 }
 
 // Counts nested supported actions without duplicating their treasury changes.

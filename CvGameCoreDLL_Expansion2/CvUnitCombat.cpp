@@ -3026,6 +3026,8 @@ bool CvUnitCombat::ParadropIntercept(CvUnit& paraUnit, CvPlot& dropPlot)
 
 			// Killing the unit during the drop is a really bad idea, the game crashes at random after the drop
 			int iEffectiveDamage = std::min(paraUnit.GetCurrHitPoints() - 1, iInterceptionDamage);
+			// Vox Deorum: log the interception damage as a fight for the grade's unit losses.
+			VoxRlFightScope captureFight(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, paraUnit.getOwner(), pInterceptor->getOwner());
 			paraUnit.changeDamage(iEffectiveDamage, pInterceptor->getOwner());
 
 			if (GC.getGame().getActivePlayer() == paraUnit.getOwner()) 
@@ -3101,6 +3103,9 @@ void CvUnitCombat::ResolveCombat(const CvCombatInfo& kInfo, uint uiParentEventID
 {
 	// Vox Deorum: nested damage, capture, and instant yields share this classification.
 	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_COMBAT);
+	// Vox Deorum: log each unit's hit point change in this fight for the grade's unit losses.
+	VoxRlFightScope captureFight(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
+		VoxRlCombatOwner(kInfo, BATTLE_UNIT_ATTACKER), VoxRlCombatOwner(kInfo, BATTLE_UNIT_DEFENDER));
 	PlayerTypes eAttackingPlayer = NO_PLAYER;
 	// Restore visibility
 	CvUnit* pAttacker = kInfo.getUnit(BATTLE_UNIT_ATTACKER);

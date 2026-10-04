@@ -634,7 +634,7 @@ namespace
 		data.requestEventUnitBlockedPromotions.size() + data.requestEventUnitAttackCounts.size() +
 		data.requestEventUnitMissions.size() + data.requestEventUnitPromotionTurns.size() +
 		data.requestMilitaryArrivals.size() + data.requestMilitaryDepartures.size() +
-		data.requestBarbarianCampCreations.size() +
+		data.requestBarbarianCampCreations.size() + data.requestFights.size() +
 		data.requestPlayerMapPlayers.size() + data.requestPlayerMapUnitClasses.size() +
 		data.requestPlayerMapUnitCombatCosts.size() +
 		data.requestCityEspionageSightReplacements.size() + data.requestCityEspionageSightRows.size() +

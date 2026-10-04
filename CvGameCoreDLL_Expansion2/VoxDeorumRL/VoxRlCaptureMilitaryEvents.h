@@ -8,6 +8,7 @@
 
 class CvUnit;
 class CvPlot;
+class CvCombatInfo;
 struct VoxRlRequestData;
 struct VoxRlCampaignData;
 
@@ -55,6 +56,10 @@ bool VoxRlGetMilitaryMaintenanceBaseline(PlayerTypes player, int& chargeTimes100
 bool VoxRlGetMilitaryEconomicInterval(PlayerTypes player, int& turn, int& externalGoldTimes100);
 // Closes one actor's external economic interval at its next turn entry.
 void VoxRlBeginMilitaryEconomicTurn(PlayerTypes player);
+// Returns the owner of the unit or city in one combat role, or NO_PLAYER.
+PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role);
+// Notes one unit's damage change for the innermost open fight, before the change can kill it.
+void VoxRlNoteFightDamage(const CvUnit& unit, int oldDamage);
 // Appends buffered evidence without changing the live WORLD replica.
 bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data);
 // Consumes only the prefix accepted by the last successful collection.
@@ -73,6 +78,23 @@ private:
     int m_previousCause;
     VoxRlMilitaryGoldScope(const VoxRlMilitaryGoldScope&);
     VoxRlMilitaryGoldScope& operator=(const VoxRlMilitaryGoldScope&);
+};
+
+// Logs every unit whose hit points change in one fight, so the grade can count unit losses
+// exactly. Native combat resolution and paradrop interception open one; a nested fight logs
+// its own rows. A fight neither side's segment admits does no capture work.
+class VoxRlFightScope
+{
+public:
+    // Opens a fight between the attacking and defending owners when either side's segment
+    // admits military events.
+    VoxRlFightScope(bool enabled, PlayerTypes attacker, PlayerTypes defender);
+    // Writes one row per damaged unit for each admitted side and restores the enclosing fight.
+    ~VoxRlFightScope();
+private:
+    bool m_open;
+    VoxRlFightScope(const VoxRlFightScope&);
+    VoxRlFightScope& operator=(const VoxRlFightScope&);
 };
 
 // Labels unit creations as upgrades when native creates a replacement under another reason, such
