@@ -12425,22 +12425,31 @@ struct PrSortPairBySecondAsc
 	bool operator()(const pair<T, T>& lhs, const pair<T, T>& rhs) const { return lhs.second < rhs.second; }
 };
 
-// Vox Deorum: adds an intent's default points to a resolved vector, clamping each slot to 0..100.
-// Returns true when the intent's row changes RISK, which counts as setting RISK.
-bool TacticalAIHelpers::ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS])
+// Vox Deorum: adds an intent's default points to a resolved vector, clamping each slot to 0..100. A slot that
+// the operation or zone modifier sets (nonzero) keeps that modifier instead, since the intent default only
+// stands in for them. Either modifier may be NULL. Returns true when the applied row changes RISK.
+bool TacticalAIHelpers::ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS],
+	const short* pOperationModifier, const short* pZoneModifier)
 {
 	if (eSearchIntent < 0 || eSearchIntent >= kSearchIntentCount)
 		return false;
 
 	const signed char* aiRow = TACTICAL_INTENT_FLAVOR_DEFAULTS[eSearchIntent];
+	bool bRiskApplied = false;
 	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+	{
+		if ((pOperationModifier && pOperationModifier[i] != 0) || (pZoneModifier && pZoneModifier[i] != 0))
+			continue;
 		aiFlavor[i] = range(aiFlavor[i] + aiRow[i], 0, 100);
-	return aiRow[STacticalFlavors::RISK] != 0;
+		if (i == STacticalFlavors::RISK && aiRow[i] != 0)
+			bRiskApplied = true;
+	}
+	return bRiskApplied;
 }
 
 // Vox Deorum: moves a general vector by the civ, operation, and zone modifiers, which add up in game scale,
-// then adds the intent default in 0..100 points when enabled. Any modifier may be NULL. Returns true when a
-// modifier or the intent default changes RISK.
+// then adds the intent default in 0..100 points when enabled, except in slots the operation or zone modifier
+// sets. Any modifier may be NULL. Returns true when a modifier or the intent default changes RISK.
 bool TacticalAIHelpers::ApplyFlavorModifiers(int (&aiFlavor)[STacticalFlavors::NUM_SLOTS], const short* pCivModifier,
 	const short* pOperationModifier, const short* pZoneModifier, SearchIntent eSearchIntent, bool bIntentDefaults)
 {
@@ -12458,16 +12467,18 @@ bool TacticalAIHelpers::ApplyFlavorModifiers(int (&aiFlavor)[STacticalFlavors::N
 			bRiskModified = true;
 		aiFlavor[i] = CvFlavorManager::ShiftFlavor(aiFlavor[i], iDelta);
 	}
-	if (bIntentDefaults && ApplyIntentFlavorDefaults(eSearchIntent, aiFlavor))
+	if (bIntentDefaults && ApplyIntentFlavorDefaults(eSearchIntent, aiFlavor, pOperationModifier, pZoneModifier))
 		bRiskModified = true;
 	return bRiskModified;
 }
 
 // Vox Deorum: fills the player's general tactical flavors. Each slot starts from its default, then moves by
 // the strategy delta (active flavor minus base personality) in game scale. Defaults: RISK is 10 x the leader's
-// FLAVOR_RISK, or 10 x offense when the database has no FLAVOR_RISK; the others are 50. While Vox Deorum
-// custom flavors are active, a slot starts from its custom value and the custom delta is left out of the
-// strategy delta. RISK counts as set when a strategy or custom flavor moved it.
+// FLAVOR_RISK; the others are 50. A leader without FLAVOR_RISK (or a database without it) takes RISK from its
+// offense as the game rolled it, with the grand strategy, exactly like the stock rule, and only strategy rows
+// on FLAVOR_RISK move it from there. While Vox Deorum custom flavors are active, a slot starts from its custom
+// value and the custom delta is left out of the strategy delta. RISK counts as set when a strategy or custom
+// flavor moved it.
 void TacticalAIHelpers::GetGeneralTacticalFlavors(PlayerTypes ePlayer, STacticalFlavors& flavors)
 {
 	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
@@ -12480,10 +12491,20 @@ void TacticalAIHelpers::GetGeneralTacticalFlavors(PlayerTypes ePlayer, STactical
 		FlavorTypes eFlavor = (FlavorTypes)GC.getInfoTypeForString(TACTICAL_FLAVOR_TYPES[i], true);
 		int iBase = 50;
 		int iDelta = 0;
-		if (eFlavor == NO_FLAVOR)
+		if (i == STacticalFlavors::RISK && (eFlavor == NO_FLAVOR || pFlavorManager->GetBasePersonalityFlavor(eFlavor) == 0))
 		{
-			if (i == STacticalFlavors::RISK)
-				iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
+			// the game never randomizes a zero flavor, so a zero base personality means the leader has no FLAVOR_RISK
+			iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
+			if (eFlavor != NO_FLAVOR)
+			{
+				iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor);
+				if (bCustom)
+					iDelta -= CvFlavorManager::FlavorToGameScale(pFlavorManager->GetCustomFlavor(eFlavor));
+			}
+		}
+		else if (eFlavor == NO_FLAVOR)
+		{
+			// a missing tactical flavor stays neutral
 		}
 		else if (bCustom)
 		{

@@ -1635,10 +1635,13 @@ namespace TacticalAIHelpers
 	vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0,
 		const STacticalFlavors& flavors = STacticalFlavors()); // Vox Deorum: neutral flavors keep native scoring
-	// Vox Deorum: adds an intent's default points to a resolved vector; true when it changes RISK
-	bool ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS]);
-	// Vox Deorum: applies the civ, operation, and zone modifiers (any may be NULL) and the intent default
-	// to a general vector; true when a modifier or the intent default changes RISK
+	// Vox Deorum: adds an intent's default points to a resolved vector, skipping slots the operation or zone
+	// modifier sets; true when it changes RISK
+	bool ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS],
+		const short* pOperationModifier = NULL, const short* pZoneModifier = NULL);
+	// Vox Deorum: applies the civ, operation, and zone modifiers (any may be NULL) and the intent default,
+	// which yields to operation and zone modifiers, to a general vector; true when a modifier or the intent
+	// default changes RISK
 	bool ApplyFlavorModifiers(int (&aiFlavor)[STacticalFlavors::NUM_SLOTS], const short* pCivModifier,
 		const short* pOperationModifier, const short* pZoneModifier, SearchIntent eSearchIntent, bool bIntentDefaults);
 	// Vox Deorum: the player's general tactical flavors: leader defaults shifted by strategy and custom flavors
