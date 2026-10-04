@@ -1295,6 +1295,29 @@ public:
 	friend bool positionIsEquivalent(const CvBasePosition* ref, const CvBasePosition* other);
 };
 
+// Vox Deorum: the military flavors that bend native tactical scoring, in the slot order the
+// Vox Deorum military flavor vector uses. Each scaled score term is multiplied by
+// 2^(strength * (flavor - 50) / 50), so 50 leaves every score unchanged. RISK is not scaled;
+// it sets the unit loss threshold and the minimum HP in FindBestUnitAssignments instead.
+struct STacticalFlavors
+{
+	enum eSlot { RISK, OCCUPATION, ATTRITION, HOLD_CITY, HOLD_GROUND, NUM_SLOTS };
+	int iFlavor[NUM_SLOTS];
+	float fStrength[NUM_SLOTS];
+
+	// Creates the neutral vector with unit strength in every slot. RISK starts unset (-1),
+	// so the search derives it from the leader's offense flavor.
+	STacticalFlavors()
+	{
+		for (int i = 0; i < NUM_SLOTS; i++)
+		{
+			iFlavor[i] = 50;
+			fStrength[i] = 1.f;
+		}
+		iFlavor[RISK] = -1;
+	}
+};
+
 class CvTacticalPosition : public CvBasePosition
 {
 protected:
@@ -1320,6 +1343,8 @@ protected:
 	bool bTargetDistanceRelevant;
 	bool bReturnToStartPositions;
 	unsigned short nSaveMovement;
+	// Vox Deorum: per-slot score weights in thousandths, 1000 at a neutral flavor
+	unsigned short aFlavorWeight[STacticalFlavors::NUM_SLOTS];
 
 	//------------
 	const vector<int>& getRangeAttackPlotsForUnit(const SUnitStats& unit) const;
@@ -1344,8 +1369,12 @@ public:
 
 	CvTacticalPosition();
 
-	void initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement);
+	// Vox Deorum: the trailing flavors default to neutral, which keeps native scoring unchanged
+	void initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
+		const STacticalFlavors& flavors = STacticalFlavors());
 	void initFromParent(const CvTacticalPosition& parent);
+	// Vox Deorum: scales a score term by one flavor slot's weight, or divides by it when inverse
+	int scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue, bool bInverse = false) const;
 
 	bool isEarlyFinish(bool bExtraKill = false) const;
 	bool haveEnemies() const;
@@ -1584,7 +1613,10 @@ namespace TacticalAIHelpers
 
 	bool FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
-		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0);
+		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0,
+		const STacticalFlavors& flavors = STacticalFlavors()); // Vox Deorum: neutral flavors keep native scoring
+	// Vox Deorum: the player's RISK on the 0..100 scale, from FLAVOR_RISK when the database defines it, else from offense
+	int GetMilitaryRisk(PlayerTypes ePlayer);
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }

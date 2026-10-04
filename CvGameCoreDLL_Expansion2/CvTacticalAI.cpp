@@ -7725,12 +7725,14 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	if (bScoreReduction)
 		iBonusScore -= 10;
 
+	// Vox Deorum: OCCUPATION scales city damage and the capture bonus, ATTRITION unit damage and the kill bonus
 	if (bCityKill)
-		iBonusScore += 100;
+		iBonusScore += assumedPosition.scaleByFlavor(STacticalFlavors::OCCUPATION, 100);
 	else if (bUnitKill)
-		iBonusScore += 15;
+		iBonusScore += assumedPosition.scaleByFlavor(STacticalFlavors::ATTRITION, 15);
 
-	result->SetScore(0, iBonusScore, iActualCityDamageDealt + iTotalActualUnitDamageDealt - iActualDamageTaken);
+	result->SetScore(0, iBonusScore, assumedPosition.scaleByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt)
+		+ assumedPosition.scaleByFlavor(STacticalFlavors::ATTRITION, iTotalActualUnitDamageDealt) - iActualDamageTaken);
 
 	return bCityKill || bUnitKill;
 }
@@ -8039,7 +8041,8 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 				iScaledDanger *= 2;
 
 			//penalty for high danger plots (should this be personality dependent?)
-			iResult -= iScaledDanger;
+			// Vox Deorum: HOLD_GROUND divides the danger penalty, so a higher flavor tolerates more danger
+			iResult -= assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, iScaledDanger, true);
 		}
 	}
 
@@ -8070,10 +8073,12 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	//also occupy our own citadels
 	if (bIsFrontlineCitadelOrCity)
 	{
+		// Vox Deorum: HOLD_CITY scales the bonus in a city, HOLD_GROUND in a citadel
+		STacticalFlavors::eSlot eHoldSlot = pTestPlot->isCity() ? STacticalFlavors::HOLD_CITY : STacticalFlavors::HOLD_GROUND;
 		if (pUnit->GetRange() > 1 || testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, -1)==0 || testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND)>0)
-			iResult += TACTICAL_COMBAT_CITADEL_BONUS;
+			iResult += assumedPosition.scaleByFlavor(eHoldSlot, TACTICAL_COMBAT_CITADEL_BONUS);
 		else
-			iResult += TACTICAL_COMBAT_CITADEL_BONUS/2;
+			iResult += assumedPosition.scaleByFlavor(eHoldSlot, TACTICAL_COMBAT_CITADEL_BONUS/2);
 	}
 
 	//try not to be a sitting duck (faster than isNativeDomain but not entirely accurate)
@@ -8081,7 +8086,8 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		iResult-=3;
 
 	//sometimes danger is zero, but maybe we're wrong, so look at plot defense too
-	iResult += pTestPlot->defenseModifier(pUnit->getTeam(),false,false) / 5;
+	// Vox Deorum: HOLD_GROUND scales the terrain defense term
+	iResult += assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, pTestPlot->defenseModifier(pUnit->getTeam(),false,false) / 5);
 
 	//todo: take into account mobility at the proposed plot
 	//todo: take into account ZOC when ending the turn
@@ -10197,8 +10203,21 @@ CvTacticalPosition::CvTacticalPosition()
 	initFromScratch(NO_PLAYER, AL_LOW, NULL, false, false, false);
 }
 
-void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant_, bool bReturnToStartPositions_, int iSaveMovement_)
+void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant_, bool bReturnToStartPositions_, int iSaveMovement_,
+	const STacticalFlavors& flavors)
 {
+	// Vox Deorum: turn each flavor into a score weight; RISK sets thresholds instead of a weight, and a neutral flavor skips the math
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+	{
+		if (i == STacticalFlavors::RISK || flavors.iFlavor[i] == 50)
+			aFlavorWeight[i] = 1000;
+		else
+		{
+			double dWeight = 1000.0 * pow(2.0, flavors.fStrength[i] * (flavors.iFlavor[i] - 50) / 50.0);
+			aFlavorWeight[i] = (unsigned short)range((int)(dWeight + 0.5), 1, 65535);
+		}
+	}
+
 	ePlayer = player;
 	pTargetPlot = pTarget;
 	bTargetDistanceRelevant = bTargetDistanceRelevant_;
@@ -10245,6 +10264,9 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	bHasAdmiral = parent.bHasAdmiral;
 	bHasSiegetower = parent.bHasSiegetower;
 	nSaveMovement = parent.nSaveMovement;
+	// Vox Deorum: children score with the root's flavor weights
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+		aFlavorWeight[i] = parent.aFlavorWeight[i];
 	eAggression = parent.eAggression;
 	nOurOriginalUnits = parent.nOurOriginalUnits;
 	nOriginalEnemies = parent.nOriginalEnemies;
@@ -10280,6 +10302,19 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	enemyPlots.inheritFrom(parent.enemyPlots.read());
 	unitDamageDealt.inheritFrom(parent.unitDamageDealt.read());
 	plotScores.inheritFrom(parent.plotScores.read());
+}
+
+// Vox Deorum: scales a score term by one flavor slot's weight, rounding half away from zero.
+// Inverse divides by the weight instead. A neutral weight returns the term unchanged.
+int CvTacticalPosition::scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue, bool bInverse) const
+{
+	int iWeight = aFlavorWeight[eSlot];
+	if (iWeight == 1000)
+		return iValue;
+
+	int iNumerator = iValue * (bInverse ? 1000 : iWeight);
+	int iDenominator = bInverse ? iWeight : 1000;
+	return (iNumerator >= 0 ? iNumerator + iDenominator / 2 : iNumerator - iDenominator / 2) / iDenominator;
 }
 
 bool CvTacticalPosition::haveEnemies() const
@@ -12303,9 +12338,22 @@ struct PrSortPairBySecondAsc
 	bool operator()(const pair<T, T>& lhs, const pair<T, T>& rhs) const { return lhs.second < rhs.second; }
 };
 
+// Vox Deorum: reads the player's RISK on the 0..100 scale, where higher means more caution. A database without
+// FLAVOR_RISK falls back to the inverse of the offense flavor, so offense 0..10 maps to RISK 100..0 and the
+// search thresholds match the stock formulas.
+int TacticalAIHelpers::GetMilitaryRisk(PlayerTypes ePlayer)
+{
+	CvGrandStrategyAI* pGrandStrategy = GET_PLAYER(ePlayer).GetGrandStrategyAI();
+	FlavorTypes eRiskFlavor = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_RISK", true);
+	if (eRiskFlavor != NO_FLAVOR)
+		return 10 * range(pGrandStrategy->GetPersonalityAndGrandStrategy(eRiskFlavor), 0, 10);
+	return 100 - 10 * range(pGrandStrategy->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
+}
+
 //try to find a combination of unit actions (move, attack etc) which does maximal damage to the enemy while exposing us to minimal risk
 vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
-	const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement)
+	const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
+	const STacticalFlavors& flavors)
 {
 	/*
 	abstract:
@@ -12377,17 +12425,20 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	gBadUnitsCount.clear();
 	unuseableUnits.clear();
 
-	//basic leader trait dependence
-	int iOffenseFlavor = range(GET_PLAYER(ePlayer).GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
-	gDefaultUnitLossThreshold = (iOffenseFlavor>6 && vUnits.size()>6) ? 1 : 0;
-	gMinHpForTactsim = 50 - 2 * iOffenseFlavor;
+	// Vox Deorum: RISK sets the accepted losses and the minimum HP; a caller that leaves RISK unset gets the player's own
+	int iRisk = flavors.iFlavor[STacticalFlavors::RISK];
+	if (iRisk < 0)
+		iRisk = TacticalAIHelpers::GetMilitaryRisk(ePlayer);
+	gDefaultUnitLossThreshold = (iRisk <= 30 && vUnits.size()>6) ? 1 : 0;
+	gMinHpForTactsim = 30 + iRisk / 5;
 	
 	//set up the initial position
 	CvTacticalPosition* initialPosition = gTactPosStorage.peekNext(); gTactPosStorage.consumeOne();
 	if (!initialPosition)
 		return result;
 
-	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+	// Vox Deorum: the root carries the flavor weights its children score with
+	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 
 	//first pass: make sure there are no duplicates and other invalid inputs
 	vector<const CvUnit*> ourUnits;

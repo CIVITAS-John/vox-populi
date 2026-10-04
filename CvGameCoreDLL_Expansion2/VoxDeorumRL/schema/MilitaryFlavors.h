@@ -58,10 +58,4 @@ inline void InitializeBaselineMilitaryFlavors(int offense, u8 (&flavors)[kMilita
     flavors[kMilitaryFlavorRisk] = MilitaryRiskFromOffense(offense);
 }
 
-// Converts a validated risk value back to the nearest legacy 0..10 offense value.
-inline int MilitaryRiskToLegacyOffense(u8 risk)
-{
-    return (kMilitaryFlavorMaximum - risk + 5) / 10;
-}
-
 #endif
