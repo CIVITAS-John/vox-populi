@@ -1553,6 +1553,10 @@ protected:
 	static int lSetCustomFlavors(lua_State* L);
 	static int lUnsetCustomFlavors(lua_State* L);
 	static int lGetCustomFlavors(lua_State* L);
+
+	// Vox Deorum: Tactical flavors and their civ, operation, and zone modifiers
+	static int lSetTacticalFlavorModifiers(lua_State* L);
+	static int lGetTacticalFlavorModifiers(lua_State* L);
 };
 
 namespace CvLuaArgs

@@ -43,12 +43,13 @@ inline void InitializeNeutralMilitaryFlavors(u8 (&flavors)[kMilitaryFlavorCount]
     }
 }
 
-// Clamps the stock offense flavor and converts it to inverse risk on the 0..100 scale.
+// Clamps the stock offense flavor and converts it to RISK on the 0..100 scale, where higher
+// means more risk-taking.
 inline u8 MilitaryRiskFromOffense(int offense)
 {
     if (offense < 0) offense = 0;
     if (offense > 10) offense = 10;
-    return static_cast<u8>(kMilitaryFlavorMaximum - 10 * offense);
+    return static_cast<u8>(10 * offense);
 }
 
 // Initializes the baseline vector from the stock offense flavor.

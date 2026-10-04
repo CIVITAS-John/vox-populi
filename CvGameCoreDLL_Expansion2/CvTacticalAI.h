@@ -1297,16 +1297,21 @@ public:
 
 // Vox Deorum: the military flavors that bend native tactical scoring, in the slot order the
 // Vox Deorum military flavor vector uses. Each scaled score term is multiplied by
-// 2^(strength * (flavor - 50) / 50), so 50 leaves every score unchanged. RISK is not scaled;
-// it sets the unit loss threshold and the minimum HP in FindBestUnitAssignments instead.
+// 2^(strength * (flavor - 50) / 50), so 50 leaves every score unchanged. RISK also sets the
+// unit loss threshold and the minimum HP, and divides the danger penalty only when it is set.
 struct STacticalFlavors
 {
 	enum eSlot { RISK, OCCUPATION, ATTRITION, HOLD_CITY, HOLD_GROUND, NUM_SLOTS };
 	int iFlavor[NUM_SLOTS];
 	float fStrength[NUM_SLOTS];
+	// RISK was moved by a strategy, custom flavor, modifier, intent default, or variant pin,
+	// not just copied from the leader default
+	bool bRiskSet;
+	// the enemy whose civ modifier applied, or NO_PLAYER
+	int iCounterpart;
 
-	// Creates the neutral vector with unit strength in every slot. RISK starts unset (-1),
-	// so the search derives it from the leader's offense flavor.
+	// Creates an unresolved vector with unit strength in every slot. RISK starts at -1, which
+	// tells the search to use the player's general flavors.
 	STacticalFlavors()
 	{
 		for (int i = 0; i < NUM_SLOTS; i++)
@@ -1315,8 +1320,17 @@ struct STacticalFlavors
 			fStrength[i] = 1.f;
 		}
 		iFlavor[RISK] = -1;
+		bRiskSet = false;
+		iCounterpart = NO_PLAYER;
 	}
 };
+
+// Vox Deorum: default flavor adjustment for each search intent, in 0..100 points
+extern const signed char TACTICAL_INTENT_FLAVOR_DEFAULTS[][STacticalFlavors::NUM_SLOTS];
+// Vox Deorum: the most an attack term may change through its flavor, before the x10 score scale
+extern const int TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT;
+// Vox Deorum: the flavor type name behind each slot, in slot order
+extern const char* const TACTICAL_FLAVOR_TYPES[STacticalFlavors::NUM_SLOTS];
 
 class CvTacticalPosition : public CvBasePosition
 {
@@ -1375,6 +1389,12 @@ public:
 	void initFromParent(const CvTacticalPosition& parent);
 	// Vox Deorum: scales a score term by one flavor slot's weight, or divides by it when inverse
 	int scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue, bool bInverse = false) const;
+	// Vox Deorum: scales an attack term and limits the change to TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT
+	int scaleAttackByFlavor(STacticalFlavors::eSlot eSlot, int iValue) const;
+	// Vox Deorum: the extra score a flavor above 50 adds to a base value, (weight - 1) x value, or zero
+	int flavorBonus(STacticalFlavors::eSlot eSlot, int iValue) const;
+	// Vox Deorum: one slot's weight in thousandths, 1000 at neutral
+	int getFlavorWeight(STacticalFlavors::eSlot eSlot) const { return aFlavorWeight[eSlot]; }
 
 	bool isEarlyFinish(bool bExtraKill = false) const;
 	bool haveEnemies() const;
@@ -1615,8 +1635,20 @@ namespace TacticalAIHelpers
 	vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0,
 		const STacticalFlavors& flavors = STacticalFlavors()); // Vox Deorum: neutral flavors keep native scoring
-	// Vox Deorum: the player's RISK on the 0..100 scale, from FLAVOR_RISK when the database defines it, else from offense
-	int GetMilitaryRisk(PlayerTypes ePlayer);
+	// Vox Deorum: adds an intent's default points to a resolved vector; true when it changes RISK
+	bool ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS]);
+	// Vox Deorum: applies the civ, operation, and zone modifiers (any may be NULL) and the intent default
+	// to a general vector; true when a modifier or the intent default changes RISK
+	bool ApplyFlavorModifiers(int (&aiFlavor)[STacticalFlavors::NUM_SLOTS], const short* pCivModifier,
+		const short* pOperationModifier, const short* pZoneModifier, SearchIntent eSearchIntent, bool bIntentDefaults);
+	// Vox Deorum: the player's general tactical flavors: leader defaults shifted by strategy and custom flavors
+	void GetGeneralTacticalFlavors(PlayerTypes ePlayer, STacticalFlavors& flavors);
+	// Vox Deorum: one search's flavors: the general vector plus civ, operation, and zone modifiers and the intent default
+	STacticalFlavors ResolveSearchFlavors(PlayerTypes ePlayer, const CvPlot* pTarget, SearchIntent eSearchIntent);
+	// Vox Deorum: sets the search's accepted unit losses and minimum HP from its RISK
+	void SetSearchRiskThresholds(int iRisk, size_t nUnits);
+	// Vox Deorum: turns the HOLD_CITY ring and siege terms on or off for a search from its root position
+	void SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer, CvPlot* pTarget);
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }

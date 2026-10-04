@@ -34,4 +34,8 @@
 #define NEWLINE												"\n"
 #define SEPARATOR											"\n-----------------------"
 
+// Vox Deorum: the number of tactical flavor slots (STacticalFlavors::NUM_SLOTS), for storage declared
+// before CvTacticalAI.h; CvTacticalAI.cpp fails to compile if the two disagree
+#define NUM_TACTICAL_FLAVOR_SLOTS							(5)
+
 #endif	// CVDEFINES_H

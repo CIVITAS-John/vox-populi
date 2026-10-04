@@ -40,6 +40,44 @@ const int TACTSIM_UNIQUENESS_CHECK_GENERATIONS = 3; //higher means check more si
 const int TACTSIM_BREADTH_FIRST_GENERATIONS = 3; //switch to depth-first later
 const int TACTSIM_MAX_UNITS = 13; //we have limited storage and time ...
 
+// Vox Deorum: default flavor adjustment for each search intent, in 0..100 points.
+// Applied last, after the game-scale civ, operation, and zone modifiers, and only when
+// VOX_TACTICAL_INTENT_FLAVORS is on. One row per SearchIntent, in enum order; one
+// column per flavor slot. Edit the numbers here.
+const signed char TACTICAL_INTENT_FLAVOR_DEFAULTS[][STacticalFlavors::NUM_SLOTS] =
+{
+	//                            RISK  OCCUP  ATTRIT  H_CITY  H_GROUND
+	/* Unknown               */ {    0,     0,      0,      0,        0 },
+	/* CityAssault           */ {  +10,   +20,    -20,    -10,      -10 },
+	/* Attrition             */ {  -20,     0,    +20,      0,        0 },
+	/* ExploitFlanks         */ {  -10,     0,    +10,      0,        0 },
+	/* Steamroll             */ {  +10,    +5,    +15,    -10,      -10 },
+	/* SurgicalStrikeSupport */ {    0,   +15,     -5,    -10,      -10 },
+	/* Hedgehog              */ {  -10,   -15,    +10,    +20,        0 },
+	/* Counterattack         */ {  -10,   -10,    +15,      0,      +20 },
+	/* Reinforce             */ {  -20,   -10,      0,    +10,      +20 },
+	/* Gather                */ {  -20,   -10,     -5,      0,      +10 },
+	/* ClearCamp             */ {    0,     0,    +20,      0,      +10 },
+	/* ArmyContact           */ {  -10,   -10,    +15,      0,      +10 },
+	/* RangedOpportunity     */ {  -10,   -10,      0,      0,      -10 },
+	/* BarbarianAttack       */ {    0,     0,      0,      0,        0 },
+};
+
+// Vox Deorum: fails to compile when a SearchIntent is added or removed without a matching row
+typedef char TacticalIntentFlavorRowsMatchIntents[
+	(sizeof(TACTICAL_INTENT_FLAVOR_DEFAULTS) / sizeof(TACTICAL_INTENT_FLAVOR_DEFAULTS[0]) == kSearchIntentCount) ? 1 : -1];
+
+// Vox Deorum: the most an attack term may change through its flavor (before the x10 score scale), so a
+// large hit at a high flavor and strength can't saturate the 16-bit assignment score
+const int TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT = 500;
+
+// Vox Deorum: fails to compile when the slot count used by the modifier storage drifts from the slot enum
+typedef char TacticalFlavorSlotCountMatches[(NUM_TACTICAL_FLAVOR_SLOTS == STacticalFlavors::NUM_SLOTS) ? 1 : -1];
+
+// Vox Deorum: the flavor type name behind each slot, in slot order
+const char* const TACTICAL_FLAVOR_TYPES[STacticalFlavors::NUM_SLOTS] =
+	{ "FLAVOR_RISK", "FLAVOR_OCCUPATION", "FLAVOR_ATTRITION", "FLAVOR_HOLD_CITY", "FLAVOR_HOLD_GROUND" };
+
 //global memory for tactical simulation
 CvTactPosStorage gTactPosStorage(6000);
 CvSupportPosStorage gSupportPosStorage(60);
@@ -58,6 +96,7 @@ TUnitFlagLookup gSafePlotCount;
 int gDefaultUnitLossThreshold;
 int gMedianUnitXP;
 int gMinHpForTactsim;
+bool gbTacticalCityFlavorTerms = false; // Vox Deorum: the HOLD_CITY ring and siege terms are active for this search
 PlayerTypes eLastTactSimPlayer = NO_PLAYER;
 
 //just some statistics
@@ -5926,15 +5965,16 @@ bool TacticalAIHelpers::PerformRangedOpportunityAttack(CvUnit* pUnit, bool bAllo
 		// Vox Deorum: the capture adapter runs the same single-unit search
 		// with its exact caller flags and movement restrictions.
 		vector<STacticalAssignment> vAssignments;
+		STacticalFlavors flavors = TacticalAIHelpers::ResolveSearchFlavors(pUnit->getOwner(), pUnit->plot(), kSearchIntentRangedOpportunity);
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
 			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_OPPORTUNITY, kSearchIntentRangedOpportunity,
 				pUnit->getOwner(), vector<CvUnit*>(1, pUnit), pUnit->plot(), static_cast<int>(AL_LOW),
-				dummy, false, !bAllowMovement, bSaveMovement);
+				dummy, false, !bAllowMovement, bSaveMovement, flavors);
 		}
 		else
 		{
-			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(vector<CvUnit*>(1, pUnit), pUnit->plot(), AL_LOW, dummy, false, !bAllowMovement, bSaveMovement);
+			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(vector<CvUnit*>(1, pUnit), pUnit->plot(), AL_LOW, dummy, false, !bAllowMovement, bSaveMovement, flavors);
 		}
 		if (vAssignments.empty())
 			return false;
@@ -7727,12 +7767,23 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 	// Vox Deorum: OCCUPATION scales city damage and the capture bonus, ATTRITION unit damage and the kill bonus
 	if (bCityKill)
-		iBonusScore += assumedPosition.scaleByFlavor(STacticalFlavors::OCCUPATION, 100);
+		iBonusScore += assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, 100);
 	else if (bUnitKill)
-		iBonusScore += assumedPosition.scaleByFlavor(STacticalFlavors::ATTRITION, 15);
+		iBonusScore += assumedPosition.scaleAttackByFlavor(STacticalFlavors::ATTRITION, 15);
 
-	result->SetScore(0, iBonusScore, assumedPosition.scaleByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt)
-		+ assumedPosition.scaleByFlavor(STacticalFlavors::ATTRITION, iTotalActualUnitDamageDealt) - iActualDamageTaken);
+	// Vox Deorum: HOLD_CITY above 50 values hits on siege units within three plots of our nearest city
+	if (gbTacticalCityFlavorTerms && pEnemyUnit && pEnemyUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_CITY_BOMBARD)
+	{
+		int iSiegeDamage = actualDamageDealt.GetValue(pEnemyUnit->GetID());
+		if (iSiegeDamage > 0 && GC.getGame().GetClosestCityDistanceInPlots(pTestPlot, assumedPosition.getPlayer()) <= 3)
+		{
+			int iSiegeBonus = assumedPosition.flavorBonus(STacticalFlavors::HOLD_CITY, iSiegeDamage + (bUnitKill ? 15 : 0));
+			iBonusScore += range(iSiegeBonus, -TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
+		}
+	}
+
+	result->SetScore(0, iBonusScore, assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt)
+		+ assumedPosition.scaleAttackByFlavor(STacticalFlavors::ATTRITION, iTotalActualUnitDamageDealt) - iActualDamageTaken);
 
 	return bCityKill || bUnitKill;
 }
@@ -8041,8 +8092,8 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 				iScaledDanger *= 2;
 
 			//penalty for high danger plots (should this be personality dependent?)
-			// Vox Deorum: HOLD_GROUND divides the danger penalty, so a higher flavor tolerates more danger
-			iResult -= assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, iScaledDanger, true);
+			// Vox Deorum: a set RISK divides the danger penalty, so a higher flavor tolerates more danger
+			iResult -= assumedPosition.scaleByFlavor(STacticalFlavors::RISK, iScaledDanger, true);
 		}
 	}
 
@@ -8086,8 +8137,19 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		iResult-=3;
 
 	//sometimes danger is zero, but maybe we're wrong, so look at plot defense too
-	// Vox Deorum: HOLD_GROUND scales the terrain defense term
-	iResult += assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, pTestPlot->defenseModifier(pUnit->getTeam(),false,false) / 5);
+	int iDefense = pTestPlot->defenseModifier(pUnit->getTeam(),false,false);
+	iResult += iDefense / 5;
+
+	// Vox Deorum: HOLD_GROUND holds ground in friendly territory, more so on good defensive terrain.
+	// Below 50 only the flat part applies, so a low flavor never makes cover look worse.
+	int iHoldGroundWeight = assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND);
+	if (iHoldGroundWeight != 1000 && pUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() == pUnit->getTeam())
+		iResult += assumedPosition.flavorBonus(STacticalFlavors::HOLD_GROUND, iHoldGroundWeight > 1000 ? 5 + iDefense / 5 : 5);
+
+	// Vox Deorum: HOLD_CITY above 50 holds good ground around a threatened city
+	if (gbTacticalCityFlavorTerms && pUnit->getDomainType() == DOMAIN_LAND && testPlot->getEnemyDistance() <= 2 && !pTestPlot->isCity()
+		&& GC.getGame().GetClosestCityDistanceInPlots(pTestPlot, assumedPosition.getPlayer()) <= 2)
+		iResult += assumedPosition.flavorBonus(STacticalFlavors::HOLD_CITY, 5 + iDefense / 5);
 
 	//todo: take into account mobility at the proposed plot
 	//todo: take into account ZOC when ending the turn
@@ -8162,6 +8224,11 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 		iPlotScore = pUnit->getDomainType() != DOMAIN_SEA
 			? iPlotScoreForEnemyDistanceLandAttack[eMoveStrategy][iEnemyDistance]
 			: iPlotScoreForEnemyDistanceSeaAttack[eMoveStrategy][iEnemyDistance];
+
+		// Vox Deorum: HOLD_GROUND above 50 weakens the pull toward the enemy outside friendly territory
+		if (iPlotScore > 0 && assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND) > 1000
+			&& pUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() != pUnit->getTeam())
+			iPlotScore = assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, iPlotScore, true);
 
 		if (pTestPlot->isFriendlyCity(*pUnit))
 			iPlotScore = 12;
@@ -10206,10 +10273,11 @@ CvTacticalPosition::CvTacticalPosition()
 void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant_, bool bReturnToStartPositions_, int iSaveMovement_,
 	const STacticalFlavors& flavors)
 {
-	// Vox Deorum: turn each flavor into a score weight; RISK sets thresholds instead of a weight, and a neutral flavor skips the math
+	// Vox Deorum: turn each flavor into a score weight; a neutral flavor skips the math, and RISK only weighs
+	// the danger penalty when it is set
 	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
 	{
-		if (i == STacticalFlavors::RISK || flavors.iFlavor[i] == 50)
+		if (flavors.iFlavor[i] == 50 || (i == STacticalFlavors::RISK && !flavors.bRiskSet))
 			aFlavorWeight[i] = 1000;
 		else
 		{
@@ -10315,6 +10383,23 @@ int CvTacticalPosition::scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue,
 	int iNumerator = iValue * (bInverse ? 1000 : iWeight);
 	int iDenominator = bInverse ? iWeight : 1000;
 	return (iNumerator >= 0 ? iNumerator + iDenominator / 2 : iNumerator - iDenominator / 2) / iDenominator;
+}
+
+// Vox Deorum: scales an attack term by one flavor slot's weight, limiting the change to
+// TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT so large hits at high weights keep their order without saturating.
+int CvTacticalPosition::scaleAttackByFlavor(STacticalFlavors::eSlot eSlot, int iValue) const
+{
+	if (aFlavorWeight[eSlot] == 1000)
+		return iValue;
+	return iValue + range(scaleByFlavor(eSlot, iValue) - iValue, -TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
+}
+
+// Vox Deorum: the extra score a flavor adds to a base value, (weight - 1) x value, rounding half away from
+// zero. It is negative below 50 and zero at a neutral weight.
+int CvTacticalPosition::flavorBonus(STacticalFlavors::eSlot eSlot, int iValue) const
+{
+	int iNumerator = iValue * (aFlavorWeight[eSlot] - 1000);
+	return (iNumerator >= 0 ? iNumerator + 500 : iNumerator - 500) / 1000;
 }
 
 bool CvTacticalPosition::haveEnemies() const
@@ -12268,6 +12353,8 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 	set<int> unuseableUnits;
 	vector<CvUnit*> currentUnits = vUnits;
 	TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer, pTarget);
+	// Vox Deorum: every retry searches with the same resolved flavors
+	STacticalFlavors flavors = TacticalAIHelpers::ResolveSearchFlavors(ePlayer, pTarget, eSearchIntent);
 	// Vox Deorum: open the capture engagement scope for this caller; every
 	// retry attempt inside the loop joins the same decision id.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -12285,11 +12372,11 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
 			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, eSearchIntent, ePlayer,
-				currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, true, false, 0);
+				currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, true, false, 0, flavors);
 		}
 		else
 		{
-			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true);
+			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true, false, 0, flavors);
 		}
 		if (vAssignments.empty())
 		{
@@ -12338,16 +12425,149 @@ struct PrSortPairBySecondAsc
 	bool operator()(const pair<T, T>& lhs, const pair<T, T>& rhs) const { return lhs.second < rhs.second; }
 };
 
-// Vox Deorum: reads the player's RISK on the 0..100 scale, where higher means more caution. A database without
-// FLAVOR_RISK falls back to the inverse of the offense flavor, so offense 0..10 maps to RISK 100..0 and the
-// search thresholds match the stock formulas.
-int TacticalAIHelpers::GetMilitaryRisk(PlayerTypes ePlayer)
+// Vox Deorum: adds an intent's default points to a resolved vector, clamping each slot to 0..100.
+// Returns true when the intent's row changes RISK, which counts as setting RISK.
+bool TacticalAIHelpers::ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS])
 {
-	CvGrandStrategyAI* pGrandStrategy = GET_PLAYER(ePlayer).GetGrandStrategyAI();
-	FlavorTypes eRiskFlavor = (FlavorTypes)GC.getInfoTypeForString("FLAVOR_RISK", true);
-	if (eRiskFlavor != NO_FLAVOR)
-		return 10 * range(pGrandStrategy->GetPersonalityAndGrandStrategy(eRiskFlavor), 0, 10);
-	return 100 - 10 * range(pGrandStrategy->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
+	if (eSearchIntent < 0 || eSearchIntent >= kSearchIntentCount)
+		return false;
+
+	const signed char* aiRow = TACTICAL_INTENT_FLAVOR_DEFAULTS[eSearchIntent];
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+		aiFlavor[i] = range(aiFlavor[i] + aiRow[i], 0, 100);
+	return aiRow[STacticalFlavors::RISK] != 0;
+}
+
+// Vox Deorum: moves a general vector by the civ, operation, and zone modifiers, which add up in game scale,
+// then adds the intent default in 0..100 points when enabled. Any modifier may be NULL. Returns true when a
+// modifier or the intent default changes RISK.
+bool TacticalAIHelpers::ApplyFlavorModifiers(int (&aiFlavor)[STacticalFlavors::NUM_SLOTS], const short* pCivModifier,
+	const short* pOperationModifier, const short* pZoneModifier, SearchIntent eSearchIntent, bool bIntentDefaults)
+{
+	bool bRiskModified = false;
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+	{
+		int iDelta = 0;
+		if (pCivModifier)
+			iDelta += pCivModifier[i];
+		if (pOperationModifier)
+			iDelta += pOperationModifier[i];
+		if (pZoneModifier)
+			iDelta += pZoneModifier[i];
+		if (i == STacticalFlavors::RISK && iDelta != 0)
+			bRiskModified = true;
+		aiFlavor[i] = CvFlavorManager::ShiftFlavor(aiFlavor[i], iDelta);
+	}
+	if (bIntentDefaults && ApplyIntentFlavorDefaults(eSearchIntent, aiFlavor))
+		bRiskModified = true;
+	return bRiskModified;
+}
+
+// Vox Deorum: fills the player's general tactical flavors. Each slot starts from its default, then moves by
+// the strategy delta (active flavor minus base personality) in game scale. Defaults: RISK is 10 x the leader's
+// FLAVOR_RISK, or 10 x offense when the database has no FLAVOR_RISK; the others are 50. While Vox Deorum
+// custom flavors are active, a slot starts from its custom value and the custom delta is left out of the
+// strategy delta. RISK counts as set when a strategy or custom flavor moved it.
+void TacticalAIHelpers::GetGeneralTacticalFlavors(PlayerTypes ePlayer, STacticalFlavors& flavors)
+{
+	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
+	CvFlavorManager* pFlavorManager = kPlayer.GetFlavorManager();
+	bool bCustom = pFlavorManager->HasCustomFlavors();
+
+	flavors.bRiskSet = false;
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+	{
+		FlavorTypes eFlavor = (FlavorTypes)GC.getInfoTypeForString(TACTICAL_FLAVOR_TYPES[i], true);
+		int iBase = 50;
+		int iDelta = 0;
+		if (eFlavor == NO_FLAVOR)
+		{
+			if (i == STacticalFlavors::RISK)
+				iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
+		}
+		else if (bCustom)
+		{
+			iBase = pFlavorManager->GetCustomFlavor(eFlavor);
+			iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor) - CvFlavorManager::FlavorToGameScale(iBase);
+			if (i == STacticalFlavors::RISK)
+				flavors.bRiskSet = true;
+		}
+		else
+		{
+			if (i == STacticalFlavors::RISK)
+				iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(eFlavor), 0, 10);
+			iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor);
+		}
+
+		flavors.iFlavor[i] = CvFlavorManager::ShiftFlavor(iBase, iDelta);
+		if (i == STacticalFlavors::RISK && iDelta != 0)
+			flavors.bRiskSet = true;
+	}
+}
+
+// Vox Deorum: resolves one search's flavors: the player's general vector, moved by the modifiers against the
+// counterpart civ, for the running operation, and for the target's zone, plus the intent default when the
+// VOX_TACTICAL_INTENT_FLAVORS option is on. With no modifiers and the option off it costs a few checks.
+STacticalFlavors TacticalAIHelpers::ResolveSearchFlavors(PlayerTypes ePlayer, const CvPlot* pTarget, SearchIntent eSearchIntent)
+{
+	STacticalFlavors flavors;
+	GetGeneralTacticalFlavors(ePlayer, flavors);
+
+	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
+	CvTacticalAnalysisMap* pZoneMap = kPlayer.GetTacticalAI()->GetTacticalAnalysisMap();
+	int iZoneID = pTarget ? pZoneMap->GetDominanceZoneIDWithoutRefresh(pTarget->GetPlotIndex()) : -1;
+
+	// civ: the zone's owner if we are at war with it, otherwise the target plot's owner if we are at war with it
+	const short* pCivModifier = NULL;
+	if (kPlayer.GetMilitaryAI()->HasTacticalFlavorModifiers() && pTarget)
+	{
+		const CvTacticalDominanceZone* pZone = pZoneMap->GetZoneByIDWithoutRefresh(iZoneID);
+		PlayerTypes eZoneOwner = pZone ? pZone->GetOwner() : NO_PLAYER;
+		if (eZoneOwner != NO_PLAYER && kPlayer.IsAtWarWith(eZoneOwner))
+			flavors.iCounterpart = eZoneOwner;
+		else if (pTarget->getOwner() != NO_PLAYER && kPlayer.IsAtWarWith(pTarget->getOwner()))
+			flavors.iCounterpart = pTarget->getOwner();
+		if (flavors.iCounterpart != NO_PLAYER)
+			pCivModifier = kPlayer.GetMilitaryAI()->GetTacticalFlavorModifiers((PlayerTypes)flavors.iCounterpart);
+	}
+
+	// operation: the innermost operation this player is running
+	const short* pOperationModifier = NULL;
+	int iOperationID = VoxRlCurrentOperationId(ePlayer);
+	if (iOperationID >= 0)
+	{
+		CvAIOperation* pOperation = kPlayer.getAIOperation(iOperationID);
+		if (pOperation)
+			pOperationModifier = pOperation->GetTacticalFlavorModifiers();
+	}
+
+	// zone: modifiers last until the zones are rebuilt
+	const short* pZoneModifier = pZoneMap->HasZoneTacticalFlavorModifiers() ? pZoneMap->GetZoneTacticalFlavorModifiers(iZoneID) : NULL;
+
+	if (pCivModifier || pOperationModifier || pZoneModifier || MOD_VOX_TACTICAL_INTENT_FLAVORS)
+	{
+		if (ApplyFlavorModifiers(flavors.iFlavor, pCivModifier, pOperationModifier, pZoneModifier, eSearchIntent, MOD_VOX_TACTICAL_INTENT_FLAVORS))
+			flavors.bRiskSet = true;
+	}
+	return flavors;
+}
+
+// Vox Deorum: sets the search's accepted unit losses and minimum HP from its RISK. Higher RISK takes more risk:
+// a search with more than six units accepts one loss at 70 or more, and the minimum HP falls from 50 to 30.
+void TacticalAIHelpers::SetSearchRiskThresholds(int iRisk, size_t nUnits)
+{
+	gDefaultUnitLossThreshold = (iRisk >= 70 && nUnits > 6) ? 1 : 0;
+	gMinHpForTactsim = 50 - iRisk / 5;
+}
+
+// Vox Deorum: turns the HOLD_CITY ring and siege terms on when the root weighs HOLD_CITY above neutral, for major civs
+// only. The terms read our city distance map, so it is read once here and a dirty map rebuilds before the search,
+// not inside it. Every search root sets the flag, so no search inherits it from an earlier one.
+void TacticalAIHelpers::SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer, CvPlot* pTarget)
+{
+	gbTacticalCityFlavorTerms = pRoot->getFlavorWeight(STacticalFlavors::HOLD_CITY) > 1000 && GET_PLAYER(ePlayer).isMajorCiv();
+	if (gbTacticalCityFlavorTerms)
+		GC.getGame().GetClosestCityDistanceInPlots(pTarget, ePlayer);
 }
 
 //try to find a combination of unit actions (move, attack etc) which does maximal damage to the enemy while exposing us to minimal risk
@@ -12425,12 +12645,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	gBadUnitsCount.clear();
 	unuseableUnits.clear();
 
-	// Vox Deorum: RISK sets the accepted losses and the minimum HP; a caller that leaves RISK unset gets the player's own
-	int iRisk = flavors.iFlavor[STacticalFlavors::RISK];
-	if (iRisk < 0)
-		iRisk = TacticalAIHelpers::GetMilitaryRisk(ePlayer);
-	gDefaultUnitLossThreshold = (iRisk <= 30 && vUnits.size()>6) ? 1 : 0;
-	gMinHpForTactsim = 30 + iRisk / 5;
+	// Vox Deorum: a caller that leaves the flavors unresolved gets the player's general flavors. RISK sets the
+	// accepted losses and the minimum HP.
+	STacticalFlavors searchFlavors = flavors;
+	if (searchFlavors.iFlavor[STacticalFlavors::RISK] < 0)
+		TacticalAIHelpers::GetGeneralTacticalFlavors(ePlayer, searchFlavors);
+	TacticalAIHelpers::SetSearchRiskThresholds(searchFlavors.iFlavor[STacticalFlavors::RISK], vUnits.size());
 	
 	//set up the initial position
 	CvTacticalPosition* initialPosition = gTactPosStorage.peekNext(); gTactPosStorage.consumeOne();
@@ -12438,7 +12658,10 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		return result;
 
 	// Vox Deorum: the root carries the flavor weights its children score with
-	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, searchFlavors);
+
+	// Vox Deorum: the root decides whether the city ring and siege terms run
+	TacticalAIHelpers::SetSearchCityFlavorTerms(initialPosition, ePlayer, pTarget);
 
 	//first pass: make sure there are no duplicates and other invalid inputs
 	vector<const CvUnit*> ourUnits;

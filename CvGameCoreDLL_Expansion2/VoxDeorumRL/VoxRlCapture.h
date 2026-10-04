@@ -212,7 +212,7 @@ public:
 	std::vector<STacticalAssignment> SearchAssignments(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 		const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 		std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
-		bool bReturnToStartPositions, int iSaveMovement);
+		bool bReturnToStartPositions, int iSaveMovement, const STacticalFlavors& flavors);
 
 	// Danger lifecycle hooks.
 	void OnDangerRefreshBegin(const CvDangerPlots& danger);
@@ -359,13 +359,14 @@ private:
 	// Invokes the unmodified native search once for every caller path.
 	std::vector<STacticalAssignment> RunNativeSearch(const std::vector<CvUnit*>& vUnits,
 		class CvPlot* pTarget, int eAggression, std::set<int>& unuseableUnits,
-		bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement);
+		bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
+		const STacticalFlavors& flavors);
 	// Builds and closes a purpose-labeled decision request/result pair around
 	// one native search invocation.
 	void RunCapturedSearch(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 		const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 		std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
-		bool bReturnToStartPositions, int iSaveMovement,
+		bool bReturnToStartPositions, int iSaveMovement, const STacticalFlavors& flavors,
 		std::vector<STacticalAssignment>& results);
 	// Resolves a unit's owner-qualified iteration index, assigning a new
 	// one for units created after the WORLD build.
@@ -427,7 +428,9 @@ private:
 	bool m_worldReplacementLogged;
 };
 
-// Restores an enclosing operation cause automatically on every return path.
+// Restores an enclosing operation cause automatically on every return path. The scope also
+// tracks the running operation when capture is off, so tactical flavors can find the same
+// operation that a captured request names.
 class VoxRlOperationCaptureScope
 {
 public:
@@ -436,8 +439,13 @@ public:
 	~VoxRlOperationCaptureScope();
 private:
 	bool m_enabled;
+	bool m_tracked;
 	VoxRlOperationCaptureScope(const VoxRlOperationCaptureScope&);
 	VoxRlOperationCaptureScope& operator=(const VoxRlOperationCaptureScope&);
 };
+
+// Returns the innermost operation the owner is running inside an operation scope, or -1.
+// Mirrors the request header's operation, and works whether or not capture is on.
+int VoxRlCurrentOperationId(PlayerTypes eOwner);
 
 #endif

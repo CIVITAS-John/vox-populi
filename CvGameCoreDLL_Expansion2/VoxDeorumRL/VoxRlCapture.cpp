@@ -661,6 +661,8 @@ namespace
 			<< operation.GetTargetX() << ',' << operation.GetTargetY() << ','
 			<< operation.GetTurnStarted() << ',' << operation.GetDistanceMusterToTarget() << ','
 			<< static_cast<int>(operation.GetAbortReason()) << ',' << operation.GetLastTurnMoved();
+		for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+			out << ",f:" << operation.GetTacticalFlavorModifier(slot);
 		const std::vector<int>& armyIds = operation.GetArmyIDs();
 		for (size_t armyIndex = 0; armyIndex < armyIds.size(); ++armyIndex)
 		{
@@ -1419,10 +1421,32 @@ void VoxRlCapture::NoteFocusAreaChanged(PlayerTypes eOwner, int kind,
 	m_operationState->pendingRowsByOwner[static_cast<int>(eOwner)].requestFocusAreas.push_back(row);
 }
 
+namespace
+{
+// One operation scope entry kept for tactical flavor lookups, with or without capture.
+struct VoxRlTrackedOperation
+{
+	PlayerTypes owner;
+	int operationId;
+};
+
+// Scopes nest only a few levels deep; deeper entries are not tracked.
+const int kVoxRlTrackedOperationLimit = 16;
+VoxRlTrackedOperation gVoxRlTrackedOperations[kVoxRlTrackedOperationLimit];
+int gVoxRlTrackedOperationCount = 0;
+}
+
 VoxRlOperationCaptureScope::VoxRlOperationCaptureScope(bool enabled, PlayerTypes eOwner,
 	PlayerTypes eInitiatingPlayer, int cause, int operationId)
-	: m_enabled(enabled)
+	: m_enabled(enabled), m_tracked(false)
 {
+	if (gVoxRlTrackedOperationCount < kVoxRlTrackedOperationLimit)
+	{
+		gVoxRlTrackedOperations[gVoxRlTrackedOperationCount].owner = eOwner;
+		gVoxRlTrackedOperations[gVoxRlTrackedOperationCount].operationId = operationId;
+		gVoxRlTrackedOperationCount += 1;
+		m_tracked = true;
+	}
 	if (m_enabled)
 	{
 		VoxRlCapture::GetInstance().PushOperationChangeCause(eOwner,
@@ -1432,10 +1456,26 @@ VoxRlOperationCaptureScope::VoxRlOperationCaptureScope(bool enabled, PlayerTypes
 
 VoxRlOperationCaptureScope::~VoxRlOperationCaptureScope()
 {
+	if (m_tracked)
+	{
+		gVoxRlTrackedOperationCount -= 1;
+	}
 	if (m_enabled)
 	{
 		VoxRlCapture::GetInstance().PopOperationChangeCause();
 	}
+}
+
+int VoxRlCurrentOperationId(PlayerTypes eOwner)
+{
+	for (int index = gVoxRlTrackedOperationCount - 1; index >= 0; --index)
+	{
+		if (gVoxRlTrackedOperations[index].owner == eOwner && gVoxRlTrackedOperations[index].operationId >= 0)
+		{
+			return gVoxRlTrackedOperations[index].operationId;
+		}
+	}
+	return -1;
 }
 
 void VoxRlCapture::Shutdown()
@@ -3688,17 +3728,18 @@ void VoxRlCapture::NoteExecutionResult(bool bSuccess)
 
 std::vector<STacticalAssignment> VoxRlCapture::RunNativeSearch(const std::vector<CvUnit*>& vUnits,
 	CvPlot* pTarget, int eAggression, std::set<int>& unuseableUnits,
-	bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement)
+	bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
+	const STacticalFlavors& flavors)
 {
 	return TacticalAIHelpers::FindBestUnitAssignments(vUnits, pTarget,
 		static_cast<eAggressionLevel>(eAggression), unuseableUnits, bTargetDistanceRelevant,
-		bReturnToStartPositions, iSaveMovement);
+		bReturnToStartPositions, iSaveMovement, flavors);
 }
 
 std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 	const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 	std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
-	bool bReturnToStartPositions, int iSaveMovement)
+	bool bReturnToStartPositions, int iSaveMovement, const STacticalFlavors& flavors)
 {
 	std::vector<STacticalAssignment> results;
 	const bool ephemeral = m_engagement == NULL || !m_engagement->active || m_engagement->player != ePlayer;
@@ -3712,12 +3753,12 @@ std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType,
 	if (capture)
 	{
 		RunCapturedSearch(callerType, eSearchIntent, ePlayer, vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, results);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, results);
 	}
 	else
 	{
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 	}
 	if (ephemeral)
 	{
@@ -3729,7 +3770,7 @@ std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType,
 void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
 	const std::vector<CvUnit*>& vUnits, CvPlot* pTarget, int eAggression,
 	std::set<int>& unuseableUnits, bool bTargetDistanceRelevant,
-	bool bReturnToStartPositions, int iSaveMovement,
+	bool bReturnToStartPositions, int iSaveMovement, const STacticalFlavors& flavors,
 	std::vector<STacticalAssignment>& results)
 {
 	Segment& segment = *m_segment;
@@ -3742,7 +3783,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	{
 		FailSegment("decisionDeltaCollect");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 		return;
 	}
 	InitializeRequestHeader(data);
@@ -3750,10 +3791,22 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	data.requestHeader.searchIntent = static_cast<u8>(eSearchIntent);
 	VoxRlAssignClamped(data.requestHeader.attemptIndex, static_cast<i32>(engagement.attemptIndex));
 	data.requestHeader.retryOutcome = static_cast<u8>(engagement.lastOutcome);
-	InitializeBaselineMilitaryFlavors(
-		GET_PLAYER(ePlayer).GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
-			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
-		data.requestHeader.militaryFlavors);
+	// The resolved flavors this search runs with, and the zone modifiers it could read.
+	for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+		data.requestHeader.militaryFlavors[slot] = static_cast<u8>(flavors.iFlavor[slot]);
+	data.requestHeader.militaryRiskSet = flavors.bRiskSet ? 1 : 0;
+	data.requestHeader.flavorCounterpart = static_cast<i8>(flavors.iCounterpart);
+	const std::map<int, std::vector<short> >& zoneModifiers =
+		GET_PLAYER(ePlayer).GetTacticalAI()->GetTacticalAnalysisMap()->GetAllZoneTacticalFlavorModifiers();
+	for (std::map<int, std::vector<short> >::const_iterator zone = zoneModifiers.begin(); zone != zoneModifiers.end(); ++zone)
+	{
+		RequestZoneFlavorModifierRecord row;
+		std::memset(&row, 0, sizeof(row));
+		row.zoneId = zone->first;
+		for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+			row.militaryFlavorModifiers[slot] = static_cast<i16>(zone->second[slot]);
+		data.requestZoneFlavorModifiers.push_back(row);
+	}
 	data.requestHeader.previousAttemptWorldGeneration = engagement.attemptIndex == 0
 		? kVoxRlAbsentGeneration : engagement.lastAttemptWorldGeneration;
 	data.requestHeader.targetPlotIndex = pTarget != NULL ? static_cast<i16>(pTarget->GetPlotIndex()) : static_cast<i16>(kVoxRlAbsentPlotIndex);
@@ -3813,7 +3866,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	{
 		FailSegment("decisionRequestBuild");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 		return;
 	}
 	if (m_config.timings)
@@ -3834,7 +3887,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 		if (m_segment == NULL || m_segment->failed)
 		{
 			results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-				bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+				bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 			return;
 		}
 	}
@@ -3842,7 +3895,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 		segment.nextDeltaSequence, engagement.decisionId, engagement.attemptIndex))
 	{
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 		return;
 	}
 	const unsigned int requestFrameIndex = static_cast<unsigned int>(segment.frameTable.size() - 1);
@@ -3861,7 +3914,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	// 2. Invoke native search exactly once, keeping nested refreshes in this decision.
 	m_searchActive = true;
 	results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-		bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+		bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
 	m_searchActive = false;
 
 	// 3. Snapshot assignments into the result block.

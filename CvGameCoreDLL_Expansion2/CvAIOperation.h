@@ -178,6 +178,12 @@ public:
 	int GetTargetY() const { return m_iTargetY; }
 	int GetDistanceMusterToTarget() const { return m_iDistanceMusterToTarget; }
 
+	// Vox Deorum: tactical flavor modifiers for this operation's searches, in game scale
+	void SetTacticalFlavorModifier(int iSlot, int iValue);
+	int GetTacticalFlavorModifier(int iSlot) const;
+	// Vox Deorum: the five modifiers, or NULL when they are all zero
+	const short* GetTacticalFlavorModifiers() const;
+
 	bool HasTargetPlot() const { return (m_iTargetX != INVALID_PLOT_COORD && m_iTargetY != INVALID_PLOT_COORD); }
 	bool HasMusterPlot() const { return (m_iMusterX != INVALID_PLOT_COORD && m_iMusterY != INVALID_PLOT_COORD); }
 
@@ -267,6 +273,9 @@ protected:
 
 	// Calculate only once, ideally
 	int m_iDistanceMusterToTarget;
+
+	// Vox Deorum: tactical flavor modifiers, saved for the operation's life
+	short m_aiTacticalFlavorModifier[NUM_TACTICAL_FLAVOR_SLOTS];
 
 	// Abort if we're stalling
 	deque<int> m_progressToTarget;

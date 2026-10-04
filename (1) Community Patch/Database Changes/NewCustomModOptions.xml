@@ -1180,6 +1180,8 @@
 		
 		<!-- Enables support for Vox Deorum modmod (opening up the IPC channel) -->
 		<Row Class="3" Name="IPC_CHANNEL" Value="0"/>
+		<!-- Vox Deorum: zone postures and operation-triggered searches add default tactical flavor modifiers -->
+		<Row Class="3" Name="VOX_TACTICAL_INTENT_FLAVORS" Value="0"/>
 		<!-- Events for JFD Piety -->
 		<!--   GameEvents.PietyChange.Add(function(iPlayer, iCurrentPiety, iPietyChange) end) -->
 		<!--   GameEvents.PietyRateChange.Add(function(iPlayer, iCurrentPietyRate, iPietyRateChange) end) -->

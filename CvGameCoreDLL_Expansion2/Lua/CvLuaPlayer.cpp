@@ -1554,6 +1554,9 @@ void CvLuaPlayer::PushMethods(lua_State* L, int t)
 	Method(SetCustomFlavors);   // Vox Deorum: Set custom flavor values
 	Method(UnsetCustomFlavors); // Vox Deorum: Unset custom flavor values
 	Method(GetCustomFlavors);   // Vox Deorum: Get custom flavor values
+
+	Method(SetTacticalFlavorModifiers);  // Vox Deorum: Set tactical flavor modifiers against another civ
+	Method(GetTacticalFlavorModifiers);  // Vox Deorum: Get tactical flavor modifiers against another civ
 }
 //------------------------------------------------------------------------------
 void CvLuaPlayer::HandleMissingInstance(lua_State* L)
@@ -20705,6 +20708,66 @@ int CvLuaPlayer::lUnsetCustomFlavors(lua_State* L)
 	pFlavorManager->UnsetCustomFlavors();
 
 	lua_pushboolean(L, true);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: returns the tactical flavor slot a FLAVOR_XXX key names, or -1
+static int TacticalFlavorSlotForKey(const char* szKey)
+{
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+		if (strcmp(szKey, TACTICAL_FLAVOR_TYPES[i]) == 0)
+			return i;
+	return -1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: sets this player's tactical flavor modifiers against another civ, in game scale (the unit of a
+// strategy flavor row). Player:SetTacticalFlavorModifiers(otherPlayer, { FLAVOR_RISK = 40, ... }). Listed
+// slots are replaced; others keep their value. Returns success.
+int CvLuaPlayer::lSetTacticalFlavorModifiers(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	int iOtherPlayer = luaL_checkint(L, 2);
+	if (iOtherPlayer < 0 || iOtherPlayer >= MAX_PLAYERS || !lua_istable(L, 3))
+	{
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	lua_pushnil(L);
+	while (lua_next(L, 3) != 0)
+	{
+		int iSlot = lua_isstring(L, -2) ? TacticalFlavorSlotForKey(lua_tostring(L, -2)) : -1;
+		if (iSlot >= 0)
+			pkPlayer->GetMilitaryAI()->SetTacticalFlavorModifier((PlayerTypes)iOtherPlayer, iSlot, lua_tointeger(L, -1));
+		lua_pop(L, 1);
+	}
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+//------------------------------------------------------------------------------
+// Vox Deorum: returns this player's nonzero tactical flavor modifiers against another civ as a FLAVOR_XXX table.
+// Player:GetTacticalFlavorModifiers(otherPlayer)
+int CvLuaPlayer::lGetTacticalFlavorModifiers(lua_State* L)
+{
+	CvPlayerAI* pkPlayer = GetInstance(L);
+	int iOtherPlayer = luaL_checkint(L, 2);
+
+	lua_createtable(L, 0, 0);
+	if (iOtherPlayer < 0 || iOtherPlayer >= MAX_PLAYERS)
+		return 1;
+	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+	{
+		int iValue = pkPlayer->GetMilitaryAI()->GetTacticalFlavorModifier((PlayerTypes)iOtherPlayer, i);
+		if (iValue != 0)
+		{
+			lua_pushinteger(L, iValue);
+			lua_setfield(L, -2, TACTICAL_FLAVOR_TYPES[i]);
+		}
+	}
 	return 1;
 }
 

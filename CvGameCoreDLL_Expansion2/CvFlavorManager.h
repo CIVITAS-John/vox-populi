@@ -89,11 +89,23 @@ public:
 	CvEnumMap<FlavorTypes, int>& GetAllPersonalityFlavors();
 	int GetPersonalityFlavorForDiplomacy(FlavorTypes eType);
 
+	// Vox Deorum: converts a 0..100 flavor to its game-scale delta, and back to the nearest flavor
+	static int FlavorToGameScale(int iValue);
+	static int FlavorFromGameScale(int iGame);
+	// Vox Deorum: shifts a 0..100 flavor by a game-scale delta, the way a strategy row moves it
+	static int ShiftFlavor(int iValue, int iGameDelta);
+
 	// Vox Deorum: Custom flavor management
 	void SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors);
 	void UnsetCustomFlavors();
 	void GetCustomFlavors(CvEnumMap<FlavorTypes, int>& out) const;
 	bool HasCustomFlavors() const { return m_bHasCustomFlavors; }
+	// Vox Deorum: one custom flavor on the 0..100 scale (50 when none is set).
+	int GetCustomFlavor(FlavorTypes eType) const { return m_CustomFlavors[eType]; }
+	// Vox Deorum: the active flavor, which is the base personality plus strategy and custom deltas.
+	int GetActiveFlavor(FlavorTypes eType) const { return m_piActiveFlavor[eType]; }
+	// Vox Deorum: the stored base personality flavor, ignoring custom flavors.
+	int GetBasePersonalityFlavor(FlavorTypes eType) const { return m_piPersonalityFlavor[eType]; }
 	void CheckCustomFlavorExpiration();
 	bool IsCustomFlavorLowerThan(FlavorTypes eFlavor, int iThreshold) const;
 	bool IsCustomFlavorHigherThan(FlavorTypes eFlavor, int iThreshold) const;

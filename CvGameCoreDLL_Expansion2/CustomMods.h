@@ -1068,6 +1068,8 @@
 
 // Vox Deorum modmod - opening IPC channel
 #define MOD_IPC_CHANNEL					gCustomMods.isIPC_CHANNEL()
+// Vox Deorum: zone postures and operation-triggered searches add default tactical flavor modifiers
+#define MOD_VOX_TACTICAL_INTENT_FLAVORS	gCustomMods.isVOX_TACTICAL_INTENT_FLAVORS()
 
 //
 // NOTHING BELOW HERE SHOULD NEED CHANGING
@@ -1815,6 +1817,7 @@ public:
 	MOD_OPT_DECL(BALANCE_CORE_JFD);
 
 	MOD_OPT_DECL(IPC_CHANNEL);
+	MOD_OPT_DECL(VOX_TACTICAL_INTENT_FLAVORS);
 
 protected:
 	bool m_bInit;

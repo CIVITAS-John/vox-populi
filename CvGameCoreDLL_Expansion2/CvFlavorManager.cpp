@@ -457,6 +457,67 @@ void CvFlavorManager::RandomizeWeights()
 	}
 }
 
+// Vox Deorum: Vox Deorum's custom flavor conversion from the 0..100 scale to a signed game-scale delta:
+// sign(x) * round(300 * (e^(3|x|) - 1) / 19.09) with x = (value - 50) / 50, evaluated once in single
+// precision. The table keeps the conversion free of exp and identical in the DLL and the simulator.
+const short FLAVOR_GAME_SCALE[101] =
+{
+	-300, -282, -264, -248, -233, -218, -205, -192, -180, -168,
+	-158, -147, -138, -129, -121, -113, -105,  -98,  -91,  -85,
+	 -79,  -74,  -69,  -64,  -59,  -55,  -51,  -47,  -43,  -40,
+	 -36,  -33,  -31,  -28,  -25,  -23,  -21,  -19,  -17,  -15,
+	 -13,  -11,  -10,   -8,   -7,   -5,   -4,   -3,   -2,   -1,
+	   0,
+	   1,    2,    3,    4,    5,    7,    8,   10,   11,   13,
+	  15,   17,   19,   21,   23,   25,   28,   31,   33,   36,
+	  40,   43,   47,   51,   55,   59,   64,   69,   74,   79,
+	  85,   91,   98,  105,  113,  121,  129,  138,  147,  158,
+	 168,  180,  192,  205,  218,  233,  248,  264,  282,  300
+};
+
+// Vox Deorum: converts a 0..100 flavor to Vox Deorum's game-scale delta, clamping out-of-range input.
+int CvFlavorManager::FlavorToGameScale(int iValue)
+{
+	return FLAVOR_GAME_SCALE[range(iValue, 0, 100)];
+}
+
+// Vox Deorum: converts a game-scale delta back to the nearest 0..100 flavor, with ties going toward 50.
+int CvFlavorManager::FlavorFromGameScale(int iGame)
+{
+	if (iGame <= FLAVOR_GAME_SCALE[0])
+		return 0;
+	if (iGame >= FLAVOR_GAME_SCALE[100])
+		return 100;
+
+	// find the first entry at or above the game value
+	int iLow = 0;
+	int iHigh = 100;
+	while (iLow < iHigh)
+	{
+		int iMiddle = (iLow + iHigh) / 2;
+		if (FLAVOR_GAME_SCALE[iMiddle] < iGame)
+			iLow = iMiddle + 1;
+		else
+			iHigh = iMiddle;
+	}
+	if (FLAVOR_GAME_SCALE[iLow] == iGame)
+		return iLow;
+
+	int iAbove = FLAVOR_GAME_SCALE[iLow] - iGame;
+	int iBelow = iGame - FLAVOR_GAME_SCALE[iLow - 1];
+	if (iAbove != iBelow)
+		return iAbove < iBelow ? iLow : iLow - 1;
+	return iLow - 1 >= 50 ? iLow - 1 : iLow;
+}
+
+// Vox Deorum: shifts a 0..100 flavor by a game-scale delta, the way a strategy row or modifier moves it.
+int CvFlavorManager::ShiftFlavor(int iValue, int iGameDelta)
+{
+	if (iGameDelta == 0)
+		return range(iValue, 0, 100);
+	return FlavorFromGameScale(FlavorToGameScale(iValue) + iGameDelta);
+}
+
 // Vox Deorum: Set custom flavors that auto-expire after 10 turns
 // Accepts MCP range (0-100), stores raw values, converts to game range (-300 to 300) for strategies
 void CvFlavorManager::SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavors)
@@ -479,23 +540,9 @@ void CvFlavorManager::SetCustomFlavors(const CvEnumMap<FlavorTypes, int>& flavor
 		// Store raw MCP value (0-100)
 		m_CustomFlavors[i] = mcpValue;
 
-		// Convert to game range (-300 to 300) using exponential mapping
-		// MCP 50 = game 0 (balanced)
-		if (mcpValue == 50)
-		{
-			gameFlavors[i] = 0;
-		}
-		else
-		{
-			float normalized = (mcpValue - 50.0f) / 50.0f; // -1 to 1
-			int sign = (normalized >= 0) ? 1 : -1;
-			float absNorm = (normalized >= 0) ? normalized : -normalized;
-
-			// Exponential: e^(3x) - 1 gives gentle middle, steep extremes
-			// e^3 ≈ 20.09, so (e^3 - 1) ≈ 19.09
-			float expValue = (exp(3.0f * absNorm) - 1.0f) / 19.09f;
-			gameFlavors[i] = sign * (int)(expValue * 300.0f + 0.5f); // Round
-		}
+		// Convert to game range (-300 to 300) with the flavor scale table
+		// (MCP 50 = game 0, gentle middle, steep extremes)
+		gameFlavors[i] = FlavorToGameScale(mcpValue);
 	}
 
 	// Apply them using BOTH ChangeActivePersonalityFlavors and ChangeCityFlavors with reason "VoxDeorum"
@@ -525,21 +572,8 @@ void CvFlavorManager::UnsetCustomFlavors()
 	{
 		int mcpValue = m_CustomFlavors[i];
 
-		// Convert MCP to game range, then negate
-		if (mcpValue == 50)
-		{
-			negativeFlavors[i] = 0;
-		}
-		else
-		{
-			float normalized = (mcpValue - 50.0f) / 50.0f; // -1 to 1
-			int sign = (normalized >= 0) ? 1 : -1;
-			float absNorm = (normalized >= 0) ? normalized : -normalized;
-
-			float expValue = (exp(3.0f * absNorm) - 1.0f) / 19.09f;
-			int gameValue = sign * (int)(expValue * 300.0f + 0.5f);
-			negativeFlavors[i] = -gameValue; // Negate for removal
-		}
+		// Convert MCP to game range, then negate for removal
+		negativeFlavors[i] = -FlavorToGameScale(mcpValue);
 	}
 
 	// Apply the negative deltas to both player and city flavors with reason "Custom"

@@ -267,6 +267,7 @@ void CvTacticalAnalysisMap::Reset(PlayerTypes ePlayer)
 	m_vPlotZoneID = vector<int>(GC.getMap().numPlots(), -1);
 	m_vDominanceZones.clear();
 	m_IdLookup.clear();
+	m_zoneFlavorModifiers.clear(); // Vox Deorum
 }
 
 int CvTacticalDominanceZone::GetBorderScore(DomainTypes eDomain, CvCity** ppWorstNeighborCity) const
@@ -647,6 +648,39 @@ void CvTacticalAnalysisMap::RefreshIfOutdated()
 	}
 }
 
+// Vox Deorum: sets one tactical flavor modifier for a zone's searches, clamped to the game scale.
+// Water zones have negative IDs, so any ID is accepted.
+void CvTacticalAnalysisMap::SetZoneTacticalFlavorModifier(int iZoneID, int iSlot, int iValue)
+{
+	if (iSlot < 0 || iSlot >= NUM_TACTICAL_FLAVOR_SLOTS)
+		return;
+	std::vector<short>& modifiers = m_zoneFlavorModifiers[iZoneID];
+	if (modifiers.empty())
+		modifiers.resize(NUM_TACTICAL_FLAVOR_SLOTS, 0);
+	modifiers[iSlot] = (short)range(iValue, -1000, 1000);
+	if (GetZoneTacticalFlavorModifiers(iZoneID) == NULL)
+		m_zoneFlavorModifiers.erase(iZoneID);
+}
+
+// Vox Deorum: reads one tactical flavor modifier of a zone.
+int CvTacticalAnalysisMap::GetZoneTacticalFlavorModifier(int iZoneID, int iSlot) const
+{
+	const short* pModifiers = GetZoneTacticalFlavorModifiers(iZoneID);
+	return (pModifiers && iSlot >= 0 && iSlot < NUM_TACTICAL_FLAVOR_SLOTS) ? pModifiers[iSlot] : 0;
+}
+
+// Vox Deorum: returns a zone's modifiers, or NULL when it has none.
+const short* CvTacticalAnalysisMap::GetZoneTacticalFlavorModifiers(int iZoneID) const
+{
+	std::map<int, std::vector<short> >::const_iterator it = m_zoneFlavorModifiers.find(iZoneID);
+	if (it == m_zoneFlavorModifiers.end())
+		return NULL;
+	for (int iSlot = 0; iSlot < NUM_TACTICAL_FLAVOR_SLOTS; iSlot++)
+		if (it->second[iSlot] != 0)
+			return &it->second[0];
+	return NULL;
+}
+
 int CvTacticalAnalysisMap::GetNumZones() 
 { 
 	RefreshIfOutdated();
@@ -664,6 +698,8 @@ void CvTacticalAnalysisMap::CreateDominanceZones()
 	m_vPlotZoneID = vector<int>( GC.getMap().numPlots(), 0 );
 	m_vDominanceZones.clear();
 	m_IdLookup.clear();
+	// Vox Deorum: zone IDs are reassigned, so zone flavor modifiers end here
+	m_zoneFlavorModifiers.clear();
 
 	//first create the unknown zone
 	m_vDominanceZones.push_back( CvTacticalDominanceZone() );

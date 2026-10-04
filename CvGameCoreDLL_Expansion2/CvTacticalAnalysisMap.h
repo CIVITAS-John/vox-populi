@@ -344,6 +344,21 @@ public:
 		if (iIndex < 0 || static_cast<size_t>(iIndex) >= m_vDominanceZones.size()) return NULL;
 		return &m_vDominanceZones[iIndex];
 	}
+	// Vox Deorum: finds a zone by ID without triggering a refresh.
+	const CvTacticalDominanceZone* GetZoneByIDWithoutRefresh(int iID) const
+	{
+		std::map<int, int>::const_iterator it = m_IdLookup.find(iID);
+		return it != m_IdLookup.end() ? GetZoneByIndexWithoutRefresh(it->second) : NULL;
+	}
+
+	// Vox Deorum: tactical flavor modifiers for one zone's searches, in game scale. They last
+	// until the zones are rebuilt, because zone IDs are reassigned then.
+	void SetZoneTacticalFlavorModifier(int iZoneID, int iSlot, int iValue);
+	int GetZoneTacticalFlavorModifier(int iZoneID, int iSlot) const;
+	// Vox Deorum: the five modifiers of one zone, or NULL when it has none
+	const short* GetZoneTacticalFlavorModifiers(int iZoneID) const;
+	bool HasZoneTacticalFlavorModifiers() const { return !m_zoneFlavorModifiers.empty(); }
+	const std::map<int, std::vector<short> >& GetAllZoneTacticalFlavorModifiers() const { return m_zoneFlavorModifiers; }
 
 protected:
 	void CreateDominanceZones();
@@ -359,6 +374,7 @@ protected:
 	std::vector<int> m_vPlotZoneID; //zone id for each plot
 	std::map<int, int> m_IdLookup; //id to index
 	std::vector<CvTacticalDominanceZone> m_vDominanceZones;
+	std::map<int, std::vector<short> > m_zoneFlavorModifiers; // Vox Deorum: zone ID to one modifier per flavor slot, not saved
 
 	friend FDataStream& operator<<(FDataStream& saveTo, const CvTacticalAnalysisMap& readFrom);
 	friend FDataStream& operator>>(FDataStream& loadFrom, CvTacticalAnalysisMap& writeTo);

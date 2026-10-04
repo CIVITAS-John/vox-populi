@@ -220,6 +220,14 @@ public:
 	int GetRecommendedNavalUnits() const { return m_iRecNavalUnits; }
 	int GetRecommendedExplorerUnits() const { return m_iRecExplorerUnits; }
 
+	// Vox Deorum: tactical flavor modifiers for searches against one other player, in game scale
+	void SetTacticalFlavorModifier(PlayerTypes eOther, int iSlot, int iValue);
+	int GetTacticalFlavorModifier(PlayerTypes eOther, int iSlot) const;
+	// Vox Deorum: the five modifiers against one player, or NULL when they are all zero
+	const short* GetTacticalFlavorModifiers(PlayerTypes eOther) const;
+	// Vox Deorum: whether any player has a nonzero tactical flavor modifier
+	bool HasTacticalFlavorModifiers() const { return m_iNumTacticalFlavorModifierCivs > 0; }
+
 	int GetPowerOfStrongestBuildableUnit(DomainTypes eDomain);
 	bool HasAirforce() const
 	{
@@ -342,6 +350,10 @@ private:
 	int* m_paiTurnStrategyAdopted;
 	CvEnumMap<FlavorTypes, int> m_aiTempFlavors;
 	int m_aiWarFocus[MAX_MAJOR_CIVS];
+	// Vox Deorum: five tactical flavor modifiers per other player, and how many players have any
+	short m_aiTacticalFlavorModifier[MAX_PLAYERS * NUM_TACTICAL_FLAVOR_SLOTS];
+	int m_iNumTacticalFlavorModifierCivs;
+	void UpdateTacticalFlavorModifierCount();
 
 	// Internal calculated values - must be serialized
 	int m_iNumberOfTimesOpsBuildSkippedOver;

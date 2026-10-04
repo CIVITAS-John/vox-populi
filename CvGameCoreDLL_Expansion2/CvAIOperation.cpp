@@ -78,6 +78,38 @@ void CvAIOperation::Reset()
 	m_iTurnStarted = -1;
 	m_iDistanceMusterToTarget = -1;
 	m_progressToTarget.clear();
+	// Vox Deorum: no tactical flavor modifier until one is set
+	for (int iSlot = 0; iSlot < NUM_TACTICAL_FLAVOR_SLOTS; iSlot++)
+		m_aiTacticalFlavorModifier[iSlot] = 0;
+}
+
+// Vox Deorum: sets one tactical flavor modifier for this operation's searches, clamped to the game scale.
+// A change gives the operation a new captured version.
+void CvAIOperation::SetTacticalFlavorModifier(int iSlot, int iValue)
+{
+	if (iSlot < 0 || iSlot >= NUM_TACTICAL_FLAVOR_SLOTS)
+		return;
+	short iNew = (short)range(iValue, -1000, 1000);
+	if (m_aiTacticalFlavorModifier[iSlot] == iNew)
+		return;
+	m_aiTacticalFlavorModifier[iSlot] = iNew;
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlCapture::GetInstance().NoteOperationChanged(GetOwner(), GetID());
+}
+
+// Vox Deorum: reads one tactical flavor modifier of this operation.
+int CvAIOperation::GetTacticalFlavorModifier(int iSlot) const
+{
+	return (iSlot >= 0 && iSlot < NUM_TACTICAL_FLAVOR_SLOTS) ? m_aiTacticalFlavorModifier[iSlot] : 0;
+}
+
+// Vox Deorum: returns the operation's modifiers, or NULL when they are all zero.
+const short* CvAIOperation::GetTacticalFlavorModifiers() const
+{
+	for (int iSlot = 0; iSlot < NUM_TACTICAL_FLAVOR_SLOTS; iSlot++)
+		if (m_aiTacticalFlavorModifier[iSlot] != 0)
+			return m_aiTacticalFlavorModifier;
+	return NULL;
 }
 
 bool CvAIOperation::IsOffensive() const
@@ -1013,6 +1045,7 @@ void CvAIOperation::Serialize(AIOperation& aiOperation, Visitor& visitor)
 	visitor(aiOperation.m_viListOfUnitsWeStillNeedToBuild);
 	visitor(aiOperation.m_viListOfUnitsCitiesHaveCommittedToBuild);
 	visitor(aiOperation.m_iDistanceMusterToTarget);
+	visitor(aiOperation.m_aiTacticalFlavorModifier); // Vox Deorum
 }
 
 /// Read serialized data

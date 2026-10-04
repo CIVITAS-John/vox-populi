@@ -324,6 +324,11 @@ void CvMilitaryAI::Reset()
 	for (int iI = 0; iI < MAX_MAJOR_CIVS; iI++)
 		m_aiWarFocus[iI] = WARTYPE_UNDEFINED;
 
+	// Vox Deorum: no tactical flavor modifiers until a tool or producer sets one
+	for (int iI = 0; iI < MAX_PLAYERS * NUM_TACTICAL_FLAVOR_SLOTS; iI++)
+		m_aiTacticalFlavorModifier[iI] = 0;
+	m_iNumTacticalFlavorModifierCivs = 0;
+
 	m_iNumFreeCarriers = 0;
 	//new unit counters
 	m_iNumArcherLandUnits = 0;
@@ -391,6 +396,8 @@ void CvMilitaryAI::Serialize(MilitaryAI& militaryAI, Visitor& visitor)
 	visitor(MakeConstSpan(militaryAI.m_pabUsingStrategy, iNumMilitaryAIStrategies));
 	visitor(MakeConstSpan(militaryAI.m_paiTurnStrategyAdopted, iNumMilitaryAIStrategies));
 	visitor(militaryAI.m_aiWarFocus);
+	// Vox Deorum: tactical flavor modifiers last until changed, so they are saved
+	visitor(militaryAI.m_aiTacticalFlavorModifier);
 }
 
 /// Serialization read
@@ -398,6 +405,45 @@ void CvMilitaryAI::Read(FDataStream& kStream)
 {
 	CvStreamLoadVisitor serialVisitor(kStream);
 	Serialize(*this, serialVisitor);
+	UpdateTacticalFlavorModifierCount(); // Vox Deorum
+}
+
+// Vox Deorum: sets one tactical flavor modifier against another player, clamped to the game scale.
+void CvMilitaryAI::SetTacticalFlavorModifier(PlayerTypes eOther, int iSlot, int iValue)
+{
+	if (eOther < 0 || eOther >= MAX_PLAYERS || iSlot < 0 || iSlot >= NUM_TACTICAL_FLAVOR_SLOTS)
+		return;
+	m_aiTacticalFlavorModifier[eOther * NUM_TACTICAL_FLAVOR_SLOTS + iSlot] = (short)range(iValue, -1000, 1000);
+	UpdateTacticalFlavorModifierCount();
+}
+
+// Vox Deorum: reads one tactical flavor modifier against another player.
+int CvMilitaryAI::GetTacticalFlavorModifier(PlayerTypes eOther, int iSlot) const
+{
+	if (eOther < 0 || eOther >= MAX_PLAYERS || iSlot < 0 || iSlot >= NUM_TACTICAL_FLAVOR_SLOTS)
+		return 0;
+	return m_aiTacticalFlavorModifier[eOther * NUM_TACTICAL_FLAVOR_SLOTS + iSlot];
+}
+
+// Vox Deorum: returns the modifiers against one player, or NULL when they are all zero.
+const short* CvMilitaryAI::GetTacticalFlavorModifiers(PlayerTypes eOther) const
+{
+	if (eOther < 0 || eOther >= MAX_PLAYERS)
+		return NULL;
+	const short* pModifiers = &m_aiTacticalFlavorModifier[eOther * NUM_TACTICAL_FLAVOR_SLOTS];
+	for (int iSlot = 0; iSlot < NUM_TACTICAL_FLAVOR_SLOTS; iSlot++)
+		if (pModifiers[iSlot] != 0)
+			return pModifiers;
+	return NULL;
+}
+
+// Vox Deorum: recounts the players with any nonzero tactical flavor modifier.
+void CvMilitaryAI::UpdateTacticalFlavorModifierCount()
+{
+	m_iNumTacticalFlavorModifierCivs = 0;
+	for (int iPlayer = 0; iPlayer < MAX_PLAYERS; iPlayer++)
+		if (GetTacticalFlavorModifiers((PlayerTypes)iPlayer) != NULL)
+			m_iNumTacticalFlavorModifierCivs++;
 }
 
 /// Serialization write

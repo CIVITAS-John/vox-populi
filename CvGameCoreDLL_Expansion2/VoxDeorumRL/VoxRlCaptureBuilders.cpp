@@ -2628,14 +2628,28 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 	header.nextGlobalId = GC.getGame().VoxRlPeekNextGlobalID();
 	header.alignedWorldGeneration = alignedWorldGeneration;
 	header.alignedNextDeltaSequence = alignedNextDeltaSequence;
-	InitializeBaselineMilitaryFlavors(
-		capturing.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(
-			static_cast<FlavorTypes>(GC.getInfoTypeForString("FLAVOR_OFFENSE"))),
-		header.militaryFlavors);
+	// The general flavor vector every search starts from, and whether its RISK is set.
+	STacticalFlavors generalFlavors;
+	TacticalAIHelpers::GetGeneralTacticalFlavors(capturingPlayer, generalFlavors);
+	for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+		header.militaryFlavors[slot] = static_cast<u8>(generalFlavors.iFlavor[slot]);
+	header.militaryRiskSet = generalFlavors.bRiskSet ? 1 : 0;
 	VoxRlAssignClamped(header.recommendedLandUnits, military->GetRecommendedLandUnits());
 	VoxRlAssignClamped(header.recommendedNavalUnits, military->GetRecommendedNavalUnits());
 	VoxRlAssignClamped(header.recommendedExplorerUnits, military->GetRecommendedExplorerUnits());
-	data.campaignMilitaryFlavorOverrides.clear();
+	// One row per other player with a nonzero tactical flavor modifier.
+	data.campaignMilitaryFlavorModifiers.clear();
+	for (int player = 0; player < MAX_PLAYERS; ++player)
+	{
+		const short* modifiers = military->GetTacticalFlavorModifiers(static_cast<PlayerTypes>(player));
+		if (modifiers == NULL) continue;
+		CampaignMilitaryFlavorModifierRecord row;
+		ZeroRecord(row);
+		row.counterpartPlayer = static_cast<i8>(player);
+		for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+			row.militaryFlavorModifiers[slot] = static_cast<i16>(modifiers[slot]);
+		data.campaignMilitaryFlavorModifiers.push_back(row);
+	}
 
 	for (int player = 0; player < MAX_PLAYERS; ++player)
 	{
@@ -2713,6 +2727,8 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 		row.abortReason = static_cast<i8>(operation->GetAbortReason());
 		if (!AssignCheckedI16(row.lastTurnMoved, operation->GetLastTurnMoved(),
 			"CampaignOperationRecord", "lastTurnMoved", -1)) valid = false;
+		for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+			row.militaryFlavorModifiers[slot] = static_cast<i16>(operation->GetTacticalFlavorModifier(slot));
 		std::vector<CampaignOperationArmyIdRecord> armyIds;
 		const std::vector<int>& ids = operation->GetArmyIDs();
 		for (size_t army = 0; army < ids.size(); ++army)
@@ -2847,6 +2863,8 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 	version.abortReason = static_cast<i8>(operation.GetAbortReason());
 	if (!AssignCheckedI16(version.lastTurnMoved, lastTurnMoved,
 		"RequestOperationVersionRecord", "lastTurnMoved", -1)) valid = false;
+	for (int slot = 0; slot < kMilitaryFlavorCount; ++slot)
+		version.militaryFlavorModifiers[slot] = static_cast<i16>(operation.GetTacticalFlavorModifier(slot));
 	std::vector<RequestOperationVersionRecord> versions(1, version);
 	if (!AppendRequestOperationRecordOperationVersionRange(&record, &data, versions)) valid = false;
 
