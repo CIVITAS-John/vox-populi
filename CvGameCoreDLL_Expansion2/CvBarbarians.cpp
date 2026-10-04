@@ -305,7 +305,11 @@ void CvBarbarians::DoBarbCampCleared(CvPlot* pPlot, PlayerTypes ePlayer, CvUnit*
 		{
 			int iNumGold = kPlayer.getHandicapInfo().getBarbarianCampGold();
 			iNumGold += kPlayer.isHuman(ISHUMAN_HANDICAP) ? 0 : GC.getGame().getHandicapInfo().getAIBarbarianCampGold();
-			kPlayer.doInstantYield(INSTANT_YIELD_TYPE_BARBARIAN_CAMP_CLEARED, false, NO_GREATPERSON, NO_BUILDING, iNumGold, MOD_BALANCE_VP, NO_PLAYER, NULL, false, pBestCity, false, true, false, YIELD_GOLD, pUnit);
+			{
+				// Vox Deorum: branches simulate camp gold, so capture books it as a reward, not external gold.
+				VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_CAMP);
+				kPlayer.doInstantYield(INSTANT_YIELD_TYPE_BARBARIAN_CAMP_CLEARED, false, NO_GREATPERSON, NO_BUILDING, iNumGold, MOD_BALANCE_VP, NO_PLAYER, NULL, false, pBestCity, false, true, false, YIELD_GOLD, pUnit);
+			}
 
 			if (GET_PLAYER(ePlayer).GetPlayerPolicies()->GetNumericModifier(POLICYMOD_CULTURE_FROM_BARBARIAN_KILLS) > 0 || GET_PLAYER(ePlayer).GetBarbarianCombatBonus(true) > 0)
 			{
@@ -430,6 +434,8 @@ bool CvBarbarians::DoStealFromCity(CvUnit* pUnit, CvCity* pCity)
 		if (iGold > 0)
 		{
 			pUnit->changeDamage(iDamageTaken);
+			// Vox Deorum: branches simulate barbarian theft, so capture books it as a transaction, not external gold.
+			VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_THEFT);
 			GET_PLAYER(pCity->getOwner()).GetTreasury()->ChangeGold(-iGold);
 
 			Localization::String strMessage = Localization::Lookup("TXT_KEY_BARBARIAN_GOLD_THEFT_CITY_DETAILED");

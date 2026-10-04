@@ -5102,6 +5102,8 @@ void CvMinorCivAI::DoFirstContactWithMajor(PlayerTypes eMeetingPlayer, bool bSup
 		// Give Gold and Faith gifts
 		if (iGoldGift > 0)
 		{
+			// Vox Deorum: branches simulate first-contact gold, so capture books it as a reward, not external gold.
+			VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_CONTACT);
 			GET_PLAYER(ePlayer).GetTreasury()->ChangeGold(iGoldGift);
 			GET_PLAYER(ePlayer).changeInstantYieldValue(YIELD_GOLD, iGoldGift);
 		}

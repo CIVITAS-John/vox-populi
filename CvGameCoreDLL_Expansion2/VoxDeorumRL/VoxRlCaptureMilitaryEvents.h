@@ -58,7 +58,7 @@ bool VoxRlGetMilitaryEconomicInterval(PlayerTypes player, int& turn, int& extern
 void VoxRlBeginMilitaryEconomicTurn(PlayerTypes player);
 // Returns the owner of the unit or city in one combat role, or NO_PLAYER.
 PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role);
-// Notes one unit's damage change for the innermost open fight, before the change can kill it.
+// Notes one unit's damage change, or its death without a hit, for the innermost open fight.
 void VoxRlNoteFightDamage(const CvUnit& unit, int oldDamage);
 // Appends buffered evidence without changing the live WORLD replica.
 bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data);

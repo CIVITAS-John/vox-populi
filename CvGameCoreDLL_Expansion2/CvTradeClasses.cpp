@@ -24,6 +24,9 @@
 #include "CvMilitaryAI.h"
 
 #include "CvGrandStrategyAI.h"
+// Vox Deorum: record trade route plunder gold.
+#include "VoxDeorumRL/VoxRlCapture.h"
+#include "VoxDeorumRL/VoxRlCaptureMilitaryEvents.h"
 
 #include "LintFree.h"
 
@@ -4763,7 +4766,11 @@ bool CvPlayerTrade::PlunderTradeRoute(int iTradeConnectionID, CvUnit* pUnit)
 		iPlunderGoldValue *= 3;
 	}
 	iPlunderGoldValue /= 100;
-	m_pPlayer->GetTreasury()->ChangeGold(iPlunderGoldValue);
+	{
+		// Vox Deorum: branches simulate plunder gold, so capture books it as a reward, not external gold.
+		VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_PLUNDER);
+		m_pPlayer->GetTreasury()->ChangeGold(iPlunderGoldValue);
+	}
 
 	// do the floating popup
 	if (GC.getGame().getActivePlayer() == m_pPlayer->GetID())

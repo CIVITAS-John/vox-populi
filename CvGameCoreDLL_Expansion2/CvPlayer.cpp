@@ -3304,7 +3304,11 @@ CvCity* CvPlayer::acquireCity(CvCity* pCity, bool bConquest, bool bGift, bool bO
 			if (iCaptureGold <= 0)
 				iCaptureGold = 0;
 			else
+			{
+				// Vox Deorum: branches simulate capture gold, so capture books it as a reward, not external gold.
+				VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_CAPTURE);
 				GetTreasury()->ChangeGold(iCaptureGold);
+			}
 
 			// Culture from plundering?
 			iCaptureCulture = pCity->getYieldRateTimes100(YIELD_CULTURE);
@@ -12435,6 +12439,8 @@ void CvPlayer::receiveGoody(CvPlot* pPlot, GoodyTypes eGoody, CvUnit* pUnit)
 	if (iGold > 0)
 	{
 		goodyValueModifier(iGold, GC.getGame().getGameSpeedInfo().getGoldPercent(), true, true);
+		// Vox Deorum: branches simulate goody gold, so capture books it as a reward, not external gold.
+		VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_GOODY);
 		GetTreasury()->ChangeGold(iGold);
 		changeInstantYieldValue(YIELD_GOLD, iGold);
 		strBuffer += " ";

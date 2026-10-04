@@ -341,7 +341,13 @@ enum VoxRlMilitaryEventCauseValue {
     VOX_RL_EVENT_DISBAND = 8,
     VOX_RL_EVENT_COMBAT = 9,
     VOX_RL_EVENT_PILLAGE = 10,
-    VOX_RL_EVENT_BARBARIAN = 11
+    VOX_RL_EVENT_BARBARIAN = 11,
+    VOX_RL_EVENT_GOODY = 12,
+    VOX_RL_EVENT_CAMP = 13,
+    VOX_RL_EVENT_PLUNDER = 14,
+    VOX_RL_EVENT_CONTACT = 15,
+    VOX_RL_EVENT_THEFT = 16,
+    VOX_RL_EVENT_CAPTURE = 17
 };
 
 enum { VoxRlTerrainCapacity = 32 };
@@ -4826,7 +4832,7 @@ inline bool VoxRlIsValidRequestMilitaryGoldTransactionRecord(const RequestMilita
 {
     if (row.occurrenceTurn < -1) return false;
     if (row.occurrencePhase > 16) return false;
-    if (row.cause > 11) return false;
+    if (row.cause > 17) return false;
     return true;
 }
 
@@ -5084,7 +5090,7 @@ inline bool VoxRlIsValidRequestMilitaryArrivalRecord(const RequestMilitaryArriva
 {
     if (row.occurrenceTurn < -1) return false;
     if (row.occurrencePhase > 16) return false;
-    if (row.cause > 11) return false;
+    if (row.cause > 17) return false;
     if (row.plotIndex < -1) return false;
     if (row.eventUnitIndex < -1) return false;
     return true;
@@ -5136,7 +5142,7 @@ inline bool VoxRlIsValidRequestMilitaryDepartureRecord(const RequestMilitaryDepa
 {
     if (row.occurrenceTurn < -1) return false;
     if (row.occurrencePhase > 16) return false;
-    if (row.cause > 11) return false;
+    if (row.cause > 17) return false;
     if (row.plotIndex < -1) return false;
     if (row.eventUnitIndex < -1) return false;
     return true;
