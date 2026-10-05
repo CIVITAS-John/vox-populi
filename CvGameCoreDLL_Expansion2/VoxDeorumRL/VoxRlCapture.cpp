@@ -4080,7 +4080,13 @@ void VoxRlCapture::NoteCityRemoved(PlayerTypes eOwner, int iCityId)
 			m_segment->dirtyPlots.insert(plot->first.id);
 	}
 	m_segment->dirtyCities.erase(key);
-	m_segment->removedCities.insert(key);
+	// Only a city the replica knows needs a removal row, matching NoteUnitRemoved. A city
+	// created and removed before any flush, such as one liberated in the same window it
+	// was captured in, leaves no trace.
+	if (m_segment->cityIteration.erase(key) != 0)
+	{
+		m_segment->removedCities.insert(key);
+	}
 	m_segment->lastCityRows.erase(key);
 	m_segment->lastCityResourceRows.erase(key);
 	m_segment->lastCityNeedsGarrison.erase(key);
