@@ -1186,6 +1186,10 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTyp
 			VoxRlAssignClamped(row.value, player.GetFlavorManager()->GetPersonalityIndividualFlavor(static_cast<FlavorTypes>(flavor)));
 			VoxRlAssignClamped(row.personalityAndGrandStrategyValue,
 				player.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(static_cast<FlavorTypes>(flavor)));
+			VoxRlAssignClamped(row.activeValue, player.GetFlavorManager()->GetActiveFlavor(static_cast<FlavorTypes>(flavor)));
+			VoxRlAssignClamped(row.basePersonalityValue, player.GetFlavorManager()->GetBasePersonalityFlavor(static_cast<FlavorTypes>(flavor)));
+			VoxRlAssignClamped(row.customValue, player.GetFlavorManager()->HasCustomFlavors()
+				? player.GetFlavorManager()->GetCustomFlavor(static_cast<FlavorTypes>(flavor)) : -1);
 			snapshot.playerFlavors.push_back(row);
 		}
 		for (int promotion = 0; promotion < GC.getNumPromotionInfos(); ++promotion)
@@ -1327,7 +1331,9 @@ namespace
 		row.warmongerThreat = source.warmongerThreat; }
 	// Copies a personality flavor into its owner-qualified REQUEST row.
 	void CopyChildReplacementRow(const PlayerFlavorRecord& source, RequestPlayerFlavorRowRecord& row)
-	{ row.flavorId = source.flavorId; row.value = source.value; }
+	{ row.flavorId = source.flavorId; row.value = source.value;
+		row.personalityAndGrandStrategyValue = source.personalityAndGrandStrategyValue; row.activeValue = source.activeValue;
+		row.basePersonalityValue = source.basePersonalityValue; row.customValue = source.customValue; }
 	// Copies an espionage sight source into its spying-player REQUEST row.
 	void CopyChildReplacementRow(const CityEspionageSightRecord& source, RequestCityEspionageSightRowRecord& row)
 	{ row.cityOwner = source.cityOwner; row.cityId = source.cityId; row.surveillanceCount = source.surveillanceCount;
