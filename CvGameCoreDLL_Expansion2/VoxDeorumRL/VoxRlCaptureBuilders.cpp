@@ -232,6 +232,15 @@ namespace
 		return true;
 	}
 
+	// Assigns one native turns-to-checkpoint estimate. Native records INT_MAX when the
+	// checkpoint is unreachable (TurnsToReachTarget) and only compares the estimates with
+	// each other, so any estimate above the field range is stored as 32767, which keeps
+	// those comparisons the same. Values below -1 still fail the capture.
+	bool AssignCheckpointTurns(i16& destination, int value, const char* record)
+	{
+		return AssignCheckedI16(destination, value > 32767 ? 32767 : value, record, "checkpointTurns", -1);
+	}
+
 	// Returns whether a building class belongs to any wonder family. Wonder
 	// supplies and costs are part of the player's external resource total.
 	bool IsWonderBuilding(const CvBuildingEntry& building)
@@ -2770,8 +2779,8 @@ bool VoxRlBuildCampaignBlock(const VoxRlBlockIdentity& identity, PlayerTypes cap
 				entry.unitOwner = entry.unitId >= 0 ? static_cast<i8>(capturingPlayer) : static_cast<i8>(-1);
 				entry.required = nativeSlots[slot].IsRequired() ? 1 : 0;
 				for (size_t history = 0; history < VoxRlCheckpointhistoryCapacity; ++history)
-					if (!AssignCheckedI16(entry.checkpointTurns[history], nativeSlots[slot].GetTurnsToCheckpoint(history),
-						"CampaignFormationEntryRecord", "checkpointTurns", -1)) valid = false;
+					if (!AssignCheckpointTurns(entry.checkpointTurns[history], nativeSlots[slot].GetTurnsToCheckpoint(history),
+						"CampaignFormationEntryRecord")) valid = false;
 				slots.push_back(entry);
 			}
 			if (!AppendCampaignArmyRecordFormationRange(&armyRow, &data, slots)) valid = false;
@@ -2910,8 +2919,8 @@ bool VoxRlAppendOperationRecord(CvAIOperation& operation, PlayerTypes initiating
 			for (size_t history = 0; history < VoxRlCheckpointhistoryCapacity; ++history)
 			{
 				const int estimate = nativeSlots[slotIndex].GetTurnsToCheckpoint(history);
-				if (!AssignCheckedI16(slot.checkpointTurns[history], estimate,
-					"RequestFormationEntryVersionRecord", "checkpointTurns", -1)) valid = false;
+				if (!AssignCheckpointTurns(slot.checkpointTurns[history], estimate,
+					"RequestFormationEntryVersionRecord")) valid = false;
 			}
 			slots.push_back(slot);
 		}

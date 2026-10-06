@@ -5662,7 +5662,7 @@ bool CollectCampaignFormationEntryRecord(CampaignFormationEntryRecord& out)
     // unitId has no generated assignment because its capture mode is builder.
     // Formation slot index within the army.
     // slotIndex has no generated assignment because its capture mode is builder.
-    // Newest-first checkpoint travel-time samples, with -1 marking an unused position.
+    // Newest-first checkpoint travel-time samples, with -1 marking an unused position and 32767 an unreachable checkpoint (native INT_MAX).
     // checkpointTurns has no generated assignment because its capture mode is builder.
     // Assigned UnitRef owner.
     // unitOwner has no generated assignment because its capture mode is builder.
@@ -7334,7 +7334,7 @@ bool CollectRequestFormationEntryVersionRecord(RequestFormationEntryVersionRecor
     // unitId has no generated assignment because its capture mode is builder.
     // Slot index.
     // slotIndex has no generated assignment because its capture mode is builder.
-    // Newest-first checkpoint estimates.
+    // Newest-first checkpoint estimates, with -1 marking an unused position and 32767 an unreachable checkpoint (native INT_MAX).
     // checkpointTurns has no generated assignment because its capture mode is builder.
     // Owning operation player.
     // operationOwner has no generated assignment because its capture mode is builder.
