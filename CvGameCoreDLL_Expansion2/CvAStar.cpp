@@ -926,6 +926,9 @@ void UpdateNodeCacheData(CvAStarNode* node, const CvUnit* pUnit, const CvAStar* 
 	if (kToNodeCacheData.iGenerationID==finder->GetCurrentGenerationID())
 		return;
 
+	// Vox Deorum: a new search has a new unit or game state, so forget the end-turn danger memo
+	kToNodeCacheData.bEndTurnDangerKnown = false;
+
 	const CvPlot* pPlot = GC.getMap().plotUnchecked(node->m_iX, node->m_iY);
 	TeamTypes eUnitTeam = pUnit->getTeam();
 	CvTeam& kUnitTeam = GET_TEAM(eUnitTeam);
@@ -1282,9 +1285,15 @@ int PathEndTurnCost(CvPlot* pToPlot, const CvPathNodeCacheData& kToNodeCacheData
 		if (!pToPlot->isVisible(eUnitTeam))
 			iCost += PATH_END_TURN_INVISIBLE_WEIGHT;
 
-		//calculcate danger. this is expensive but the last result is cached for each plot
+		//calculcate danger. this is expensive, so compute it once per plot per search
 		//note: it includes an overkill factor because usually not all enemy units will attack this one unit
-		int iPlotDanger = pUnit->GetDanger(pToPlot);
+		// Vox Deorum: every route that ends a turn here sees the same danger, so reuse the node's memo
+		if (!kToNodeCacheData.bEndTurnDangerKnown)
+		{
+			kToNodeCacheData.iEndTurnDanger = pUnit->GetDanger(pToPlot);
+			kToNodeCacheData.bEndTurnDangerKnown = true;
+		}
+		int iPlotDanger = kToNodeCacheData.iEndTurnDanger;
 
 		//we should give more weight to the first end-turn plot, the danger values for future stops are less concrete
 		int iFutureFactor = std::max(1,4-iTurnsInFuture);
@@ -2985,6 +2994,7 @@ bool CvTwoLayerPathFinder::AddStopNodeIfRequired(const CvAStarNode* current, con
 		//we sort the nodes by total cost!
 		pStopNode->m_iTotalCost = pStopNode->m_iKnownCost*giKnownCostWeight + pStopNode->m_iHeuristicCost*giHeuristicCostWeight;
 		pStopNode->m_pParent = current->m_pParent;
+		// Vox Deorum: this copy also carries the end-turn danger memo, which is valid because both nodes share a plot
 		pStopNode->m_kCostCacheData = current->m_kCostCacheData;
 		pStopNode->m_bIsStopNode = true;
 		
