@@ -1359,6 +1359,10 @@ protected:
 	unsigned short nSaveMovement;
 	// Vox Deorum: per-slot score weights in thousandths, 1000 at a neutral flavor
 	unsigned short aFlavorWeight[STacticalFlavors::NUM_SLOTS];
+	// Vox Deorum: the in-city bonus weight, HOLD_CITY's weight above 50 and linear to zero below it
+	unsigned short nCityHoldWeight;
+	// Vox Deorum: the ATTRITION weight for hits on enemy land units on our land, at max(ATTRITION, HOLD_GROUND / 2)
+	unsigned short nGroundAttritionWeight;
 
 	//------------
 	const vector<int>& getRangeAttackPlotsForUnit(const SUnitStats& unit) const;
@@ -1391,10 +1395,18 @@ public:
 	int scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue, bool bInverse = false) const;
 	// Vox Deorum: scales an attack term and limits the change to TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT
 	int scaleAttackByFlavor(STacticalFlavors::eSlot eSlot, int iValue) const;
+	// Vox Deorum: scales a score term by a weight in thousandths, or divides by it when inverse
+	static int scaleByWeight(int iWeight, int iValue, bool bInverse = false);
+	// Vox Deorum: scales an attack term by a weight and limits the change to TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT
+	static int scaleAttackByWeight(int iWeight, int iValue);
 	// Vox Deorum: the extra score a flavor above 50 adds to a base value, (weight - 1) x value, or zero
 	int flavorBonus(STacticalFlavors::eSlot eSlot, int iValue) const;
 	// Vox Deorum: one slot's weight in thousandths, 1000 at neutral
 	int getFlavorWeight(STacticalFlavors::eSlot eSlot) const { return aFlavorWeight[eSlot]; }
+	// Vox Deorum: the in-city bonus weight in thousandths, zero at HOLD_CITY 0
+	int getCityHoldWeight() const { return nCityHoldWeight; }
+	// Vox Deorum: the ATTRITION weight for hits on enemy land units on our land, in thousandths
+	int getGroundAttritionWeight() const { return nGroundAttritionWeight; }
 
 	bool isEarlyFinish(bool bExtraKill = false) const;
 	bool haveEnemies() const;

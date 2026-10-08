@@ -7765,11 +7765,15 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	if (bScoreReduction)
 		iBonusScore -= 10;
 
-	// Vox Deorum: OCCUPATION scales city damage and the capture bonus, ATTRITION unit damage and the kill bonus
+	// Vox Deorum: OCCUPATION scales city damage and the capture bonus, ATTRITION unit damage and the kill bonus.
+	// A hit on an enemy land unit standing on our land reads ATTRITION as max(ATTRITION, HOLD_GROUND / 2).
+	int iUnitDamageWeight = assumedPosition.getFlavorWeight(STacticalFlavors::ATTRITION);
+	if (pEnemyUnit && pEnemyUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() == pUnit->getTeam())
+		iUnitDamageWeight = assumedPosition.getGroundAttritionWeight();
 	if (bCityKill)
 		iBonusScore += assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, 100);
 	else if (bUnitKill)
-		iBonusScore += assumedPosition.scaleAttackByFlavor(STacticalFlavors::ATTRITION, 15);
+		iBonusScore += CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, 15);
 
 	// Vox Deorum: HOLD_CITY above 50 values hits on siege units within three plots of our nearest city
 	if (gbTacticalCityFlavorTerms && pEnemyUnit && pEnemyUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_CITY_BOMBARD)
@@ -7783,7 +7787,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	}
 
 	result->SetScore(0, iBonusScore, assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt)
-		+ assumedPosition.scaleAttackByFlavor(STacticalFlavors::ATTRITION, iTotalActualUnitDamageDealt) - iActualDamageTaken);
+		+ CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, iTotalActualUnitDamageDealt) - iActualDamageTaken);
 
 	return bCityKill || bUnitKill;
 }
@@ -8124,12 +8128,12 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	//also occupy our own citadels
 	if (bIsFrontlineCitadelOrCity)
 	{
-		// Vox Deorum: HOLD_CITY scales the bonus in a city, HOLD_GROUND in a citadel
-		STacticalFlavors::eSlot eHoldSlot = pTestPlot->isCity() ? STacticalFlavors::HOLD_CITY : STacticalFlavors::HOLD_GROUND;
+		// Vox Deorum: the city hold weight scales the bonus in a city, HOLD_GROUND in a citadel
+		int iHoldWeight = pTestPlot->isCity() ? assumedPosition.getCityHoldWeight() : assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND);
 		if (pUnit->GetRange() > 1 || testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, -1)==0 || testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND)>0)
-			iResult += assumedPosition.scaleByFlavor(eHoldSlot, TACTICAL_COMBAT_CITADEL_BONUS);
+			iResult += CvTacticalPosition::scaleByWeight(iHoldWeight, TACTICAL_COMBAT_CITADEL_BONUS);
 		else
-			iResult += assumedPosition.scaleByFlavor(eHoldSlot, TACTICAL_COMBAT_CITADEL_BONUS/2);
+			iResult += CvTacticalPosition::scaleByWeight(iHoldWeight, TACTICAL_COMBAT_CITADEL_BONUS/2);
 	}
 
 	//try not to be a sitting duck (faster than isNativeDomain but not entirely accurate)
@@ -10286,6 +10290,21 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 		}
 	}
 
+	// Vox Deorum: below 50 the in-city bonus fades linearly to nothing at HOLD_CITY 0, rather than halving
+	int iHoldCity = flavors.iFlavor[STacticalFlavors::HOLD_CITY];
+	nCityHoldWeight = iHoldCity < 50 ? (unsigned short)(20 * max(iHoldCity, 0)) : aFlavorWeight[STacticalFlavors::HOLD_CITY];
+
+	// Vox Deorum: hits on enemy land units on our land read ATTRITION as max(ATTRITION, HOLD_GROUND / 2),
+	// with ATTRITION's strength, so the two never stack
+	double dGroundAttrition = flavors.iFlavor[STacticalFlavors::HOLD_GROUND] / 2.0;
+	if (dGroundAttrition <= flavors.iFlavor[STacticalFlavors::ATTRITION])
+		nGroundAttritionWeight = aFlavorWeight[STacticalFlavors::ATTRITION];
+	else
+	{
+		double dWeight = 1000.0 * pow(2.0, flavors.fStrength[STacticalFlavors::ATTRITION] * (dGroundAttrition - 50.0) / 50.0);
+		nGroundAttritionWeight = (unsigned short)range((int)(dWeight + 0.5), 1, 65535);
+	}
+
 	ePlayer = player;
 	pTargetPlot = pTarget;
 	bTargetDistanceRelevant = bTargetDistanceRelevant_;
@@ -10335,6 +10354,8 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	// Vox Deorum: children score with the root's flavor weights
 	for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
 		aFlavorWeight[i] = parent.aFlavorWeight[i];
+	nCityHoldWeight = parent.nCityHoldWeight;
+	nGroundAttritionWeight = parent.nGroundAttritionWeight;
 	eAggression = parent.eAggression;
 	nOurOriginalUnits = parent.nOurOriginalUnits;
 	nOriginalEnemies = parent.nOriginalEnemies;
@@ -10376,7 +10397,13 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 // Inverse divides by the weight instead. A neutral weight returns the term unchanged.
 int CvTacticalPosition::scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue, bool bInverse) const
 {
-	int iWeight = aFlavorWeight[eSlot];
+	return scaleByWeight(aFlavorWeight[eSlot], iValue, bInverse);
+}
+
+// Vox Deorum: scales a score term by a weight in thousandths, rounding half away from zero.
+// Inverse divides by the weight instead. A neutral weight returns the term unchanged.
+int CvTacticalPosition::scaleByWeight(int iWeight, int iValue, bool bInverse)
+{
 	if (iWeight == 1000)
 		return iValue;
 
@@ -10389,9 +10416,16 @@ int CvTacticalPosition::scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue,
 // TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT so large hits at high weights keep their order without saturating.
 int CvTacticalPosition::scaleAttackByFlavor(STacticalFlavors::eSlot eSlot, int iValue) const
 {
-	if (aFlavorWeight[eSlot] == 1000)
+	return scaleAttackByWeight(aFlavorWeight[eSlot], iValue);
+}
+
+// Vox Deorum: scales an attack term by a weight in thousandths, limiting the change to
+// TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT.
+int CvTacticalPosition::scaleAttackByWeight(int iWeight, int iValue)
+{
+	if (iWeight == 1000)
 		return iValue;
-	return iValue + range(scaleByFlavor(eSlot, iValue) - iValue, -TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
+	return iValue + range(scaleByWeight(iWeight, iValue) - iValue, -TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
 }
 
 // Vox Deorum: the extra score a flavor adds to a base value, (weight - 1) x value, rounding half away from
