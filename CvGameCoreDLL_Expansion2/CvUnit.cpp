@@ -2181,7 +2181,7 @@ void CvUnit::kill(bool bDelay, PlayerTypes ePlayer /*= NO_PLAYER*/)
 
 	// Vox Deorum: a unit that dies in a fight without a hit, such as a sunk carrier's cargo, is still a fight loss.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && !isDelayedDeath())
-		VoxRlNoteFightDamage(*this, getDamage());
+		VoxRlNoteUnitDamage(*this, getDamage());
 
 	bool bCheckForMurder = ePlayer != NO_PLAYER && !GET_PLAYER(eUnitOwner).isBarbarian() && GET_PLAYER(eUnitOwner).getNumCities() <= 0 && (GET_PLAYER(eUnitOwner).getNumUnits() <= 1 || canFoundCity(NULL, true, true, true));
 
@@ -10334,8 +10334,9 @@ bool CvUnit::shouldPillage(const CvPlot* pPlot, bool bConservative, bool bIgnore
 //	--------------------------------------------------------------------------------
 bool CvUnit::pillage()
 {
-	// Vox Deorum: include direct and instant military pillage rewards.
+	// Vox Deorum: include direct and instant military pillage rewards, and log the pillage heal.
 	VoxRlMilitaryGoldScope captureGold(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_EVENT_PILLAGE);
+	VoxRlDamageScope captureHeal(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_DAMAGE_PILLAGE, NO_PLAYER, NO_PLAYER);
 	VALIDATE_OBJECT();
 	CvString strBuffer;
 
@@ -21445,11 +21446,11 @@ int CvUnit::setDamage(int iNewValue, PlayerTypes ePlayer, float fAdditionalTextD
 	if(iOldValue != getDamage())
 	{
 		// Vox Deorum: synchronize damage changes before the next captured search, and log the
-		// change for an open fight before the unit can die.
+		// change for an open damage scope before the unit can die.
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
 			VoxRlCapture::GetInstance().NoteUnitChanged(getOwner(), GetID());
-			VoxRlNoteFightDamage(*this, iOldValue);
+			VoxRlNoteUnitDamage(*this, iOldValue);
 		}
 
 		if(IsGarrisoned())

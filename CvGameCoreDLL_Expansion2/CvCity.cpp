@@ -2021,6 +2021,10 @@ void CvCity::PreKill()
 {
 	VALIDATE_OBJECT();
 
+	// Vox Deorum: a city captured or destroyed in an open damage scope is removed there.
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+		VoxRlNoteCityDamage(*this, getDamage());
+
 	if (isCitySelected())
 	{
 		DLLUI->clearSelectedCities();
@@ -2319,6 +2323,8 @@ void CvCity::doTurn()
 
 	if (getDamage() > 0 && !IsBlockadedWaterAndLand())
 	{
+		// Vox Deorum: log the city's turn heal for the grade.
+		VoxRlDamageScope captureHeal(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_DAMAGE_TURN, NO_PLAYER, NO_PLAYER);
 		int iHitsHealed = /*20 in CP, 8 in VP*/ GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN);
 
 		int iBuildingDefense = m_pCityBuildings->GetBuildingDefense();
@@ -2394,6 +2400,8 @@ void CvCity::doTurn()
 
 	if (plot() != NULL)
 	{
+		// Vox Deorum: log the garrison's turn heal for the grade.
+		VoxRlDamageScope captureHeal(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_DAMAGE_TURN, NO_PLAYER, NO_PLAYER);
 		for (int iUnitLoop = 0; iUnitLoop < plot()->getNumUnits(); iUnitLoop++)
 		{
 			CvUnit* pLoopUnit = plot()->getUnitByIndex(iUnitLoop);
@@ -27589,9 +27597,12 @@ void CvCity::setDamage(int iValue, bool noMessage)
 	else if (iValue > GetMaxHitPoints())
 		iValue = GetMaxHitPoints();
 
-	// Vox Deorum: capture city damage change marking.
+	// Vox Deorum: capture city damage change marking, and log the change for an open damage scope.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled && iValue != m_iDamage)
+	{
 		VoxRlCapture::GetInstance().NoteCityChanged(getOwner(), GetID());
+		VoxRlNoteCityDamage(*this, m_iDamage);
+	}
 
 	if (iValue != getDamage())
 	{

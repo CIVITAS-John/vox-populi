@@ -10724,6 +10724,8 @@ void CvPlayer::SetAllUnitsUnprocessed()
 /// Units heal and then get their movement back
 void CvPlayer::DoUnitReset()
 {
+	// Vox Deorum: log turn heals, citadel damage, and deep water damage for the grade.
+	VoxRlDamageScope captureHeal(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, VOX_RL_DAMAGE_TURN, NO_PLAYER, NO_PLAYER);
 	int iLoop = 0;
 	for (CvUnit* pLoopUnit = firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = nextUnit(&iLoop))
 	{

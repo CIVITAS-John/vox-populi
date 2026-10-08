@@ -7,6 +7,7 @@
 #include "VoxDeorumRL/schema/VoxRlSchema.generated.h"
 
 class CvUnit;
+class CvCity;
 class CvPlot;
 class CvCombatInfo;
 struct VoxRlRequestData;
@@ -58,8 +59,10 @@ bool VoxRlGetMilitaryEconomicInterval(PlayerTypes player, int& turn, int& extern
 void VoxRlBeginMilitaryEconomicTurn(PlayerTypes player);
 // Returns the owner of the unit or city in one combat role, or NO_PLAYER.
 PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role);
-// Notes one unit's damage change, or its death without a hit, for the innermost open fight.
-void VoxRlNoteFightDamage(const CvUnit& unit, int oldDamage);
+// Notes one unit's damage change, or its death without a hit, for the innermost open damage scope.
+void VoxRlNoteUnitDamage(const CvUnit& unit, int oldDamage);
+// Notes one city's damage change, or its capture or destruction, for the innermost open damage scope.
+void VoxRlNoteCityDamage(const CvCity& city, int oldDamage);
 // Appends buffered evidence without changing the live WORLD replica.
 bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data);
 // Consumes only the prefix accepted by the last successful collection.
@@ -80,21 +83,21 @@ private:
     VoxRlMilitaryGoldScope& operator=(const VoxRlMilitaryGoldScope&);
 };
 
-// Logs every unit whose hit points change in one fight, so the grade can count unit losses
-// exactly. Native combat resolution and paradrop interception open one; a nested fight logs
-// its own rows. A fight neither side's segment admits does no capture work.
-class VoxRlFightScope
+// Logs every unit and city whose hit points change in one fight, nuke, turn heal, or pillage
+// (VoxRlDamageCause), so the grade can count losses and heals exactly. Native combat resolution,
+// paradrop interception, unit reset, city turn healing, and pillage open one; a nested scope logs
+// its own rows. Rows go to every admitted major, and a scope does no work when none is admitted.
+class VoxRlDamageScope
 {
 public:
-    // Opens a fight between the attacking and defending owners when either side's segment
-    // admits military events.
-    VoxRlFightScope(bool enabled, PlayerTypes attacker, PlayerTypes defender);
-    // Writes one row per damaged unit for each admitted side and restores the enclosing fight.
-    ~VoxRlFightScope();
+    // Opens a scope with its cause and sides; turn healing and pillage have no sides (NO_PLAYER).
+    VoxRlDamageScope(bool enabled, int cause, PlayerTypes attacker, PlayerTypes defender);
+    // Writes one row per changed subject for every admitted major and restores the enclosing scope.
+    ~VoxRlDamageScope();
 private:
     bool m_open;
-    VoxRlFightScope(const VoxRlFightScope&);
-    VoxRlFightScope& operator=(const VoxRlFightScope&);
+    VoxRlDamageScope(const VoxRlDamageScope&);
+    VoxRlDamageScope& operator=(const VoxRlDamageScope&);
 };
 
 // Labels unit creations as upgrades when native creates a replacement under another reason, such

@@ -76,30 +76,34 @@ namespace
         // Starts without a captured actor-turn context.
         ActorTurnSchedule() : turn(-1), phase(0), nextOrder(0), initialized(false) {}
     };
-    // One unit an open fight damaged: its native identity and the row its first change began.
-    struct FightUnit
+    // One unit or city an open damage scope changed: its native identity (unit ID, or plot index
+    // for a city, so a capture that replaces the city object stays one subject) and the row its
+    // first change began.
+    struct DamageSubject
     {
         int owner;
         int id;
-        RequestFightRecord row;
+        RequestDamageRecord row;
     };
-    // One open fight: its two sides and the units it damaged, in first-change order.
-    struct OpenFight
+    // One open damage scope: its cause, its two sides, and the subjects it changed, in
+    // first-change order.
+    struct OpenDamageScope
     {
+        int cause;
         int attacker;
         int defender;
-        std::vector<FightUnit> units;
+        std::vector<DamageSubject> subjects;
     };
-    // One finished fight row and the admitted major whose segment carries it.
-    struct FightRow
+    // One finished damage row and the admitted major whose segment carries it.
+    struct DamageRow
     {
         int receiver;
-        RequestFightRecord row;
+        RequestDamageRecord row;
     };
     std::map<UnitKey, UnitKey> lineage;
     std::vector<MilitaryEvent> events;
-    std::vector<OpenFight> openFights;
-    std::vector<FightRow> fights;
+    std::vector<OpenDamageScope> openDamageScopes;
+    std::vector<DamageRow> damageRows;
     std::vector<RequestBarbarianCampCreationRecord> campCreations;
     std::map<int, unsigned int> campIds;
     std::vector<RequestMilitaryGoldTransactionRecord> goldTransactions;
@@ -111,7 +115,7 @@ namespace
     size_t collectedCamps = 0;
     size_t collectedGold = 0;
     size_t collectedEconomics = 0;
-    size_t collectedFights = 0;
+    size_t collectedDamage = 0;
     int eventActor = -1;
     int eventPhase = 0;
     int eventTurn = -1;
@@ -295,22 +299,40 @@ namespace
         return true;
     }
 
-    // Queues one finished row for a fight side whose segment admits military events.
-    void QueueFightRow(int receiver, const RequestFightRecord& row)
+    // Queues one finished damage row for every admitted major, as the grade of any of them can
+    // count it whoever took part. A human major never runs UpdateOperations, so its segment never
+    // commits and would only accumulate copies.
+    void QueueDamageRow(const RequestDamageRecord& row)
     {
-        if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(static_cast<PlayerTypes>(receiver))) return;
-        FightRow queued;
-        queued.receiver = receiver;
+        DamageRow queued;
         queued.row = row;
-        fights.push_back(queued);
+        for (int player = 0; player < MAX_MAJOR_CIVS; ++player)
+        {
+            if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(static_cast<PlayerTypes>(player)) ||
+                GET_PLAYER(static_cast<PlayerTypes>(player)).isHuman(ISHUMAN_AI_UNITS)) continue;
+            queued.receiver = player;
+            damageRows.push_back(queued);
+        }
+    }
+
+    // Returns the open scope's entry for one unit (by owner and ID) or city (by plot), or NULL.
+    DamageSubject* FindDamageSubject(OpenDamageScope& scope, int subject, int owner, int id)
+    {
+        for (size_t i = 0; i < scope.subjects.size(); ++i)
+        {
+            DamageSubject& entry = scope.subjects[i];
+            if (entry.row.subject != subject || entry.id != id) continue;
+            if (subject == VOX_RL_DAMAGE_CITY || entry.owner == owner) return &entry;
+        }
+        return NULL;
     }
 }
 
 // Clears all evidence when the native attachment changes.
 void VoxRlResetMilitaryEvents()
 {
-    lineage.clear(); events.clear(); openFights.clear(); fights.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
-    collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedFights = 0;
+    lineage.clear(); events.clear(); openDamageScopes.clear(); damageRows.clear(); campCreations.clear(); campIds.clear(); goldTransactions.clear(); economicBatches.clear(); economicIntervals.clear(); maintenanceBaselines.clear(); pendingTransfers.clear();
+    collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedDamage = 0;
     for (int actor = 0; actor < MAX_PLAYERS; ++actor) actorTurnSchedules[actor] = ActorTurnSchedule();
     eventActor = -1; eventPhase = 0; eventTurn = -1; nextTransfer = 1; nextCreatedCamp = 0x80000001u; goldDepth = 0; goldCause = 0; upgradeDepth = 0; captureFailed = false;
 }
@@ -629,28 +651,53 @@ PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role)
     return city != NULL ? city->getOwner() : NO_PLAYER;
 }
 
-// Keeps the unit's identity and damage before its first change in the innermost open fight.
-void VoxRlNoteFightDamage(const CvUnit& unit, int oldDamage)
+// Keeps the unit's identity and damage before its first change in the innermost open scope.
+void VoxRlNoteUnitDamage(const CvUnit& unit, int oldDamage)
 {
-    if (openFights.empty()) return;
-    OpenFight& fight = openFights.back();
-    for (size_t i = 0; i < fight.units.size(); ++i)
-        if (fight.units[i].owner == unit.getOwner() && fight.units[i].id == unit.GetID()) return;
-    FightUnit entry;
+    if (openDamageScopes.empty()) return;
+    OpenDamageScope& scope = openDamageScopes.back();
+    if (FindDamageSubject(scope, VOX_RL_DAMAGE_UNIT, unit.getOwner(), unit.GetID()) != NULL) return;
+    DamageSubject entry;
     entry.owner = unit.getOwner();
     entry.id = unit.GetID();
-    entry.row = RequestFightRecord();
-    entry.row.unitOwner = static_cast<i8>(unit.getOwner());
+    entry.row = RequestDamageRecord();
+    entry.row.subject = VOX_RL_DAMAGE_UNIT;
+    entry.row.owner = static_cast<i8>(unit.getOwner());
+    entry.row.plotIndex = -1;
     int owner, id;
     VoxRlGetUnitLineage(unit, owner, id);
     entry.row.lineageOwner = static_cast<i8>(owner);
     entry.row.lineageUnitId = id;
-    if (!VoxRlAssignChecked(entry.row.unitType, static_cast<int>(unit.getUnitType()), "RequestFightRecord", "unitType", 0) ||
-        !VoxRlAssignChecked(entry.row.level, unit.getLevel(), "RequestFightRecord", "level", 0) ||
-        !VoxRlAssignChecked(entry.row.maxHitPoints, unit.GetMaxHitPoints(), "RequestFightRecord", "maxHitPoints", 1) ||
-        !VoxRlAssignChecked(entry.row.damageBefore, oldDamage, "RequestFightRecord", "damageBefore", 0))
+    if (!VoxRlAssignChecked(entry.row.unitType, static_cast<int>(unit.getUnitType()), "RequestDamageRecord", "unitType", 0) ||
+        !VoxRlAssignChecked(entry.row.level, unit.getLevel(), "RequestDamageRecord", "level", 0) ||
+        !VoxRlAssignChecked(entry.row.maxHitPoints, unit.GetMaxHitPoints(), "RequestDamageRecord", "maxHitPoints", 1) ||
+        !VoxRlAssignChecked(entry.row.damageBefore, oldDamage, "RequestDamageRecord", "damageBefore", 0))
         captureFailed = true;
-    fight.units.push_back(entry);
+    scope.subjects.push_back(entry);
+}
+
+// Keeps the city's plot, owner, and damage before its first change in the innermost open scope.
+void VoxRlNoteCityDamage(const CvCity& city, int oldDamage)
+{
+    if (openDamageScopes.empty() || city.plot() == NULL) return;
+    OpenDamageScope& scope = openDamageScopes.back();
+    const int plotIndex = city.plot()->GetPlotIndex();
+    if (FindDamageSubject(scope, VOX_RL_DAMAGE_CITY, city.getOwner(), plotIndex) != NULL) return;
+    DamageSubject entry;
+    entry.owner = city.getOwner();
+    entry.id = plotIndex;
+    entry.row = RequestDamageRecord();
+    entry.row.subject = VOX_RL_DAMAGE_CITY;
+    entry.row.owner = static_cast<i8>(city.getOwner());
+    entry.row.lineageOwner = static_cast<i8>(NO_PLAYER);
+    entry.row.lineageUnitId = -1;
+    entry.row.unitType = -1;
+    entry.row.level = 0;
+    SetPlot(entry.row.plotIndex, plotIndex, "RequestDamageRecord");
+    if (!VoxRlAssignChecked(entry.row.maxHitPoints, city.GetMaxHitPoints(), "RequestDamageRecord", "maxHitPoints", 1) ||
+        !VoxRlAssignChecked(entry.row.damageBefore, oldDamage, "RequestDamageRecord", "damageBefore", 0))
+        captureFailed = true;
+    scope.subjects.push_back(entry);
 }
 
 // Stages event evidence separately from live upserts, retaining receiver buffers.
@@ -661,14 +708,14 @@ bool VoxRlCollectMilitaryEvents(PlayerTypes observer, VoxRlRequestData& data)
     // Their evidence becomes publishable only after the enclosing action completes.
     if (goldDepth != 0)
     {
-        collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedFights = 0;
+        collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedDamage = 0;
         return true;
     }
     collectedEvents = events.size(); collectedCamps = campCreations.size(); collectedGold = goldTransactions.size(); collectedEconomics = economicBatches.size();
-    collectedFights = fights.size();
-    // Each fight row already names the one admitted side whose segment carries it.
-    for (size_t i = 0; i < collectedFights; ++i)
-        if (fights[i].receiver == observer) data.requestFights.push_back(fights[i].row);
+    collectedDamage = damageRows.size();
+    // Each damage row is queued once per admitted major, so every segment carries its own copy.
+    for (size_t i = 0; i < collectedDamage; ++i)
+        if (damageRows[i].receiver == observer) data.requestDamage.push_back(damageRows[i].row);
     for (size_t i = 0; i < collectedEvents; ++i)
     {
         const MilitaryEvent& event = events[i];
@@ -718,63 +765,82 @@ void VoxRlCommitMilitaryEvents(PlayerTypes observer)
     }
     events.resize(retained);
     retained = 0;
-    for (size_t i = 0; i < fights.size(); ++i)
+    // Copies for a major no longer admitted, such as one that died, are dropped as no segment of
+    // that major will carry them.
+    for (size_t i = 0; i < damageRows.size(); ++i)
     {
-        if (i < collectedFights && fights[i].receiver == observer) continue;
-        if (retained != i) fights[retained] = fights[i];
+        if (i < collectedDamage && damageRows[i].receiver == observer) continue;
+        if (!VoxRlCapture::GetInstance().AdmitsMilitaryEvents(static_cast<PlayerTypes>(damageRows[i].receiver))) continue;
+        if (retained != i) damageRows[retained] = damageRows[i];
         ++retained;
     }
-    fights.resize(retained);
+    damageRows.resize(retained);
     campCreations.erase(campCreations.begin(), campCreations.begin() + collectedCamps);
     // This segment carried all players' economic prefixes, so consume each once
     // even when its treasury belongs to a different player from the segment.
     goldTransactions.erase(goldTransactions.begin(), goldTransactions.begin() + collectedGold);
     economicBatches.erase(economicBatches.begin(), economicBatches.begin() + collectedEconomics);
-    collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedFights = 0;
+    collectedEvents = collectedCamps = collectedGold = collectedEconomics = collectedDamage = 0;
 }
 
-// Skips fights no admitted segment would carry, so they cost nothing.
-VoxRlFightScope::VoxRlFightScope(bool enabled, PlayerTypes attacker, PlayerTypes defender) : m_open(false)
+// Skips scopes no admitted segment would carry, so they cost nothing.
+VoxRlDamageScope::VoxRlDamageScope(bool enabled, int cause, PlayerTypes attacker, PlayerTypes defender) : m_open(false)
 {
-    VoxRlCapture& capture = VoxRlCapture::GetInstance();
-    m_open = enabled && (capture.AdmitsMilitaryEvents(attacker) || capture.AdmitsMilitaryEvents(defender));
+    m_open = enabled && HasMajorCarrier();
     if (!m_open) return;
-    OpenFight fight;
-    fight.attacker = attacker;
-    fight.defender = defender;
-    openFights.push_back(fight);
+    OpenDamageScope scope;
+    scope.cause = cause;
+    scope.attacker = attacker;
+    scope.defender = defender;
+    openDamageScopes.push_back(scope);
 }
 
-// Reads each damaged unit's final damage, where a unit that is gone or dying counts as killed,
-// and queues the rows for each admitted side. Every row of the fight shares one occurrence.
-VoxRlFightScope::~VoxRlFightScope()
+// Reads each subject's final damage and queues one row per subject for every admitted major.
+// A unit that is gone or dying counts as removed, and so does a city whose plot no longer holds
+// a city of its owner. Every row of the scope shares one occurrence. In a nuke, each row the
+// attacker does not own names its own owner as the defender, so the struck side is a side.
+VoxRlDamageScope::~VoxRlDamageScope()
 {
-    if (!m_open || openFights.empty()) return;
-    OpenFight fight;
-    fight.attacker = openFights.back().attacker;
-    fight.defender = openFights.back().defender;
-    fight.units.swap(openFights.back().units);
-    openFights.pop_back();
-    if (fight.units.empty()) return;
-    RequestFightRecord shared = RequestFightRecord();
+    if (!m_open || openDamageScopes.empty()) return;
+    OpenDamageScope scope;
+    scope.cause = openDamageScopes.back().cause;
+    scope.attacker = openDamageScopes.back().attacker;
+    scope.defender = openDamageScopes.back().defender;
+    scope.subjects.swap(openDamageScopes.back().subjects);
+    openDamageScopes.pop_back();
+    if (scope.subjects.empty()) return;
+    RequestDamageRecord shared = RequestDamageRecord();
     SetOccurrence(shared);
-    for (size_t i = 0; i < fight.units.size(); ++i)
+    for (size_t i = 0; i < scope.subjects.size(); ++i)
     {
-        RequestFightRecord row = fight.units[i].row;
+        RequestDamageRecord row = scope.subjects[i].row;
         row.occurrenceTurn = shared.occurrenceTurn;
         row.occurrenceActor = shared.occurrenceActor;
         row.occurrencePhase = shared.occurrencePhase;
         row.occurrenceOrder = shared.occurrenceOrder;
-        row.attackerOwner = static_cast<i8>(fight.attacker);
-        row.defenderOwner = static_cast<i8>(fight.defender);
-        const int owner = fight.units[i].owner;
-        const CvUnit* unit = owner >= 0 && owner < MAX_PLAYERS
-            ? GET_PLAYER(static_cast<PlayerTypes>(owner)).getUnit(fight.units[i].id) : NULL;
-        row.killed = unit == NULL || unit->isDelayedDeath() || unit->IsDead() ? 1 : 0;
-        if (!VoxRlAssignChecked(row.damageAfter, row.killed ? row.maxHitPoints : unit->getDamage(),
-            "RequestFightRecord", "damageAfter", 0)) captureFailed = true;
-        QueueFightRow(fight.attacker, row);
-        if (fight.defender != fight.attacker) QueueFightRow(fight.defender, row);
+        row.cause = static_cast<u8>(scope.cause);
+        row.attackerOwner = static_cast<i8>(scope.attacker);
+        row.defenderOwner = static_cast<i8>(scope.cause == VOX_RL_DAMAGE_NUKE && row.owner != scope.attacker
+            ? row.owner : scope.defender);
+        const int owner = scope.subjects[i].owner;
+        int damage = 0;
+        if (row.subject == VOX_RL_DAMAGE_CITY)
+        {
+            const CvPlot* plot = GC.getMap().plotByIndex(scope.subjects[i].id);
+            const CvCity* city = plot != NULL ? plot->getPlotCity() : NULL;
+            row.removed = city == NULL || city->getOwner() != owner ? 1 : 0;
+            if (!row.removed) damage = city->getDamage() < row.maxHitPoints ? city->getDamage() : row.maxHitPoints;
+        }
+        else
+        {
+            const CvUnit* unit = owner >= 0 && owner < MAX_PLAYERS
+                ? GET_PLAYER(static_cast<PlayerTypes>(owner)).getUnit(scope.subjects[i].id) : NULL;
+            row.removed = unit == NULL || unit->isDelayedDeath() || unit->IsDead() ? 1 : 0;
+            if (!row.removed) damage = unit->getDamage() < row.maxHitPoints ? unit->getDamage() : row.maxHitPoints;
+        }
+        if (!VoxRlAssignChecked(row.damageAfter, row.removed ? row.maxHitPoints : damage,
+            "RequestDamageRecord", "damageAfter", 0)) captureFailed = true;
+        QueueDamageRow(row);
     }
 }
 
