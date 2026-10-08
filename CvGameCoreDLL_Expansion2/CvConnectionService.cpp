@@ -1986,6 +1986,7 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 		"CombatEnded",
 		"BarbariansSpawnedUnit",
 		"EspionageResult",
+		"IdeologyAdopted",  // Fires for every policy branch (and on removal); PlayerAdoptPolicyBranch covers adoptions
 		NULL  // Null terminator
 	};
 	
