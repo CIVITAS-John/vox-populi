@@ -1986,6 +1986,7 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 		"CombatEnded",
 		"BarbariansSpawnedUnit",
 		"EspionageResult",
+		"PlayerAdoptPolicyBranch",  // Skips some adoption paths; IdeologyAdopted is stored under this name instead
 		NULL  // Null terminator
 	};
 	
