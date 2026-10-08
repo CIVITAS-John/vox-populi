@@ -96,7 +96,8 @@ TUnitFlagLookup gSafePlotCount;
 int gDefaultUnitLossThreshold;
 int gMedianUnitXP;
 int gMinHpForTactsim;
-bool gbTacticalCityFlavorTerms = false; // Vox Deorum: the HOLD_CITY ring and siege terms are active for this search
+// Vox Deorum: enemy ID -> city-threat budget for this search. Empty turns the HOLD_CITY attack bonus off.
+map<int, SCityThreatCredit> gTacticalCityThreats;
 PlayerTypes eLastTactSimPlayer = NO_PLAYER;
 
 //just some statistics
@@ -7766,7 +7767,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		iBonusScore -= 10;
 
 	// Vox Deorum: OCCUPATION scales city damage and the capture bonus, ATTRITION unit damage and the kill bonus.
-	// A hit on an enemy land unit standing on our land reads ATTRITION as max(ATTRITION, HOLD_GROUND / 2).
+	// A hit on an enemy land unit standing on our land reads ATTRITION as max(ATTRITION, 50 + (HOLD_GROUND - 50) / 2).
 	int iUnitDamageWeight = assumedPosition.getFlavorWeight(STacticalFlavors::ATTRITION);
 	if (pEnemyUnit && pEnemyUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() == pUnit->getTeam())
 		iUnitDamageWeight = assumedPosition.getGroundAttritionWeight();
@@ -7775,15 +7776,23 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	else if (bUnitKill)
 		iBonusScore += CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, 15);
 
-	// Vox Deorum: HOLD_CITY above 50 values hits on siege units within three plots of our nearest city
-	if (gbTacticalCityFlavorTerms && pEnemyUnit && pEnemyUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_CITY_BOMBARD)
+	// Vox Deorum: divide each enemy's fixed city-threat credit across the HP this search removes.
+	// Difference cumulative credit so split hits and overkill cannot earn the same protection twice.
+	if (!gTacticalCityThreats.empty())
 	{
-		int iSiegeDamage = actualDamageDealt.GetValue(pEnemyUnit->GetID());
-		if (iSiegeDamage > 0 && GC.getGame().GetClosestCityDistanceInPlots(pTestPlot, assumedPosition.getPlayer()) <= 3)
+		int iCityThreatBonus = 0;
+		for (SUnitIDValueContainer::const_iterator it = actualDamageDealt.begin(); it != actualDamageDealt.end(); ++it)
 		{
-			int iSiegeBonus = assumedPosition.flavorBonus(STacticalFlavors::HOLD_CITY, iSiegeDamage + (bUnitKill ? 15 : 0));
-			iBonusScore += range(iSiegeBonus, -TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
+			map<int, SCityThreatCredit>::const_iterator threat = gTacticalCityThreats.find((*it).first);
+			if (threat == gTacticalCityThreats.end() || (*it).second <= 0)
+				continue;
+			const SCityThreatCredit& budget = threat->second;
+			int iDamageBefore = range(assumedPosition.GetUnitDamage((*it).first), 0, budget.iRootHP);
+			int iDamageAfter = min(budget.iRootHP, iDamageBefore + (*it).second);
+			iCityThreatBonus += budget.iCredit * iDamageAfter / budget.iRootHP - budget.iCredit * iDamageBefore / budget.iRootHP;
 		}
+		// Vox Deorum: splash can hit several threats, but the extra attack term keeps the usual score cap.
+		iBonusScore += min(iCityThreatBonus, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
 	}
 
 	result->SetScore(0, iBonusScore, assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt)
@@ -8128,8 +8137,11 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	//also occupy our own citadels
 	if (bIsFrontlineCitadelOrCity)
 	{
-		// Vox Deorum: the city hold weight scales the bonus in a city, HOLD_GROUND in a citadel
-		int iHoldWeight = pTestPlot->isCity() ? assumedPosition.getCityHoldWeight() : assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND);
+		// Vox Deorum: the city hold weight scales the bonus in our own city, HOLD_GROUND in a citadel.
+		// A city captured during the search keeps the native bonus.
+		int iHoldWeight = assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND);
+		if (pTestPlot->isCity())
+			iHoldWeight = pTestPlot->getTeam() == pUnit->getTeam() ? assumedPosition.getCityHoldWeight() : 1000;
 		if (pUnit->GetRange() > 1 || testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, -1)==0 || testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND)>0)
 			iResult += CvTacticalPosition::scaleByWeight(iHoldWeight, TACTICAL_COMBAT_CITADEL_BONUS);
 		else
@@ -8149,11 +8161,6 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	int iHoldGroundWeight = assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND);
 	if (iHoldGroundWeight != 1000 && pUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() == pUnit->getTeam())
 		iResult += assumedPosition.flavorBonus(STacticalFlavors::HOLD_GROUND, iHoldGroundWeight > 1000 ? 5 + iDefense / 5 : 5);
-
-	// Vox Deorum: HOLD_CITY above 50 holds good ground around a threatened city
-	if (gbTacticalCityFlavorTerms && pUnit->getDomainType() == DOMAIN_LAND && testPlot->getEnemyDistance() <= 2 && !pTestPlot->isCity()
-		&& GC.getGame().GetClosestCityDistanceInPlots(pTestPlot, assumedPosition.getPlayer()) <= 2)
-		iResult += assumedPosition.flavorBonus(STacticalFlavors::HOLD_CITY, 5 + iDefense / 5);
 
 	//todo: take into account mobility at the proposed plot
 	//todo: take into account ZOC when ending the turn
@@ -10294,9 +10301,9 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	int iHoldCity = flavors.iFlavor[STacticalFlavors::HOLD_CITY];
 	nCityHoldWeight = iHoldCity < 50 ? (unsigned short)(20 * max(iHoldCity, 0)) : aFlavorWeight[STacticalFlavors::HOLD_CITY];
 
-	// Vox Deorum: hits on enemy land units on our land read ATTRITION as max(ATTRITION, HOLD_GROUND / 2),
+	// Vox Deorum: hits on enemy land units on our land read ATTRITION as max(ATTRITION, 50 + (HOLD_GROUND - 50) / 2),
 	// with ATTRITION's strength, so the two never stack
-	double dGroundAttrition = flavors.iFlavor[STacticalFlavors::HOLD_GROUND] / 2.0;
+	double dGroundAttrition = 50.0 + (flavors.iFlavor[STacticalFlavors::HOLD_GROUND] - 50) / 2.0;
 	if (dGroundAttrition <= flavors.iFlavor[STacticalFlavors::ATTRITION])
 		nGroundAttritionWeight = aFlavorWeight[STacticalFlavors::ATTRITION];
 	else
@@ -12615,14 +12622,72 @@ void TacticalAIHelpers::SetSearchRiskThresholds(int iRisk, size_t nUnits)
 	gMinHpForTactsim = 50 - iRisk / 5;
 }
 
-// Vox Deorum: turns the HOLD_CITY ring and siege terms on when the root weighs HOLD_CITY above neutral, for major civs
-// only. The terms read our city distance map, so it is read once here and a dirty map rebuilds before the search,
-// not inside it. Every search root sets the flag, so no search inherits it from an earlier one.
-void TacticalAIHelpers::SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer, CvPlot* pTarget)
+// Vox Deorum: cache one city-threat credit budget per visible enemy in the root's tactical plots.
+// Reuse the danger map's possible attackers, then estimate each relevant unit/city pair once.
+// Every root clears the cache; neutral HOLD_CITY does no danger queries or damage forecasts.
+void TacticalAIHelpers::SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer)
 {
-	gbTacticalCityFlavorTerms = pRoot->getFlavorWeight(STacticalFlavors::HOLD_CITY) > 1000 && GET_PLAYER(ePlayer).isMajorCiv();
-	if (gbTacticalCityFlavorTerms)
-		GC.getGame().GetClosestCityDistanceInPlots(pTarget, ePlayer);
+	gTacticalCityThreats.clear();
+	if (pRoot->getFlavorWeight(STacticalFlavors::HOLD_CITY) <= 1000)
+		return;
+
+	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
+	const vector<CvTacticalPlot>& plots = pRoot->getTactPlots();
+	vector<CvCity*> friendlyCities;
+	for (size_t i = 0; i < plots.size(); ++i)
+	{
+		CvCity* pCity = plots[i].getPlot()->getPlotCity();
+		if (pCity && pCity->getTeam() == kPlayer.getTeam())
+			friendlyCities.push_back(pCity);
+	}
+	// Vox Deorum: an engagement without a friendly city in its tactical area has no city-threat work.
+	if (friendlyCities.empty())
+		return;
+
+	for (size_t i = 0; i < plots.size(); ++i)
+	{
+		if (!plots[i].isEnemyCombatUnit())
+			continue;
+		const CvPlot* pPlot = plots[i].getPlot();
+		// Vox Deorum: stacked defenders can become targets after the first defender dies.
+		for (int unit = 0; unit < pPlot->getNumUnits(); ++unit)
+		{
+			const CvUnit* pEnemy = pPlot->getUnitByIndex(unit);
+			if (pEnemy && kPlayer.IsAtWarWith(pEnemy->getOwner()) && !pEnemy->isDelayedDeath() && pEnemy->GetCurrHitPoints() > 0)
+				gTacticalCityThreats[pEnemy->GetID()] = SCityThreatCredit(pEnemy->GetCurrHitPoints());
+		}
+	}
+	if (gTacticalCityThreats.empty())
+		return;
+
+	for (size_t city = 0; city < friendlyCities.size(); ++city)
+	{
+		CvCity* pCity = friendlyCities[city];
+		vector<CvUnit*> attackers = kPlayer.GetPossibleAttackers(*pCity->plot(), kPlayer.getTeam());
+		for (size_t i = 0; i < attackers.size(); ++i)
+		{
+			CvUnit* pEnemy = attackers[i];
+			map<int, SCityThreatCredit>::iterator threat = gTacticalCityThreats.find(pEnemy->GetID());
+			if (threat == gTacticalCityThreats.end())
+				continue;
+			int iAttackerDamage = 0;
+			int iGarrisonDamage = 0;
+			const CvPlot* pAttackerPlot = pCity->plot()->isAdjacent(pEnemy->plot()) ? pEnemy->plot() : NULL;
+			int iCityDamage = GetSimulatedDamageFromAttackOnCity(pCity, pEnemy, pAttackerPlot,
+				iAttackerDamage, iGarrisonDamage, true, 0, 0, 0, true);
+			int iCredit = range(pRoot->flavorBonus(STacticalFlavors::HOLD_CITY, max(0, iCityDamage)), 0, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
+			threat->second.iCredit = max(threat->second.iCredit, iCredit);
+		}
+	}
+	// Vox Deorum: keep only enemies with credit, so a search without a threatened city leaves the map
+	// empty and every attack skips the bonus.
+	for (map<int, SCityThreatCredit>::iterator it = gTacticalCityThreats.begin(); it != gTacticalCityThreats.end(); )
+	{
+		if (it->second.iCredit <= 0)
+			gTacticalCityThreats.erase(it++);
+		else
+			++it;
+	}
 }
 
 //try to find a combination of unit actions (move, attack etc) which does maximal damage to the enemy while exposing us to minimal risk
@@ -12715,9 +12780,6 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	// Vox Deorum: the root carries the flavor weights its children score with
 	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, searchFlavors);
 
-	// Vox Deorum: the root decides whether the city ring and siege terms run
-	TacticalAIHelpers::SetSearchCityFlavorTerms(initialPosition, ePlayer, pTarget);
-
 	//first pass: make sure there are no duplicates and other invalid inputs
 	vector<const CvUnit*> ourUnits;
 	vector<int> unitXP;
@@ -12800,6 +12862,9 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 			}
 		}
 	}
+
+	// Vox Deorum: prepare city-threat credit after all root enemies are known, before any scoring.
+	TacticalAIHelpers::SetSearchCityFlavorTerms(initialPosition, ePlayer);
 
 	//find out which plot is frontline, second line etc
 	initialPosition->refreshVolatilePlotProperties(true);

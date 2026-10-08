@@ -1325,6 +1325,17 @@ struct STacticalFlavors
 	}
 };
 
+// Vox Deorum: one enemy's HOLD_CITY city-threat budget for a search. Attacks earn the credit in
+// proportion to the root HP they remove, so killing the enemy earns all of it exactly once.
+struct SCityThreatCredit
+{
+	int iCredit;
+	int iRootHP;
+
+	// Creates a budget with no credit yet for an enemy at the given root HP.
+	SCityThreatCredit(int iRootHP_ = 0) : iCredit(0), iRootHP(iRootHP_) {}
+};
+
 // Vox Deorum: default flavor adjustment for each search intent, in 0..100 points
 extern const signed char TACTICAL_INTENT_FLAVOR_DEFAULTS[][STacticalFlavors::NUM_SLOTS];
 // Vox Deorum: the most an attack term may change through its flavor, before the x10 score scale
@@ -1361,7 +1372,7 @@ protected:
 	unsigned short aFlavorWeight[STacticalFlavors::NUM_SLOTS];
 	// Vox Deorum: the in-city bonus weight, HOLD_CITY's weight above 50 and linear to zero below it
 	unsigned short nCityHoldWeight;
-	// Vox Deorum: the ATTRITION weight for hits on enemy land units on our land, at max(ATTRITION, HOLD_GROUND / 2)
+	// Vox Deorum: the ATTRITION weight for hits on enemy land units on our land, at max(ATTRITION, 50 + (HOLD_GROUND - 50) / 2)
 	unsigned short nGroundAttritionWeight;
 
 	//------------
@@ -1662,8 +1673,8 @@ namespace TacticalAIHelpers
 	STacticalFlavors ResolveSearchFlavors(PlayerTypes ePlayer, const CvPlot* pTarget, SearchIntent eSearchIntent);
 	// Vox Deorum: sets the search's accepted unit losses and minimum HP from its RISK
 	void SetSearchRiskThresholds(int iRisk, size_t nUnits);
-	// Vox Deorum: turns the HOLD_CITY ring and siege terms on or off for a search from its root position
-	void SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer, CvPlot* pTarget);
+	// Vox Deorum: resets and prepares HOLD_CITY city-threat credit after the root's tactical plots are populated
+	void SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer);
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }
