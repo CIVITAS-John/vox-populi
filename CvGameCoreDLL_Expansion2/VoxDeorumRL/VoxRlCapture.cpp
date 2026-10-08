@@ -1755,7 +1755,7 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 		std::vector<VoxRlPlayerMapRows> overrides;
 		VoxRlCollectPlayerMapOverrides(m_playerMaps->staticMaps, m_playerMaps->currentMaps, overrides);
 		if (!VoxRlBuildWorldBlock(identity, ePlayer, storage, length, segment.zoneSnapshot,
-			teamPassability, teamResources, overrides, phases))
+			teamPassability, teamResources, overrides, phases, &segment.playerCitySnapshot))
 		{
 			return false;
 		}
@@ -1857,7 +1857,6 @@ bool VoxRlCapture::BuildWorldBaseline(PlayerTypes ePlayer, int iTurn)
 	segment.lastTeamResourceRows.clear();
 	for (size_t index = 0; index < teamResources.size(); ++index)
 		segment.lastTeamResourceRows[static_cast<int>(teamResources[index].team)] = teamResources[index];
-	if (!VoxRlCollectPlayerCitySnapshot(segment.playerCitySnapshot, ePlayer)) return false;
 	// The WORLD build accepts a fresh zone snapshot and the collected team
 	// passability table, so both dirty markers reset here.
 	m_zoneSnapshotDirty = false;

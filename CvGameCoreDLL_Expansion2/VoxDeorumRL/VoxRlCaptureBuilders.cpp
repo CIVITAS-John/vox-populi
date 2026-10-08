@@ -1050,6 +1050,52 @@ static bool VoxRlCollectPlayerTraitPromotionRows(CvPlayer& player, VoxRlPlayerCi
 	return true;
 }
 
+// Appends one player's military unit purchase prices in city then unit order.
+// Native's convenience IsCanPurchase rebuilds the owner's building counts on every
+// call, so the counts are built once here and passed to the overload it delegates to.
+static bool VoxRlCollectCityPurchaseCostRows(CvPlayer& player, std::vector<CityPurchaseCostRecord>& rows)
+{
+	std::vector<UnitTypes> militaryUnits;
+	for (int unitIndex = 0; unitIndex < GC.getNumUnitInfos(); ++unitIndex)
+	{
+		CvUnitEntry* unit = GC.getUnitInfo(static_cast<UnitTypes>(unitIndex));
+		if (unit == NULL || (unit->GetCombat() <= 0 && unit->GetRangedCombat() <= 0 &&
+			!unit->IsMilitarySupport() && !unit->IsMilitaryProduction())) continue;
+		militaryUnits.push_back(static_cast<UnitTypes>(unitIndex));
+	}
+	if (militaryUnits.empty()) return true;
+	std::vector<int> buildingCounts(GC.getNumBuildingInfos(), 0);
+	int loop = 0;
+	for (const CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+	{
+		const std::vector<BuildingTypes>& buildings = city->GetCityBuildings()->GetAllBuildingsHere();
+		for (size_t index = 0; index < buildings.size(); ++index)
+			buildingCounts[buildings[index]]++;
+	}
+	for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
+	{
+		for (size_t index = 0; index < militaryUnits.size(); ++index)
+		{
+			const UnitTypes unitType = militaryUnits[index];
+			const bool gold = city->IsCanPurchase(buildingCounts, false, true, unitType,
+				NO_BUILDING, NO_PROJECT, YIELD_GOLD);
+			const bool faith = city->IsCanPurchase(buildingCounts, false, true, unitType,
+				NO_BUILDING, NO_PROJECT, YIELD_FAITH);
+			if (!gold && !faith) continue;
+			CityPurchaseCostRecord row;
+			ZeroRecord(row);
+			row.cityOwner = static_cast<i8>(player.GetID());
+			row.cityId = city->GetID();
+			if (!AssignCheckedI16(row.unitType, unitType,
+				"CityPurchaseCostRecord", "unitType", 0)) return false;
+			row.goldCost = gold ? city->GetPurchaseCost(unitType) : -1;
+			row.faithCost = faith ? city->GetFaithPurchaseCost(unitType, true) : -1;
+			rows.push_back(row);
+		}
+	}
+	return true;
+}
+
 // Collects the player and city tables from native state in stable owner and type order.
 bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTypes perspectivePlayer)
 {
@@ -1216,29 +1262,10 @@ bool VoxRlCollectPlayerCitySnapshot(VoxRlPlayerCitySnapshot& snapshot, PlayerTyp
 		// Healing uses the actor's state religion and qualifies each owned origin city.
 		const CvReligion* religion = GC.getGame().GetGameReligions()->GetReligion(
 			player.GetReligions()->GetStateReligion(), player.GetID());
+		if (!VoxRlCollectCityPurchaseCostRows(player, snapshot.cityPurchaseCosts)) return false;
 		int loop = 0;
 		for (CvCity* city = player.firstCity(&loop); city != NULL; city = player.nextCity(&loop))
 		{
-			for (int unitIndex = 0; unitIndex < GC.getNumUnitInfos(); ++unitIndex)
-			{
-				CvUnitEntry* unit = GC.getUnitInfo(static_cast<UnitTypes>(unitIndex));
-				if (unit == NULL || (unit->GetCombat() <= 0 && unit->GetRangedCombat() <= 0 &&
-					!unit->IsMilitarySupport() && !unit->IsMilitaryProduction())) continue;
-				const bool gold = city->IsCanPurchase(false, true, static_cast<UnitTypes>(unitIndex),
-					NO_BUILDING, NO_PROJECT, YIELD_GOLD);
-				const bool faith = city->IsCanPurchase(false, true, static_cast<UnitTypes>(unitIndex),
-					NO_BUILDING, NO_PROJECT, YIELD_FAITH);
-				if (!gold && !faith) continue;
-				CityPurchaseCostRecord row;
-				ZeroRecord(row);
-				row.cityOwner = static_cast<i8>(playerIndex);
-				row.cityId = city->GetID();
-				if (!AssignCheckedI16(row.unitType, unitIndex,
-					"CityPurchaseCostRecord", "unitType", 0)) return false;
-				row.goldCost = gold ? city->GetPurchaseCost(static_cast<UnitTypes>(unitIndex)) : -1;
-				row.faithCost = faith ? city->GetFaithPurchaseCost(static_cast<UnitTypes>(unitIndex), true) : -1;
-				snapshot.cityPurchaseCosts.push_back(row);
-			}
 			if (religion != NULL && !player.isMinorCiv() && !player.isBarbarian())
 				for (int yield = 0; yield < NUM_YIELD_TYPES; ++yield)
 					for (int ownedTerritory = 0; ownedTerritory < 2; ++ownedTerritory)
@@ -1417,14 +1444,21 @@ namespace
 		if (baseline.size() == current.size() &&
 			(baseline.empty() || std::memcmp(&baseline[0], &current[0], baseline.size() * sizeof(World)) == 0))
 			return true;
+		// Group each side by owner once, keeping row order, so the owner walk stays linear.
+		typedef std::map<Key, std::vector<World> > RowsByOwner;
+		RowsByOwner oldByOwner;
+		for (size_t index = 0; index < baseline.size(); ++index)
+			oldByOwner[ChildRowOwner(baseline[index])].push_back(baseline[index]);
+		RowsByOwner newByOwner;
+		for (size_t index = 0; index < current.size(); ++index)
+			newByOwner[ChildRowOwner(current[index])].push_back(current[index]);
+		const std::vector<World> noRows;
 		for (size_t ownerIndex = 0; ownerIndex < owners.size(); ++ownerIndex)
 		{
-			std::vector<World> oldRows;
-			for (size_t index = 0; index < baseline.size(); ++index)
-				if (ChildRowOwner(baseline[index]) == owners[ownerIndex]) oldRows.push_back(baseline[index]);
-			std::vector<World> newRows;
-			for (size_t index = 0; index < current.size(); ++index)
-				if (ChildRowOwner(current[index]) == owners[ownerIndex]) newRows.push_back(current[index]);
+			const typename RowsByOwner::const_iterator oldEntry = oldByOwner.find(owners[ownerIndex]);
+			const std::vector<World>& oldRows = oldEntry == oldByOwner.end() ? noRows : oldEntry->second;
+			const typename RowsByOwner::const_iterator newEntry = newByOwner.find(owners[ownerIndex]);
+			const std::vector<World>& newRows = newEntry == newByOwner.end() ? noRows : newEntry->second;
 			if (oldRows.size() == newRows.size() &&
 				(oldRows.empty() || std::memcmp(&oldRows[0], &newRows[0], oldRows.size() * sizeof(World)) == 0))
 				continue;
@@ -2152,7 +2186,8 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
 	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
 	std::vector<TeamResourceRecord>& teamResourceSnapshot,
-	const std::vector<VoxRlPlayerMapRows>& playerMapOverrides, VoxRlWorldBuildTimings* timings)
+	const std::vector<VoxRlPlayerMapRows>& playerMapOverrides, VoxRlWorldBuildTimings* timings,
+	VoxRlPlayerCitySnapshot* playerCitySnapshot)
 {
 	bool valid = true;
 	CvMap& map = GC.getMap();
@@ -2559,6 +2594,7 @@ bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes captur
 	data.worldPlayerTraitPromotionClasses = playerCityState.playerTraitPromotionClasses;
 	data.worldPlayerFlavors = playerCityState.playerFlavors;
 	data.worldPlayerFreePromotions = playerCityState.playerFreePromotions;
+	if (playerCitySnapshot != NULL) *playerCitySnapshot = playerCityState;
 	if (!VoxRlCollectCityEspionageSightRows(data.worldCityEspionageSights, 0, MAX_MAJOR_CIVS)) valid = false;
 	// Found values are the capturing player's own settle cache, so other players' rows are not captured.
 	if (!VoxRlCollectPlayerFoundValueRows(capturingPlayer, data.worldPlayerFoundValues)) valid = false;

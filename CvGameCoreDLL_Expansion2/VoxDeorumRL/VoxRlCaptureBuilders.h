@@ -319,13 +319,15 @@ bool VoxRlBuildStaticBlock(const VoxRlBlockIdentity& identity,
 
 // Builds one complete WORLD block at the pre-refresh checkpoint for the
 // capturing player. Each supplied player map differs from STATIC and
-// replaces that player's STATIC map for this WORLD.
+// replaces that player's STATIC map for this WORLD. When playerCitySnapshot
+// is supplied, it receives the player and city tables that WORLD serialized.
 bool VoxRlBuildWorldBlock(const VoxRlBlockIdentity& identity, PlayerTypes capturingPlayer,
 	VoxRlOwnedBlockStorage& storage, unsigned int& length, VoxRlZoneSnapshot& zones,
 	std::vector<TeamPassabilityRecord>& teamPassabilitySnapshot,
 	std::vector<TeamResourceRecord>& teamResourceSnapshot,
 	const std::vector<VoxRlPlayerMapRows>& playerMapOverrides,
-	VoxRlWorldBuildTimings* timings = NULL);
+	VoxRlWorldBuildTimings* timings = NULL,
+	VoxRlPlayerCitySnapshot* playerCitySnapshot = NULL);
 
 // Builds one complete CAMPAIGN block at the UpdateOperations entry for the
 // capturing player. Zone data is read without triggering a refresh.
