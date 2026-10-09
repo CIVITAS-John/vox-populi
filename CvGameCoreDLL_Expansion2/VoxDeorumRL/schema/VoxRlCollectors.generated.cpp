@@ -9452,7 +9452,7 @@ bool CollectRequestDamageRecord(RequestDamageRecord& out)
     // lineageUnitId has no generated assignment because its capture mode is builder.
     // Turn of the change.
     // occurrenceTurn has no generated assignment because its capture mode is builder.
-    // The city's plot, or -1 for a unit.
+    // The city's plot, or the unit's plot at its first change in the scope; -1 when unknown.
     // plotIndex has no generated assignment because its capture mode is builder.
     // Damaged unit's type, or -1 for a city.
     // unitType has no generated assignment because its capture mode is builder.

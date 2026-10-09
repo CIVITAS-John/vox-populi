@@ -651,7 +651,7 @@ PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role)
     return city != NULL ? city->getOwner() : NO_PLAYER;
 }
 
-// Keeps the unit's identity and damage before its first change in the innermost open scope.
+// Keeps the unit's identity, plot, and damage before its first change in the innermost open scope.
 void VoxRlNoteUnitDamage(const CvUnit& unit, int oldDamage)
 {
     if (openDamageScopes.empty()) return;
@@ -663,7 +663,9 @@ void VoxRlNoteUnitDamage(const CvUnit& unit, int oldDamage)
     entry.row = RequestDamageRecord();
     entry.row.subject = VOX_RL_DAMAGE_UNIT;
     entry.row.owner = static_cast<i8>(unit.getOwner());
+    // The grade counts third-party damage by where the unit stood; -1 when it has no plot.
     entry.row.plotIndex = -1;
+    if (unit.plot() != NULL) SetPlot(entry.row.plotIndex, unit.plot()->GetPlotIndex(), "RequestDamageRecord");
     int owner, id;
     VoxRlGetUnitLineage(unit, owner, id);
     entry.row.lineageOwner = static_cast<i8>(owner);
