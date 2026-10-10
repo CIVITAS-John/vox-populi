@@ -7351,6 +7351,30 @@ static SUnitStats GetNextUnit(const SUnitStats& previousUnit, const STacticalAss
 	return newUnit;
 }
 
+// Vox Deorum: the native factor k0 of the HP-squared safety check after an assignment: 42 when the unit could
+// flee, 23 after a kill or without a safe plot, and 12 for a kill while only one enemy is counted
+static int GetTurnEndSafetyFactor(const CvUnit* pUnit, eUnitAssignmentType eLastAssignment, const CvTacticalPosition& assumedPosition)
+{
+	//the minimum amount of hitpoint we want a standalone unit to have for the expected counterattacks
+	bool isForKill = (eLastAssignment == A_MELEEKILL || eLastAssignment == A_MELEEKILL_NO_ADVANCE || eLastAssignment == A_RANGEKILL);
+	bool couldFlee = (gSafePlotCount[pUnit->GetID()] > 0);
+	int iMagicNumber = (isForKill || !couldFlee)  ? 23 : 42;
+
+	//if this is the only enemy ...
+	if (assumedPosition.getNumEnemies() == 1 && isForKill)
+		iMagicNumber = 12;
+
+	return iMagicNumber;
+}
+
+// Vox Deorum: the HP-squared safety margin HP^2 x w(RISK) - k0 x danger x 1000, so the effective factor is
+// k0 x 1000 / w(RISK). A negative margin fails the check. w(RISK) stays neutral unless RISK is explicitly set.
+static long long GetTurnEndSafetyMargin(int iHitPoints, int iDanger, int iSafetyFactor, const CvTacticalPosition& assumedPosition)
+{
+	long long iWeight = assumedPosition.getFlavorWeight(STacticalFlavors::RISK);
+	return (long long)iHitPoints * iHitPoints * iWeight - (long long)iSafetyFactor * iDanger * 1000;
+}
+
 //note that the score returned from this function is not multiplied by 10 yet
 bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, const CvTacticalPlot* assumedPlot, const CvTacticalPosition& assumedPosition, CAttackCache& cache, STacticalAssignment* result, int iSelfDamage)
 {
@@ -7771,10 +7795,40 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	int iUnitDamageWeight = assumedPosition.getFlavorWeight(STacticalFlavors::ATTRITION);
 	if (pEnemyUnit && pEnemyUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() == pUnit->getTeam())
 		iUnitDamageWeight = assumedPosition.getGroundAttritionWeight();
+	int iCityDamageShift = assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt) - iActualCityDamageDealt;
+	int iUnitDamageShift = CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, iTotalActualUnitDamageDealt) - iTotalActualUnitDamageDealt;
+	int iKillBonusShift = (bUnitKill && !bCityKill) ? CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, 15) - 15 : 0;
+
+	// Vox Deorum: fade each positive damage shift by trade quality t x safety s, and the kill bonus shift by s.
+	// t = (dealt - max(0, taken)) / dealt and s = 1 - k x danger / HP^2 after the attack, both within [0, 1],
+	// with k the turn-end safety factor. Integer math keeps the result exact; negative shifts stay as they are.
+	// The capture bonus keeps its full shift.
+	if (iCityDamageShift > 0 || iUnitDamageShift > 0 || iKillBonusShift > 0)
+	{
+		const CvPlot* pPlotAfterAttack = result->eAssignmentType == A_MELEEKILL ? pTestPlot : pUnitPlot;
+		CvTacticalPosition pNewPosition;
+		GetNextPosition(assumedPosition, result, pNewPosition);
+		int iDanger = GetUnitDangerForPlot(pUnit, pPlotAfterAttack, iSelfDamage + iDamageReceived, pNewPosition);
+
+		int iHitPointsAfterAttack = max(1, pUnit->GetCurrHitPoints() - iSelfDamage - iActualDamageTaken);
+		int iSafetyFactor = GetTurnEndSafetyFactor(pUnit, result->eAssignmentType, assumedPosition);
+		long long iSafety = max(0LL, GetTurnEndSafetyMargin(iHitPointsAfterAttack, iDanger, iSafetyFactor, assumedPosition));
+		long long iSafetyScale = (long long)iHitPointsAfterAttack * iHitPointsAfterAttack * assumedPosition.getFlavorWeight(STacticalFlavors::RISK);
+		long long iTrade = max(0, iTotalActualDamageDealt - max(0, iActualDamageTaken));
+		long long iTradeSafetyScale = max(1, iTotalActualDamageDealt) * iSafetyScale;
+
+		if (iCityDamageShift > 0)
+			iCityDamageShift = (int)(iCityDamageShift * iTrade * iSafety / iTradeSafetyScale);
+		if (iUnitDamageShift > 0)
+			iUnitDamageShift = (int)(iUnitDamageShift * iTrade * iSafety / iTradeSafetyScale);
+		if (iKillBonusShift > 0)
+			iKillBonusShift = (int)(iKillBonusShift * iSafety / iSafetyScale);
+	}
+
 	if (bCityKill)
 		iBonusScore += assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, 100);
 	else if (bUnitKill)
-		iBonusScore += CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, 15);
+		iBonusScore += 15 + iKillBonusShift;
 
 	// Vox Deorum: divide each enemy's fixed city-threat credit across the HP this search removes.
 	// Difference cumulative credit so split hits and overkill cannot earn the same protection twice.
@@ -7795,8 +7849,8 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		iBonusScore += min(iCityThreatBonus, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
 	}
 
-	result->SetScore(0, iBonusScore, assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt)
-		+ CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, iTotalActualUnitDamageDealt) - iActualDamageTaken);
+	result->SetScore(0, iBonusScore, iActualCityDamageDealt + iCityDamageShift
+		+ iTotalActualUnitDamageDealt + iUnitDamageShift - iActualDamageTaken);
 
 	return bCityKill || bUnitKill;
 }
@@ -8073,17 +8127,10 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 					return INT_MAX;
 			}
 
-			//the minimum amount of hitpoint we want a standalone unit to have for the expected counterattacks
-			bool isForKill = (eLastAssignment == A_MELEEKILL || eLastAssignment == A_MELEEKILL_NO_ADVANCE || eLastAssignment == A_RANGEKILL);
-			bool couldFlee = (gSafePlotCount[pUnit->GetID()] > 0);
-			int iMagicNumber = (isForKill || !couldFlee)  ? 23 : 42;
-
-			//if this is the only enemy ...
-			if (assumedPosition.getNumEnemies() == 1 && isForKill)
-				iMagicNumber = 12;
-
 			//if there is nothing we would cover or that covers us or we are low on health, don't do it
-			if (iCurrHitPoints * iCurrHitPoints < iMagicNumber * iDanger)
+			// Vox Deorum: an explicitly set RISK scales the safety factor
+			int iSafetyFactor = GetTurnEndSafetyFactor(pUnit, eLastAssignment, assumedPosition);
+			if (GetTurnEndSafetyMargin(iCurrHitPoints, iDanger, iSafetyFactor, assumedPosition) < 0)
 				return INT_MAX;
 		}
 
