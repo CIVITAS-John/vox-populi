@@ -17573,7 +17573,7 @@ int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, i
 	}
 
 	int iAttackerStrength = GetMaxRangedCombatStrength(pDefender, pCity, true, 
-								pFromPlot, pTargetPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty);
+								pFromPlot, pTargetPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraSelfDamage, iAssumeExtraDefenderDamage);
 	if (iAttackerStrength==0)
 		return 0;
 
@@ -17619,7 +17619,7 @@ int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, i
 				iDefenderStrength = pDefender->GetEmbarkedUnitDefense();
 			else
 			{
-				iDefenderStrength = pDefender->GetMaxRangedCombatStrength(this, /*pCity*/ NULL, false, pTargetPlot, pFromPlot, false, bQuickAndDirty, iAssumeExtraSelfDamage, iAssumeExtraDefenderDamage);
+				iDefenderStrength = pDefender->GetMaxRangedCombatStrength(this, /*pCity*/ NULL, false, pTargetPlot, pFromPlot, false, bQuickAndDirty, iAssumeExtraDefenderDamage, iAssumeExtraSelfDamage);
 			}
 		}
 		else

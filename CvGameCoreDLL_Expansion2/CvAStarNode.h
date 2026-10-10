@@ -102,8 +102,8 @@ struct CvPathNodeCacheData
 	//tell us when to update the cache ...
 	unsigned short iGenerationID;
 
-	// Vox Deorum: end-turn danger at this plot for the current search, computed on first use.
-	// Mutable because the path cost functions receive this struct as const.
+	//end turn danger for the current search, computed on first use
+	//mutable because the cost functions get this struct as const
 	mutable int iEndTurnDanger;
 	mutable bool bEndTurnDangerKnown;
 

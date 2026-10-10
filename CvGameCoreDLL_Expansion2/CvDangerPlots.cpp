@@ -53,7 +53,7 @@ void CvDangerPlots::Uninit()
 	m_ePlayer = NO_PLAYER;
 	m_bDirty = false;
 	m_iTurnBuilt = -1;
-	m_DangerPlots.clear();
+	vector<CvDangerPlotContents>().swap(m_DangerPlots);
 	m_knownUnits.clear();
 	m_vanishedUnits.clear();
 }
@@ -76,9 +76,9 @@ bool CvDangerPlots::UpdateDangerSingleUnit(const CvUnit* pLoopUnit, bool bIgnore
 	if (pLoopUnit->IsCanAttackRanged())
 	{
 		//for ranged every tile we can enter with movement left is a base for attack
-		std::set<int> attackableTiles = TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(pLoopUnit,reachablePlots,false,false);
+		const vector<int> attackableTiles = TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(pLoopUnit,reachablePlots,false,false);
 
-		for (std::set<int>::iterator attackTile=attackableTiles.begin(); attackTile!=attackableTiles.end(); ++attackTile)
+		for (vector<int>::const_iterator attackTile=attackableTiles.begin(); attackTile!=attackableTiles.end(); ++attackTile)
 		{
 			CvPlot* pAttackTile = GC.getMap().plotByIndexUnchecked(*attackTile);
 			AssignUnitDangerValue(pLoopUnit, pAttackTile);

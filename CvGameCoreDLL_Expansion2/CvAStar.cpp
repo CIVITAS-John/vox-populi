@@ -93,7 +93,15 @@ int SMovePlot::effectivePathLength(int iMovesPerTurn) const
 //	--------------------------------------------------------------------------------
 /// Constructor
 CvAStar::CvAStar()
-    : m_iColumns(0),
+    : udDestValid(NULL),
+      udHeuristic(NULL),
+      udCost(NULL),
+      udValid(NULL),
+      udGetExtraChildrenFunc(NULL),
+      udInitializeFunc(NULL),
+      udUninitializeFunc(NULL),
+      m_iCurrentGenerationID(0),
+      m_iColumns(0),
       m_iRows(0),
       m_iXstart(0),
       m_iYstart(0),
@@ -103,20 +111,12 @@ CvAStar::CvAStar()
       m_bWrapX(false),
       m_bWrapY(false),
       m_bHeapDirty(false),
-      udDestValid(NULL),
-      udHeuristic(NULL),
-      udCost(NULL),
-      udValid(NULL),
-      udGetExtraChildrenFunc(NULL),
-      udInitializeFunc(NULL),
-      udUninitializeFunc(NULL),
-      m_iCurrentGenerationID(0),
       m_pBest(NULL),
-      m_ppaaNodes(NULL),
-      m_ppaaNeighbors(NULL),
       m_iProcessedNodes(0),
       m_iTestedNodes(0),
       m_iRounds(0),
+      m_ppaaNodes(NULL),
+      m_ppaaNeighbors(NULL),
       m_iBasicPlotCost(1),
       m_iMovesCached(0),
       m_iTurnsCached(0),
@@ -260,8 +260,10 @@ void CvAStar::Reset()
 
 	//will be set multiple times but who cares
 	g_bPathFinderLogging = false;
+#if defined(MOD_CORE_DEBUGGING)
 	g_svPathLog.clear();
 	g_svPathLog.reserve(10000);
+#endif
 }
 
 
@@ -926,7 +928,7 @@ void UpdateNodeCacheData(CvAStarNode* node, const CvUnit* pUnit, const CvAStar* 
 	if (kToNodeCacheData.iGenerationID==finder->GetCurrentGenerationID())
 		return;
 
-	// Vox Deorum: a new search has a new unit or game state, so forget the end-turn danger memo
+	//a new search may have a different unit, so forget the end turn danger
 	kToNodeCacheData.bEndTurnDangerKnown = false;
 
 	const CvPlot* pPlot = GC.getMap().plotUnchecked(node->m_iX, node->m_iY);
@@ -1286,8 +1288,8 @@ int PathEndTurnCost(CvPlot* pToPlot, const CvPathNodeCacheData& kToNodeCacheData
 			iCost += PATH_END_TURN_INVISIBLE_WEIGHT;
 
 		//calculcate danger. this is expensive, so compute it once per plot per search
+		//every route which ends the turn here sees the same danger
 		//note: it includes an overkill factor because usually not all enemy units will attack this one unit
-		// Vox Deorum: every route that ends a turn here sees the same danger, so reuse the node's memo
 		if (!kToNodeCacheData.bEndTurnDangerKnown)
 		{
 			kToNodeCacheData.iEndTurnDanger = pUnit->GetDanger(pToPlot);
@@ -1395,7 +1397,7 @@ int PathCost(const CvAStarNode* parent, const CvAStarNode* node, const SPathFind
 
 	//this is quite tricky with passable ice plots which can be either water or land
 	bool bToPlotIsWater = kToNodeCacheData.bIsNonNativeDomain || (eUnitDomain==DOMAIN_SEA && pToPlot->isWater());
-	bool bFromPlotIsWater = kFromNodeCacheData.bIsNonNativeDomain || (eUnitDomain==DOMAIN_SEA && pToPlot->isWater());
+	bool bFromPlotIsWater = kFromNodeCacheData.bIsNonNativeDomain || (eUnitDomain==DOMAIN_SEA && pFromPlot->isWater());
 
 	if (iStartMoves==0)
 	{
@@ -2994,7 +2996,7 @@ bool CvTwoLayerPathFinder::AddStopNodeIfRequired(const CvAStarNode* current, con
 		//we sort the nodes by total cost!
 		pStopNode->m_iTotalCost = pStopNode->m_iKnownCost*giKnownCostWeight + pStopNode->m_iHeuristicCost*giHeuristicCostWeight;
 		pStopNode->m_pParent = current->m_pParent;
-		// Vox Deorum: this copy also carries the end-turn danger memo, which is valid because both nodes share a plot
+		//this also copies the end turn danger, which is fine because it's the same plot
 		pStopNode->m_kCostCacheData = current->m_kCostCacheData;
 		pStopNode->m_bIsStopNode = true;
 		
@@ -4121,16 +4123,16 @@ SPathFinderUserData::SPathFinderUserData(PlayerTypes _ePlayer, PathType _ePathTy
     : ePath(_ePathType),
       eRoute(NO_ROUTE),
       eBuild(NO_BUILD),
+      eRoutePurpose(NO_ROUTE_PURPOSE),
+      bUseRivers(false),
+      iFlags(0),
       ePlayer(_ePlayer),
       eEnemy(NO_PLAYER),
-      eRoutePurpose(NO_ROUTE_PURPOSE),
       iUnitID(0),
-      iFlags(0),
       iMaxTurns(INT_MAX),
       iMaxNormalizedDistance(INT_MAX),
       iMinMovesLeft(0),
-      iStartMoves(0),
-      bUseRivers(false)
+      iStartMoves(0)
 {
 }
 

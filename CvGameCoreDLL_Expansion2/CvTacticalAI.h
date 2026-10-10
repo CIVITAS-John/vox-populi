@@ -767,13 +767,40 @@ struct SPathFinderStartPos
 	int iPlotIndex;
 	int iMovesLeft;
 	PlotIndexContainer freedPlots;
+	// Borrow only for a synchronous lookup. Container copies always own the
+	// complete ordered list, independent of the position's CoW storage.
+	struct LookupOnly {};
 
 	SPathFinderStartPos(const SUnitStats& startpoint, const PlotIndexContainer& noZocPlots) :
-		iUnitID(startpoint.iUnitID), iPlotIndex(startpoint.iPlotIndex), iMovesLeft(startpoint.iMovesLeft), freedPlots(noZocPlots) {}
+		iUnitID(startpoint.iUnitID), iPlotIndex(startpoint.iPlotIndex), iMovesLeft(startpoint.iMovesLeft), freedPlots(noZocPlots), borrowedFreedPlots(NULL) {}
+
+	SPathFinderStartPos(const SUnitStats& startpoint, const PlotIndexContainer& noZocPlots, LookupOnly) :
+		iUnitID(startpoint.iUnitID), iPlotIndex(startpoint.iPlotIndex), iMovesLeft(startpoint.iMovesLeft), borrowedFreedPlots(&noZocPlots) {}
+
+	SPathFinderStartPos(const SPathFinderStartPos& other) :
+		iUnitID(other.iUnitID), iPlotIndex(other.iPlotIndex), iMovesLeft(other.iMovesLeft), freedPlots(other.GetFreedPlots()), borrowedFreedPlots(NULL) {}
+
+	SPathFinderStartPos& operator=(const SPathFinderStartPos& other)
+	{
+		if (this != &other)
+		{
+			freedPlots = other.GetFreedPlots();
+			iUnitID = other.iUnitID;
+			iPlotIndex = other.iPlotIndex;
+			iMovesLeft = other.iMovesLeft;
+			borrowedFreedPlots = NULL;
+		}
+		return *this;
+	}
+
+	const PlotIndexContainer& GetFreedPlots() const
+	{
+		return borrowedFreedPlots ? *borrowedFreedPlots : freedPlots;
+	}
 
 	bool operator==(const SPathFinderStartPos& rhs) const
 	{
-		return (iUnitID == rhs.iUnitID) && (iPlotIndex == rhs.iPlotIndex) && (iMovesLeft == rhs.iMovesLeft) && (freedPlots == rhs.freedPlots);
+		return (iUnitID == rhs.iUnitID) && (iPlotIndex == rhs.iPlotIndex) && (iMovesLeft == rhs.iMovesLeft) && (GetFreedPlots() == rhs.GetFreedPlots());
 	}
 
 	bool operator<(const SPathFinderStartPos& rhs) const
@@ -793,21 +820,26 @@ struct SPathFinderStartPos
 			return true;
 		if (iMovesLeft > rhs.iMovesLeft)
 			return false;
+		const PlotIndexContainer& leftPlots = GetFreedPlots();
+		const PlotIndexContainer& rightPlots = rhs.GetFreedPlots();
 		//no good way to compare this ...
-		if (freedPlots.size() < rhs.freedPlots.size())
+		if (leftPlots.size() < rightPlots.size())
 			return true;
-		if (freedPlots.size() > rhs.freedPlots.size())
+		if (leftPlots.size() > rightPlots.size())
 			return false;
-		for (size_t i = 0; i < freedPlots.size(); i++)
+		for (size_t i = 0; i < leftPlots.size(); i++)
 		{
-			if (freedPlots[i] < rhs.freedPlots[i])
+			if (leftPlots[i] < rightPlots[i])
 				return true;
-			if (freedPlots[i] > rhs.freedPlots[i])
+			if (leftPlots[i] > rightPlots[i])
 				return false;
 		}
 
 		return false;
 	}
+
+private:
+	const PlotIndexContainer* borrowedFreedPlots;
 };
 
 // specialized hash function for unordered_map keys
@@ -820,13 +852,14 @@ struct SPathFinderStartPosHash
 
 	std::size_t operator() (const SPathFinderStartPos& key) const
 	{
-		std::size_t h0 = key.freedPlots.size();
+		const PlotIndexContainer& plots = key.GetFreedPlots();
+		std::size_t h0 = plots.size();
 
 		hash_combine(h0, tr1::hash<int>()(key.iUnitID));
 		hash_combine(h0, tr1::hash<int>()(key.iPlotIndex));
 		hash_combine(h0, tr1::hash<int>()(key.iMovesLeft));
 
-		for(vector<int>::const_iterator i = key.freedPlots.begin(); i!=key.freedPlots.end(); ++i)
+		for(vector<int>::const_iterator i = plots.begin(); i!=plots.end(); ++i)
 			hash_combine(h0, tr1::hash<int>()(*i));
 
 		return h0;
@@ -1257,7 +1290,7 @@ public:
 
 	bool isExhausted() const;
 	const vector<SUnitStats>& getAvailableUnits() const { return availableUnits.read(); }
-	int GetNumAvailableUnits() const { return availableUnits.read().size(); }
+	size_t GetNumAvailableUnits() const { return availableUnits.read().size(); }
 	const vector<SUnitStats>& getFinishedUnits() const { return notQuiteFinishedUnits.read(); }
 	bool lastAssignmentIsAfterRestart(int iUnitID) const;
 	const SUnitStats* getAvailableUnitStats(int iUnitID) const;
@@ -1396,12 +1429,28 @@ protected:
 
 public:
 
+	//hard cap on the number of tactical plots stored per position (see
+	//addTacticalPlot); the lookup packs the storage index into unsigned char
+	enum { MAX_TACT_PLOTS = 255 };
+
 	CvTacticalPosition();
 
 	// Vox Deorum: the trailing flavors default to neutral, which keeps native scoring unchanged
 	void initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
 		const STacticalFlavors& flavors = STacticalFlavors());
 	void initFromParent(const CvTacticalPosition& parent);
+
+	//pre-allocate the plot storage up to the hard cap. only the initial
+	//position needs this: it absorbs every addTacticalPlot during setup, so
+	//reserving up front avoids the geometric-growth reallocation whose copy
+	//fails under 32-bit address-space exhaustion (issue #13254). child
+	//positions copy exact-size on first write and stay lean.
+	void reservePlotStorage()
+	{
+		tactPlots.write().reserve(MAX_TACT_PLOTS);
+		tactPlotLookup.write().reserve(MAX_TACT_PLOTS);
+	}
+
 	// Vox Deorum: scales a score term by one flavor slot's weight, or divides by it when inverse
 	int scaleByFlavor(STacticalFlavors::eSlot eSlot, int iValue, bool bInverse = false) const;
 	// Vox Deorum: scales an attack term and limits the change to TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT
@@ -1626,7 +1675,7 @@ namespace TacticalAIHelpers
 
 	ReachablePlots GetAllPlotsInReachThisTurn(const CvUnit* pUnit, const CvPlot* pStartPlot, int iFlags, int iMinMovesLeft=0, int iStartMoves=-1, const PlotIndexContainer& plotsToIgnoreForZOC=PlotIndexContainer());
 	vector<int> GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, const CvPlot* pBasePlot, bool bOnlyWithEnemy, bool bIgnoreVisibility);
-	std::set<int> GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, ReachablePlots& basePlots, bool bOnlyWithEnemy,  bool bIgnoreVisibility);
+	vector<int> GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, ReachablePlots& basePlots, bool bOnlyWithEnemy,  bool bIgnoreVisibility); //sorted, unique
 	void UpdatePlotDistanceToTarget(PlayerTypes ePlayer, CvPlot* pTargetPlot);
 	int GetPlotDistanceToTarget(int iPlotIndex, DomainTypes eRelevantDomain);
 
