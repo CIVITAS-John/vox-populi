@@ -2,7 +2,9 @@
 
 #include "VoxRlBlockStorage.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #ifdef VOX_RL_TESTING
 namespace {
@@ -118,6 +120,7 @@ u32 VoxRlOwnedBlockStorage::ByteLength() const
     return bytes_.size() > 0xffffffffU ? 0 : static_cast<u32>(bytes_.size());
 }
 
+#ifdef _WIN32
 // Creates an unopened fixture-file mapping.
 VoxRlFixtureFileMapping::VoxRlFixtureFileMapping()
     : fileHandle_(0), mappingHandle_(0), bytes_(0), byteLength_(0)
@@ -202,3 +205,4 @@ u32 VoxRlFixtureFileMapping::ByteLength() const
 {
     return byteLength_;
 }
+#endif

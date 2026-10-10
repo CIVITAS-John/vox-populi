@@ -69,6 +69,7 @@ private:
 void VoxRlFailOwnedStorageAllocationsForTesting(u32 count);
 #endif
 
+#ifdef _WIN32
 // Owns a read-only Windows fixture-file mapping for the lifetime of a block view.
 class VoxRlFixtureFileMapping {
 public:
@@ -102,5 +103,6 @@ private:
     const u8* bytes_;
     u32 byteLength_;
 };
+#endif
 
 #endif
