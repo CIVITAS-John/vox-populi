@@ -1494,6 +1494,7 @@ public:
 		const PrPositionSortHeapGeneration& heapSort,
 		const map<const CvTacticalPosition*, const CvTacticalPosition*> nextAttackPosition);
 	void getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount, bool bLastPosition) const;
+	bool hasAcceptableMoveForUnit(const SUnitStats& unit, bool bLastPosition) const;
 
 	bool HasCombatBonus(int iPlotIndex, DomainTypes eDomain) const;
 	int GetCityAttackBonus(int iPlotIndex) const;
