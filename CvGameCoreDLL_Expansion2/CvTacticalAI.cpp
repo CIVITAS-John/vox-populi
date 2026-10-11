@@ -11684,6 +11684,30 @@ void CvSupportPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, i
 	}
 }
 
+//cheaper version of getPreferredAssignmentsForUnit for feasibility checks: stops at the first acceptable move
+//the move towards target bonus is skipped since it does not affect acceptability, and no assignment storage is consumed
+bool CvSupportPosition::hasAcceptableMoveForUnit(const SUnitStats& unit, bool bLastPosition) const
+{
+	const CvPlot* pAssumedUnitPlot = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
+	CvUnit* pUnit = GET_PLAYER(getPlayer()).getUnit(unit.iUnitID);
+	if (!pUnit || !pAssumedUnitPlot)
+		return false;
+
+	const ReachablePlots& reachablePlots = getReachablePlotsForUnit(unit);
+	for (ReachablePlots::const_iterator it = reachablePlots.begin(); it != reachablePlots.end(); ++it)
+	{
+		const CvPlot* pTestPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
+		if (!pTestPlot)
+			continue;
+
+		STacticalAssignment* moveToPlot = ScorePlotForSupportMove(unit, pTestPlot, it->iMovesLeft, *this, EM_INTERMEDIATE, bLastPosition);
+		if (moveToPlot->IsAcceptable())
+			return true;
+	}
+
+	return false;
+}
+
 bool CvSupportPosition::addInitialAssignments()
 {
 	const vector<SUnitStats>& availableUnits_r = availableUnits.read();
@@ -13343,8 +13367,7 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 
 		for (size_t i = 0; i < initialPosition->GetNumAvailableUnits(); i++)
 		{
-			initialPosition->getPreferredAssignmentsForUnit(initialPosition->getAvailableUnits()[i], iMaxChoicesPerUnit, true);
-			if (gPossibleMoves.empty())
+			if (!initialPosition->hasAcceptableMoveForUnit(initialPosition->getAvailableUnits()[i], true))
 				return false;
 		}
 
