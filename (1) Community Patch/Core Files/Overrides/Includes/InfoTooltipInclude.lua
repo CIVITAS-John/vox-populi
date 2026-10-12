@@ -1500,6 +1500,20 @@ function GetHelpTextForBuilding(eBuilding, bExcludeName, _, bNoMaintenance, pCit
 		pCity = nil;
 		pActivePlayer = nil;
 		pActiveCity = nil;
+		-- Vox Deorum: drop the values taken from the active player too, so general info reads the same for every civ.
+		-- A unique building describes its own civilization's abilities, such as the Candi's unique luxuries.
+		eActiveCiv = -1;
+		local strOwnerCiv = kBuildingInfo.CivilizationRequired;
+		if not strOwnerCiv then
+			for row in GameInfo.Civilization_BuildingClassOverrides{BuildingType = kBuildingInfo.Type} do
+				strOwnerCiv = row.CivilizationType;
+				break;
+			end
+		end
+		if strOwnerCiv and GameInfoTypes[strOwnerCiv] then
+			eActiveCiv = GameInfoTypes[strOwnerCiv];
+		end
+		fTradeMultiplier = 1;
 	end
 
 	local tHasBuildingCache = {};
