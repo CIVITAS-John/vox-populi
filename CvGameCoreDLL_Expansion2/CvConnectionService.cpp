@@ -22,6 +22,72 @@ Opens an IPC channel that exposes the game's internal state to external services
 
 // Note: Buffer allocation moved to Setup() to avoid unnecessary memory usage when IPC is disabled
 
+// Vox Deorum: Registry keys for the tables that hold our registered functions (by name)
+// and pending async callbacks (by call ID). We used to keep both in numbered registry
+// slots from luaL_ref, but luaL_ref and luaL_unref share one unlocked free list (headed at
+// registry[0]) with the engine and every UI context, and we call them from the UI thread
+// as well as the game-core thread. A lost race on that list handed one slot to two owners:
+// after a crash-recovery reload, getVictoryProgress and getMilitaryReport ended up at the
+// same ref and every victory call ran the military script. String keys in our own tables
+// never touch the free list, and an entry can only be replaced by registering the same
+// name again.
+static const char* const s_szFunctionsKey = "VoxDeorum.Functions";
+static const char* const s_szCallbacksKey = "VoxDeorum.Callbacks";
+
+// Push one of our private registry tables onto L's stack, creating it if it is missing.
+// Setup creates both tables before any concurrent access. The create-if-missing check is
+// not thread safe, so it only serves registrations that run before Setup (on the
+// game-core thread) and a state whose registry Setup did not reach.
+static void PushPrivateTable(lua_State* L, const char* key)
+{
+	lua_pushstring(L, key);
+	lua_rawget(L, LUA_REGISTRYINDEX);
+	if (!lua_istable(L, -1))
+	{
+		lua_pop(L, 1);
+		lua_newtable(L);
+		lua_pushstring(L, key);
+		lua_pushvalue(L, -2);
+		lua_rawset(L, LUA_REGISTRYINDEX);
+	}
+}
+
+// Store the value on top of L's stack at table[field] in a private table, and pop it.
+static void SetPrivateEntry(lua_State* L, const char* tableKey, const char* field)
+{
+	PushPrivateTable(L, tableKey);   // value, table
+	lua_pushstring(L, field);        // value, table, field
+	lua_pushvalue(L, -3);            // value, table, field, value
+	lua_rawset(L, -3);               // value, table
+	lua_pop(L, 2);
+}
+
+// Remove table[field] from a private table.
+static void ClearPrivateEntry(lua_State* L, const char* tableKey, const char* field)
+{
+	PushPrivateTable(L, tableKey);
+	lua_pushstring(L, field);
+	lua_pushnil(L);
+	lua_rawset(L, -3);
+	lua_pop(L, 1);
+}
+
+// Push table[field] from a private table. Returns true and leaves the function on the
+// stack if the entry is a function; otherwise leaves the stack unchanged and returns false.
+static bool PushPrivateFunction(lua_State* L, const char* tableKey, const char* field)
+{
+	PushPrivateTable(L, tableKey);
+	lua_pushstring(L, field);
+	lua_rawget(L, -2);
+	lua_remove(L, -2);  // drop the table, keep the entry
+	if (!lua_isfunction(L, -1))
+	{
+		lua_pop(L, 1);
+		return false;
+	}
+	return true;
+}
+
 // Singleton instance getter
 CvConnectionService& CvConnectionService::GetInstance()
 {
@@ -151,6 +217,13 @@ bool CvConnectionService::Setup()
 	// against the whole frame, so leftovers are no longer mistaken for return values — but
 	// starting clean keeps the self-referential type tables (Type.__index = Type), which
 	// send ConvertLuaToJsonValue into infinite recursion, out of reach either way.
+	lua_settop(m_pLuaState, 0);
+
+	// Vox Deorum: Create our private registry tables now, on the game-core thread and before
+	// the pipe thread starts, so the UI and game-core threads never race to create them. A
+	// table that already exists (from an earlier load, or an early registration) is kept.
+	PushPrivateTable(m_pLuaState, s_szFunctionsKey);
+	PushPrivateTable(m_pLuaState, s_szCallbacksKey);
 	lua_settop(m_pLuaState, 0);
 
 	Log(LOG_INFO, "ConnectionService::Setup() - Lua state initialized, creating named pipe server");
@@ -1342,8 +1415,29 @@ void CvConnectionService::HandleLuaCall(const char* functionName, const JsonArra
 	// arguments are on this same frame. See ProcessLuaResult's declaration.
 	const int iStackBase = lua_gettop(funcInfo.pLuaState);
 
-	// Push the function from the registry
-	lua_rawgeti(funcInfo.pLuaState, LUA_REGISTRYINDEX, funcInfo.iRegistryRef);
+	// Push the function from our private registry table. If the entry is gone, answer
+	// INVALID_FUNCTION so the MCP server registers it again and retries.
+	if (!PushPrivateFunction(funcInfo.pLuaState, s_szFunctionsKey, functionName))
+	{
+		if (bHadLock)
+		{
+			gDLL->GetGameCoreLock();
+		}
+
+		m_pMainThreadWriteBuffer->clear();
+		(*m_pMainThreadWriteBuffer)["type"] = "lua_response";
+		(*m_pMainThreadWriteBuffer)["id"] = id;
+		(*m_pMainThreadWriteBuffer)["success"] = false;
+
+		std::stringstream errorMsg;
+		errorMsg << "Function '" << functionName << "' is registered but missing from the Lua registry";
+		(*m_pMainThreadWriteBuffer)["error"]["code"] = "INVALID_FUNCTION";
+		(*m_pMainThreadWriteBuffer)["error"]["message"] = errorMsg.str();
+
+		SendMessage(*m_pMainThreadWriteBuffer);
+		Log(LOG_WARNING, ("HandleLuaCall - " + errorMsg.str()).c_str());
+		return;
+	}
 
 	// Push arguments onto the Lua stack
 	int argCount = 0;
@@ -1885,26 +1979,25 @@ void CvConnectionService::RegisterLuaFunction(const char* name, lua_State* L, in
 {
 	EnterCriticalSection(&m_csFunctions);
 	
-	// Check for existing registration and clear it
+	// Check for existing registration and clear it from the old state's table, in case it
+	// was registered from a state with a different registry
 	std::map<std::string, LuaFunctionInfo>::iterator it = m_registeredFunctions.find(name);
 	if (it != m_registeredFunctions.end())
 	{
-		// Clear the old reference from the Lua registry
-		luaL_unref(it->second.pLuaState, LUA_REGISTRYINDEX, it->second.iRegistryRef);
-		
+		ClearPrivateEntry(it->second.pLuaState, s_szFunctionsKey, name);
+
 		char buffer[512];
 		sprintf_s(buffer, sizeof(buffer), "Overwriting existing registration for function: %s", name);
 		Log(LOG_INFO, buffer);
 	}
-	
-	// Create registry reference for the function
-	lua_pushvalue(L, stackIndex);  // Push function to top of stack
-	int ref = luaL_ref(L, LUA_REGISTRYINDEX);  // Store in registry and get reference
-	
+
+	// Store the function in our private registry table under its name
+	lua_pushvalue(L, stackIndex);
+	SetPrivateEntry(L, s_szFunctionsKey, name);
+
 	// Store the function info
 	LuaFunctionInfo info;
 	info.pLuaState = L;
-	info.iRegistryRef = ref;
 	info.strDescription = "Registered from Lua";  // Could be enhanced with optional description parameter
 	
 	m_registeredFunctions[name] = info;
@@ -1918,7 +2011,7 @@ void CvConnectionService::RegisterLuaFunction(const char* name, lua_State* L, in
 	SendMessage(message);
 	
 	char buffer[512];
-	sprintf_s(buffer, sizeof(buffer), "Registered Lua function: %s (L=%p, ref=%d)", name, L, ref);
+	sprintf_s(buffer, sizeof(buffer), "Registered Lua function: %s (L=%p)", name, L);
 	Log(LOG_INFO, buffer);
 }
 
@@ -1931,9 +2024,9 @@ void CvConnectionService::UnregisterLuaFunction(const char* name)
 	std::map<std::string, LuaFunctionInfo>::iterator it = m_registeredFunctions.find(name);
 	if (it != m_registeredFunctions.end())
 	{
-		// Clear the Lua registry reference
-		luaL_unref(it->second.pLuaState, LUA_REGISTRYINDEX, it->second.iRegistryRef);
-		
+		// Clear the function from our private registry table
+		ClearPrivateEntry(it->second.pLuaState, s_szFunctionsKey, name);
+
 		// Remove from map
 		m_registeredFunctions.erase(it);
 		
@@ -2285,19 +2378,27 @@ void CvConnectionService::ForwardGameEvent(const char* eventName, ICvEngineScrip
 				gDLL->ReleaseGameCoreLock();
 			}
 
-			// Push the function from the registry
-			lua_rawgeti(postProcessorInfo.pLuaState, LUA_REGISTRYINDEX, postProcessorInfo.iRegistryRef);
+			// Push the function from our private registry table, skipping post-processing
+			// if the entry is gone
+			bool bHasFunction = PushPrivateFunction(postProcessorInfo.pLuaState, s_szFunctionsKey, "!PostProcessGameEvent");
+			int result = 0;
+			if (bHasFunction)
+			{
+				// Push arguments: eventName (string) and payload (table)
+				lua_pushstring(postProcessorInfo.pLuaState, eventName);
 
-			// Push arguments: eventName (string) and payload (table)
-			lua_pushstring(postProcessorInfo.pLuaState, eventName);
+				// Convert JSON payload to Lua table
+				ConvertJsonToLuaValue(postProcessorInfo.pLuaState, payload);
 
-			// Convert JSON payload to Lua table
-			ConvertJsonToLuaValue(postProcessorInfo.pLuaState, payload);
+				// Call the function (2 args, 2 results)
+				result = lua_pcall(postProcessorInfo.pLuaState, 2, 2, 0);
+			}
 
-			// Call the function (2 args, 2 results)
-			int result = lua_pcall(postProcessorInfo.pLuaState, 2, 2, 0);
-
-			if (result == 0)
+			if (!bHasFunction)
+			{
+				Log(LOG_WARNING, "ForwardGameEvent - !PostProcessGameEvent is registered but missing from the Lua registry, skipping post-processing");
+			}
+			else if (result == 0)
 			{
 				// Success - get the return values
 				// First return value: extraPayload
@@ -2760,9 +2861,10 @@ std::string CvConnectionService::CleanLuaErrorMessage(const char* errorMsg)
 }
 
 // Callback data structure for Lua external calls
+// The callback function lives in the "VoxDeorum.Callbacks" registry table under strCallId.
 struct LuaExternalCallbackData {
 	lua_State* L;
-	int callbackRef;
+	std::string strCallId;
 };
 
 // Static callback function for external calls
@@ -2779,25 +2881,32 @@ void CvConnectionService::HandleExternalCallCallback(const ExternalCallResult& r
 			gDLL->ReleaseGameCoreLock();
 		}
 
-		// Get the callback function from registry
-		lua_rawgeti(pData->L, LUA_REGISTRYINDEX, pData->callbackRef);
-
-		// Use shared post-processing
-		CvConnectionService::GetInstance().ProcessExternalCallResult(pData->L, result);
-
-		// Call the callback with 2 arguments (result/nil, error)
-		if (lua_pcall(pData->L, 2, 0, 0) != 0)
+		// Get the callback function from our private registry table
+		if (PushPrivateFunction(pData->L, s_szCallbacksKey, pData->strCallId.c_str()))
 		{
-			// Log error but don't propagate
-			const char* error = lua_tostring(pData->L, -1);
+			// Use shared post-processing
+			CvConnectionService::GetInstance().ProcessExternalCallResult(pData->L, result);
+
+			// Call the callback with 2 arguments (result/nil, error)
+			if (lua_pcall(pData->L, 2, 0, 0) != 0)
+			{
+				// Log error but don't propagate
+				const char* error = lua_tostring(pData->L, -1);
+				std::stringstream logMsg;
+				logMsg << "Error in external call callback: " << (error ? error : "unknown");
+				CvConnectionService::GetInstance().Log(CvConnectionService::LOG_ERROR, logMsg.str().c_str());
+				lua_pop(pData->L, 1);  // Remove error from stack
+			}
+		}
+		else
+		{
 			std::stringstream logMsg;
-			logMsg << "Error in external call callback: " << (error ? error : "unknown");
-			CvConnectionService::GetInstance().Log(CvConnectionService::LOG_ERROR, logMsg.str().c_str());
-			lua_pop(pData->L, 1);  // Remove error from stack
+			logMsg << "External call callback for " << pData->strCallId << " is missing from the Lua registry";
+			CvConnectionService::GetInstance().Log(CvConnectionService::LOG_WARNING, logMsg.str().c_str());
 		}
 
-		// Clean up the callback reference
-		luaL_unref(pData->L, LUA_REGISTRYINDEX, pData->callbackRef);
+		// Clean up the callback entry
+		ClearPrivateEntry(pData->L, s_szCallbacksKey, pData->strCallId.c_str());
 
 		// Restore game core lock if we had it
 		if (bHadLock)
@@ -2833,44 +2942,38 @@ int CvConnectionService::CallExternalFunction(lua_State* L)
 	}
 	const char* functionName = lua_tostring(L, 1);
 	
-	// Check if last argument is a callback function
+	// Check if last argument is a callback function (for async calls)
 	int numArgs = lua_gettop(L);
-	bool hasCallback = false;
+	const int callbackIndex = numArgs;
+	bool hasCallback = (numArgs >= 2 && lua_isfunction(L, numArgs));
 	ExternalCallCallback callback = NULL;
 	void* userData = NULL;
-	
-	// Check if last argument is a callback function (for async calls)
-	if (numArgs >= 2 && lua_isfunction(L, numArgs))
+
+	if (hasCallback)
 	{
-		hasCallback = true;
-		
-		// Create callback data
-		LuaExternalCallbackData* pCallbackData = new LuaExternalCallbackData;
-		pCallbackData->L = L;
-		
-		// Create a reference to the callback function
-		lua_pushvalue(L, numArgs);  // Push callback to top
-		pCallbackData->callbackRef = luaL_ref(L, LUA_REGISTRYINDEX);
-		
-		// Set the callback function pointer
-		callback = HandleExternalCallCallback;
-		userData = pCallbackData;
-		
 		// Don't include callback in arguments count
 		numArgs--;
 	}
-	
+
 	// Validate the call
 	if (!ValidateExternalCall(functionName, result))
 	{
-		// For async calls, call the callback with an error immediately.
-		// HandleExternalCallCallback owns the callback data: it unrefs the Lua
-		// callback and deletes the struct itself. We must not clean it up again
-		// here (doing so read freed memory and double-unref/double-deleted it).
-		if (callback)
+		// For async calls, call the callback with an error immediately, straight from the
+		// stack. Validation fails whenever the service is not initialized, so nothing touches
+		// the callback table before Setup has created it.
+		if (hasCallback)
 		{
-			callback(result, userData);
-			return 0;  // Async call, callback handled the result and its own cleanup
+			lua_pushvalue(L, callbackIndex);
+			ProcessExternalCallResult(L, result);
+			if (lua_pcall(L, 2, 0, 0) != 0)
+			{
+				const char* error = lua_tostring(L, -1);
+				std::stringstream logMsg;
+				logMsg << "Error in external call callback: " << (error ? error : "unknown");
+				Log(LOG_ERROR, logMsg.str().c_str());
+				lua_pop(L, 1);  // Remove error from stack
+			}
+			return 0;
 		}
 		// For sync calls, push error to Lua stack
 		else
@@ -2880,10 +2983,26 @@ int CvConnectionService::CallExternalFunction(lua_State* L)
 			return 2;  // Pushed nil and error message
 		}
 	}
-	
-	// Generate unique call ID
+
+	// Generate unique call ID (async callbacks are stored under it)
 	std::string callId = GenerateCallId();
-	
+
+	if (hasCallback)
+	{
+		// Create callback data
+		LuaExternalCallbackData* pCallbackData = new LuaExternalCallbackData;
+		pCallbackData->L = L;
+		pCallbackData->strCallId = callId;
+
+		// Store the callback function in our private registry table under the call ID
+		lua_pushvalue(L, callbackIndex);
+		SetPrivateEntry(L, s_szCallbacksKey, callId.c_str());
+
+		// Set the callback function pointer
+		callback = HandleExternalCallCallback;
+		userData = pCallbackData;
+	}
+
 	// Create a pending call entry
 	PendingExternalCall pendingCall;
 	pendingCall.strCallId = callId;
@@ -2978,7 +3097,7 @@ int CvConnectionService::CallExternalFunction(lua_State* L)
 						static_cast<LuaExternalCallbackData*>(pendingIt->second.pUserData);
 					if (pCallbackData && pCallbackData->L)
 					{
-						luaL_unref(pCallbackData->L, LUA_REGISTRYINDEX, pCallbackData->callbackRef);
+						ClearPrivateEntry(pCallbackData->L, s_szCallbacksKey, pCallbackData->strCallId.c_str());
 						delete pCallbackData;
 					}
 				}

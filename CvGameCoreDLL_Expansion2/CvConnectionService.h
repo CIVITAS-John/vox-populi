@@ -213,10 +213,10 @@ private:
 	// Shared function to convert Lua values to fill a key in a JsonDocument
 	void ConvertLuaValuesInDocument(lua_State* L, int firstIndex, int numValues, DynamicJsonDocument& parent, const char* key);
 	
-	// Structure to store registered Lua functions
+	// Structure to store registered Lua functions. The function itself lives in the
+	// "VoxDeorum.Functions" registry table under its name (see CvConnectionService.cpp).
 	struct LuaFunctionInfo {
 		lua_State* pLuaState;      // The Lua state that registered this function
-		int iRegistryRef;          // Reference in the Lua registry (LUA_REGISTRYINDEX)
 		std::string strDescription; // Optional description for documentation
 	};
 	
