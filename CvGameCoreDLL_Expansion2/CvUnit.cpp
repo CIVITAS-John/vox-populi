@@ -15974,27 +15974,7 @@ bool CvUnit::isInCombat() const
 
 
 //	--------------------------------------------------------------------------------
-int CvUnit::GetMaxHitPoints() const
-{
-	VALIDATE_OBJECT();
-
-	int iMaxHP = getMaxHitPointsBase();
-
-	iMaxHP *= (100 + getMaxHitPointsModifier());
-	iMaxHP /= 100;
-	
-	iMaxHP += getMaxHitPointsChange();
-
-	return iMaxHP;
-}
-
-
-//	--------------------------------------------------------------------------------
-int CvUnit::GetCurrHitPoints()	const
-{
-	VALIDATE_OBJECT();
-	return (GetMaxHitPoints() - getDamage());
-}
+// GetMaxHitPoints and GetCurrHitPoints are inline in CvUnit.h.
 
 
 //	--------------------------------------------------------------------------------
@@ -16432,7 +16412,7 @@ int CvUnit::GetGenericMeleeStrengthModifier(const CvUnit* pOtherUnit, const CvPl
 			int iTempModifier = unitCombatModifier(combatType);
 
 			//hack: mounted units can have secondary combat class
-			UnitCombatTypes mountedCombat = static_cast<UnitCombatTypes>(GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true));
+			UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 			if (pOtherUnit->getUnitInfo().IsMounted() && combatType != mountedCombat)
 				iTempModifier += unitCombatModifier(mountedCombat);
 
@@ -16632,7 +16612,7 @@ int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot,
 			int iTempModifier = getExtraUnitCombatModifierAttack(combatType);
 
 			//hack: mounted units can have secondary combat class
-			UnitCombatTypes mountedCombat = static_cast<UnitCombatTypes>(GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true));
+			UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 			if (pDefender->getUnitInfo().IsMounted() && combatType != mountedCombat)
 				iTempModifier += getExtraUnitCombatModifierAttack(mountedCombat);
 
@@ -16809,7 +16789,7 @@ int CvUnit::GetMaxDefenseStrength(const CvPlot* pInPlot, const CvUnit* pAttacker
 			int iTempModifier = getExtraUnitCombatModifierDefense(combatType);
 
 			//hack: mounted units can have secondary combat class
-			UnitCombatTypes mountedCombat = static_cast<UnitCombatTypes>(GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true));
+			UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 			if (pAttacker->getUnitInfo().IsMounted() && combatType != mountedCombat)
 				iTempModifier += getExtraUnitCombatModifierDefense(mountedCombat);
 
@@ -17277,7 +17257,7 @@ int CvUnit::GetMaxRangedCombatStrength(const CvUnit* pOtherUnit, const CvCity* p
 			int iTempModifier = unitCombatModifier(eUnitCombat);
 			if (pOtherUnit->getUnitInfo().IsMounted())
 			{
-				static UnitCombatTypes eMountedCombat = (UnitCombatTypes) GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true);
+				UnitCombatTypes eMountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 				if (eMountedCombat != eUnitCombat)
 					iTempModifier += unitCombatModifier(eMountedCombat);
 			}
@@ -17364,7 +17344,7 @@ int CvUnit::GetMaxRangedCombatStrength(const CvUnit* pOtherUnit, const CvCity* p
 				int iTempModifier = getExtraUnitCombatModifierAttack(combatType);
 
 				//hack: mounted units can have secondary combat class
-				UnitCombatTypes mountedCombat = static_cast<UnitCombatTypes>(GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true));
+				UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 				if (pOtherUnit->getUnitInfo().IsMounted() && combatType != mountedCombat)
 					iTempModifier += getExtraUnitCombatModifierAttack(mountedCombat);
 
@@ -17388,7 +17368,7 @@ int CvUnit::GetMaxRangedCombatStrength(const CvUnit* pOtherUnit, const CvCity* p
 				int iTempModifier = getExtraUnitCombatModifierDefense(combatType);
 
 				//hack: mounted units can have secondary combat class
-				UnitCombatTypes mountedCombat = static_cast<UnitCombatTypes>(GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true));
+				UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 				if (pOtherUnit->getUnitInfo().IsMounted() && combatType != mountedCombat)
 					iTempModifier += getExtraUnitCombatModifierDefense(mountedCombat);
 
@@ -21407,14 +21387,7 @@ void CvUnit::setTurnSliceCreated(int iNewValue)
 
 
 //	--------------------------------------------------------------------------------
-int CvUnit::getDamage() const
-{
-	//for debugging - hook in here and mouse over a unit to get the current tactical zone info
-	;
-
-	VALIDATE_OBJECT();
-	return m_iDamage;
-}
+// getDamage is inline in CvUnit.h.
 
 
 //	--------------------------------------------------------------------------------
@@ -24341,7 +24314,7 @@ int CvUnit::GetNearbyUnitClassModifier(UnitClassTypes eUnitClass, int iUnitClass
 					for (int iK = 0; iK < pLoopPlot->getNumUnits(); iK++)
 					{
 						CvUnit*	pLoopUnit = pLoopPlot->getUnitByIndex(iK);
-						if (pLoopUnit != NULL)
+						if (pLoopUnit != NULL && pLoopUnit != this)
 						{
 							if (pLoopUnit->getUnitClassType() == eUnitClass)
 							{
@@ -31960,7 +31933,11 @@ bool CvUnit::DoFallBack(const CvUnit& attacker, bool bWithdraw, bool bCaptured)
 
 	// Actually do the withdrawal if this unit isn't captured
 	if (!bCaptured)
+	{
+		if (getCombatUnit() != NULL)
+			setCombatUnit(NULL);
 		setXY(pDestPlot->getX(), pDestPlot->getY(), true, true, true, true);
+	}
 
 	if (aEscortedUnits.size() > 0)
 	{
@@ -31970,6 +31947,8 @@ bool CvUnit::DoFallBack(const CvUnit& attacker, bool bWithdraw, bool bCaptured)
 			// Need to check whether the unit can enter the plot again, because it might have changed (stacking rules)
 			if (aEscortedUnits[i]->canMoveInto(*pDestPlot, MOVEFLAG_DESTINATION))
 			{
+				if (aEscortedUnits[i]->getCombatUnit() != NULL)
+					aEscortedUnits[i]->setCombatUnit(NULL);
 				aEscortedUnits[i]->setXY(pDestPlot->getX(), pDestPlot->getY(), true, true, true, true);
 				aEscortedUnits[i]->PublishQueuedVisualizationMoves(); // Display the civilians retreating before the escort does
 			}
