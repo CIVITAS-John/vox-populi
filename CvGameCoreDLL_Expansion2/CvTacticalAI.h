@@ -1814,6 +1814,7 @@ namespace TacticalAIHelpers
 	// Vox Deorum: resets and prepares HOLD_CITY city-threat credit after the root's tactical plots are populated
 	void SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer);
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);
+	bool LaterRowsDependOnPlot(const vector<STacticalAssignment>& vAssignments, size_t iIndex, int iPlotIndex);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }
 
