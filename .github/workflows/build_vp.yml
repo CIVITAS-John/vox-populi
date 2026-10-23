@@ -145,29 +145,18 @@ jobs:
         id: cache
         with:
           path: |
-            ./wget
             ./SDK7
             ./SDK7.1
-          key: ${{ runner.os }}-sdks-wget-1.21.3-sdk7.0sp1-sdk7.1-v1
-          restore-keys: |
-            ${{ runner.os }}-sdks-wget-1.21.3-sdk7.0sp1-sdk7.1-
-            ${{ runner.os }}-sdks-
-
-      - name: Install wget
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Installing wget..."
-          mkdir wget
-          Invoke-WebRequest -Uri https://eternallybored.org/misc/wget/1.21.3/64/wget.exe -OutFile "wget\wget.exe"
-          Add-Content $env:GITHUB_PATH "$env:GITHUB_WORKSPACE\wget"
-          echo "wget installation complete."
+          key: ${{ runner.os }}-sdks-sdk7.0sp1-sdk7.1-v2
 
       - name: Download Windows SDK 7.0 SP1 and 7.1
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           echo "Downloading SDKs..."
-          wget -O ./sdk7.iso https://web.archive.org/web/20161230154527/http://download.microsoft.com/download/2/E/9/2E911956-F90F-4BFB-8231-E292A7B6F287/GRMSDK_EN_DVD.iso
-          wget -O ./sdk71.iso http://download.microsoft.com/download/F/1/0/F10113F5-B750-4969-A255-274341AC6BCE/GRMSDK_EN_DVD.iso
+          curl.exe -L --fail --retry 5 --retry-all-errors -o ./sdk7.iso https://web.archive.org/web/20161230154527/http://download.microsoft.com/download/2/E/9/2E911956-F90F-4BFB-8231-E292A7B6F287/GRMSDK_EN_DVD.iso
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          curl.exe -L --fail --retry 5 --retry-all-errors -o ./sdk71.iso http://download.microsoft.com/download/F/1/0/F10113F5-B750-4969-A255-274341AC6BCE/GRMSDK_EN_DVD.iso
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           7z x ./sdk7.iso -y -o"./SDK7"
           7z x ./sdk71.iso -y -o"./SDK7.1"
           echo "SDKs downloaded and extracted."
@@ -193,13 +182,9 @@ jobs:
         id: cache
         with:
           path: |
-            ./wget
             ./SDK7
             ./SDK7.1
-          key: ${{ runner.os }}-sdks-wget-1.21.3-sdk7.0sp1-sdk7.1-v1
-          restore-keys: |
-            ${{ runner.os }}-sdks-wget-1.21.3-sdk7.0sp1-sdk7.1-
-            ${{ runner.os }}-sdks-
+          key: ${{ runner.os }}-sdks-sdk7.0sp1-sdk7.1-v2
 
       - name: Install SDKs
         run: |
@@ -428,13 +413,9 @@ jobs:
         id: cache
         with:
           path: |
-            ./wget
             ./SDK7
             ./SDK7.1
-          key: ${{ runner.os }}-sdks-wget-1.21.3-sdk7.0sp1-sdk7.1-v1
-          restore-keys: |
-            ${{ runner.os }}-sdks-wget-1.21.3-sdk7.0sp1-sdk7.1-
-            ${{ runner.os }}-sdks-
+          key: ${{ runner.os }}-sdks-sdk7.0sp1-sdk7.1-v2
 
       - name: Install SDKs
         run: |
