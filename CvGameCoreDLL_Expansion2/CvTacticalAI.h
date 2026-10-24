@@ -13,6 +13,8 @@
 #include "CvAStar.h"
 // Vox Deorum: share the stable purpose identifiers used by tactical capture.
 #include "VoxDeorumRL/schema/SearchIntent.h"
+// Vox Deorum: the air search's interceptor state and helpers (VOX_TACTICAL_AIR_SEARCH)
+#include "CvTacticalAirSearch.h"
 
 class FDataStream;
 
@@ -485,7 +487,8 @@ private:
 
 	int ComputeTotalExpectedDamage(const CvTacticalTarget& target);
 	int ComputeTotalExpectedCityBombardDamage(CvUnit* pTarget);
-	bool IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot* pTarget, int iMinDamage=0);
+	// Vox Deorum: pSourcePlot is the plot the attacker is assumed to fire from, NULL for its own
+	bool IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot* pTarget, int iMinDamage=0, const CvPlot* pSourcePlot=NULL);
 
 	bool MoveToEmptySpaceNearTarget(CvUnit* pUnit, CvPlot* pTargetPlot, DomainTypes eDomain, int iMaxTurns, bool bMustBeSafePath = false);
 
@@ -528,10 +531,12 @@ FDataStream& operator>>(FDataStream&, CvTacticalAI&);
 FDataStream& operator<<(FDataStream&, const CvTacticalAI&);
 
 enum CLOSED_ENUM eUnitMoveEvalMode { EM_INITIAL, EM_INTERMEDIATE, EM_FINAL };
-enum CLOSED_ENUM eUnitMovementStrategy { MS_NONE,MS_FIRSTLINE,MS_SECONDLINE,MS_THIRDLINE,MS_SUPPORT,MS_EMBARKED }; //we should probably differentiate between regular ranged and siege ranged ...
+// Vox Deorum: MS_AIR is an aircraft or missile that acts from its base without occupying a plot (VOX_TACTICAL_AIR_SEARCH)
+enum CLOSED_ENUM eUnitMovementStrategy { MS_NONE,MS_FIRSTLINE,MS_SECONDLINE,MS_THIRDLINE,MS_SUPPORT,MS_EMBARKED,MS_AIR }; //we should probably differentiate between regular ranged and siege ranged ...
+// Vox Deorum: A_AIRSWEEP is an air sweep against the best interceptor covering a target plot (VOX_TACTICAL_AIR_SEARCH)
 enum CLOSED_ENUM eUnitAssignmentType { A_INITIAL, A_MOVE, A_MELEEATTACK, A_MELEEKILL, A_RANGEATTACK, A_RANGEKILL, A_FINISH,
 							A_BLOCKED, A_PILLAGE, A_CAPTURE, A_MOVE_FORCED, A_RESTART, A_MELEEKILL_NO_ADVANCE, A_MOVE_SWAP,
-							A_MOVE_SWAP_REVERSE, A_MOVE_DOUBLE, A_USE_POWER, A_FINISH_TEMP, A_HEAL, A_WAIT };
+							A_MOVE_SWAP_REVERSE, A_MOVE_DOUBLE, A_USE_POWER, A_FINISH_TEMP, A_HEAL, A_WAIT, A_AIRSWEEP };
 
 struct STacticalAssignment
 {
@@ -549,10 +554,15 @@ public:
 	int iCityDamage; //potential damage dealt to garrisoned unit
 	int iSelfDamage; //only relevant for melee ...
 	int iDamagedCityId; //city we damaged
+	// Vox Deorum: an air strike an interceptor may stop. Its damage goes into the position's uncertain record,
+	// so no kill, air or ground, relies on it.
+	bool bUncertain;
+	// Vox Deorum: for an uncertain strike that kills if it lands, the chance (in 1/10000) it adds that the target is dead
+	short iUncertainKillChance;
 
 	STacticalAssignment() : eAssignmentType(A_BLOCKED), iUnitID(-1), iTotalScore(0), iFromPlotIndex(0), iToPlotIndex(0),
 		iRemainingMoves(0), eMoveType(MS_NONE), unitDamage(SUnitIDValueContainer()), unitHealing(SUnitIDValueContainer()),
-		iCityDamage(0), iSelfDamage(0), iDamagedCityId(0), iPlotScore(0), iBonusScore(0), iDamageDelta(0), iOldPlotScore(0) {}
+		iCityDamage(0), iSelfDamage(0), iDamagedCityId(0), bUncertain(false), iUncertainKillChance(0), iPlotScore(0), iBonusScore(0), iDamageDelta(0), iOldPlotScore(0), iRankBonus(0) {}
 
 	STacticalAssignment(int iFromPlot, int iToPlot, int iUnitID_, int iRemainingMoves_, eUnitMovementStrategy eMoveType_, eUnitAssignmentType eType_, int iOldPlotScore_)
 	{
@@ -567,6 +577,9 @@ public:
 		iCityDamage = 0;
 		iSelfDamage = 0;
 		iDamagedCityId = -1;
+		bUncertain = false;
+		iUncertainKillChance = 0;
+		iRankBonus = 0;
 
 		unitDamage = SUnitIDValueContainer();
 		unitHealing = SUnitIDValueContainer();
@@ -588,6 +601,9 @@ public:
 		iCityDamage = 0;
 		iSelfDamage = 0;
 		iDamagedCityId = -1;
+		bUncertain = false;
+		iUncertainKillChance = 0;
+		iRankBonus = 0;
 
 		unitDamage.clear();
 		unitHealing.clear();
@@ -596,6 +612,13 @@ public:
 	}
 
 	int Score() const { return iTotalScore; }
+	// Vox Deorum: the score plus the exploration value of an air sweep. Every pruning and ordering stage
+	// ranks by this; a position's own score and the final plan choice never include the bonus.
+	// The bonus is kept in damage points, like iDamageDelta, so it scales by 10 here as damage does in iTotalScore,
+	// and enters the heap's last-round score (also in damage points) as it is.
+	int RankScore() const { return iTotalScore + iRankBonus * 10; }
+	int GetRankBonus() const { return iRankBonus; }
+	void SetRankBonus(int iBonus) { iRankBonus = ClampShort(iBonus); }
 	bool IsAcceptable() const { return iDamageDelta != TACTICAL_COMBAT_IMPOSSIBLE_SCORE; }
 	// Clamp score storage without reversing the sign of large penalties.
 	static short ClampShort(int v)
@@ -655,6 +678,7 @@ protected:
 	short iBonusScore;
 	short iDamageDelta;
 	short iOldPlotScore;
+	short iRankBonus; // Vox Deorum: see RankScore()
 };
 
 struct SComboMove
@@ -710,8 +734,9 @@ struct SComboMove
 		return bPtr != NULL;
 	}
 
+	// Vox Deorum: ranked by RankScore, which equals Score for every row but an air sweep
 	bool operator<(const SComboMove& rhs) const {
-		return getA().Score() + (hasB() ? getB().Score() : 0) > rhs.getA().Score() + (rhs.hasB() ? rhs.getB().Score() : 0);
+		return getA().RankScore() + (hasB() ? getB().RankScore() : 0) > rhs.getA().RankScore() + (rhs.hasB() ? rhs.getB().RankScore() : 0);
 	}
 	bool operator==(const SComboMove& rhs) const { return getA() == rhs.getA() && hasB() == rhs.hasB() && (!hasB() || getB() == rhs.getB()); }
 	bool addMove(const STacticalAssignment& move);
@@ -720,8 +745,8 @@ struct SComboMove
 	{
 		bool operator() (const SComboMove& lhs, const SComboMove& rhs)
 		{
-			int lhsScore = !lhs.hasB() ? lhs.getA().Score() : lhs.getA().Score() + lhs.getB().Score();
-			int rhsScore = !rhs.hasB() ? rhs.getA().Score() : rhs.getA().Score() + rhs.getB().Score();
+			int lhsScore = !lhs.hasB() ? lhs.getA().RankScore() : lhs.getA().RankScore() + lhs.getB().RankScore();
+			int rhsScore = !rhs.hasB() ? rhs.getA().RankScore() : rhs.getA().RankScore() + rhs.getB().RankScore();
 			return lhsScore > rhsScore;
 		}
 	};
@@ -748,15 +773,24 @@ struct SUnitStats
 	eUnitAssignmentType eLastAssignment;
 	eUnitMovementStrategy eMoveStrategy;
 	const CvUnit* pUnit;
+	// Vox Deorum: the ship carrying an MS_AIR unit, or -1 for a city base or any other unit
+	int iCarrierID;
+	// Vox Deorum: the unit could only be admitted because its carrier may move first
+	bool bNeedsCarrierMove;
+	// Vox Deorum: index of the interchangeable aircraft group, or -1 for a unit that is not MS_AIR or has acted
+	int iAirGroup;
+	// Vox Deorum: a missile whose base is about to be lost, so firing it costs nothing
+	bool bBaseEndangered;
 
 	//convenience constructor - do not use pUnit here because it's initialized last! (pUnit_ is ok)
 	SUnitStats(const CvUnit* pUnit_, int iImportance, eUnitMovementStrategy eMoveStrategy_) :
-		iUnitID(pUnit_->GetID()), iPlotIndex(pUnit_->plot()->GetPlotIndex()), iAttacksLeft(pUnit_->getNumAttacks() - pUnit_->getNumAttacksMadeThisTurn()), 
-		iMovesLeft(pUnit_->getMoves()), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()), eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_) { }
+		iUnitID(pUnit_->GetID()), iPlotIndex(pUnit_->plot()->GetPlotIndex()), iAttacksLeft(pUnit_->getNumAttacks() - pUnit_->getNumAttacksMadeThisTurn()),
+		iMovesLeft(pUnit_->getMoves()), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()), eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_),
+		iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false) { }
 	//use with caution, this may lead to an inconsistent state
 	SUnitStats(const CvUnit* pUnit_, int iUnit, int iPlot, int iAttacks, int iMoves, int iImportance, eUnitMovementStrategy eMoveStrategy_) :
 		iUnitID(iUnit), iPlotIndex(iPlot), iAttacksLeft(iAttacks), iMovesLeft(iMoves), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()),
-		eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_) {}
+		eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_), iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false) {}
 
 	bool operator<(const SUnitStats& rhs) const { return iImportanceScore > rhs.iImportanceScore; } //sort descending by default
 };
@@ -1181,6 +1215,8 @@ protected:
 	int iTotalScore; // sum of all above
 	//for heap sorting (included all moves made in the last generation)
 	int iScoreOverParent;
+	// Vox Deorum: the air sweep ranking values of the last generation's moves. Orders the heap, never scores a plan.
+	int iRankBonusOverParent;
 
 	//moves already assigned to get into this position (complete, mostly redundant with parent)
 	SCoWField<vector<STacticalAssignment>> assignedMoves;
@@ -1242,8 +1278,9 @@ public:
 			//continue where it seems most promising right now, ignore "historical" scores
 			if (lhs->getGeneration() == rhs->getGeneration())
 			{
-				if (lhs->getScoreLastRound() != rhs->getScoreLastRound())
-					return lhs->getScoreLastRound() < rhs->getScoreLastRound();
+				// Vox Deorum: a sweep's ranking value keeps its subtree explored without entering the plan score
+				if (lhs->getRankScoreLastRound() != rhs->getRankScoreLastRound())
+					return lhs->getRankScoreLastRound() < rhs->getRankScoreLastRound();
 				//tie-breaker: use ID to ensure deterministic ordering
 				return lhs->getID() > rhs->getID();
 			}
@@ -1310,6 +1347,9 @@ public:
 	PlayerTypes getPlayer() const { return ePlayer; }
 	int getScoreTotal() const { return iTotalScore; }
 	int getScoreLastRound() const { return iScoreOverParent; }
+	// Vox Deorum: the last round's score plus the ranking values of its air sweeps
+	int getRankScoreLastRound() const { return iScoreOverParent + iRankBonusOverParent; }
+	void addRankBonusLastRound(int iBonus) { iRankBonusOverParent += iBonus; }
 
 	const vector<STacticalAssignment>& getAssignments() const { return assignedMoves.read(); }
 	void SetAssignments(const vector<STacticalAssignment>& newAssignments) { assignedMoves.write() = newAssignments; }
@@ -1392,6 +1432,13 @@ protected:
 
 	SCoWField<PlotIndexContainer> enemyPlots; //plot indices for enemy units, to be checked for potential attacks
 	SCoWField<SUnitIDValueContainer> unitDamageDealt; //how much damage we've dealt to enemy units, to be included in danger calculations
+	// Vox Deorum: expected damage from air strikes an interceptor may stop. Only the strike's own score reads it;
+	// kills and every other reader of enemy HP use unitDamageDealt alone. City damage uses the negative city ID.
+	SCoWField<SUnitIDValueContainer> uncertainDamage;
+	// Vox Deorum: the chance (in 1/10000) that uncertain strikes have already killed each enemy unit
+	SCoWField<SUnitIDValueContainer> uncertainKillChance;
+	// Vox Deorum: interceptions used and bases lost, sorted by owner and unit ID
+	SCoWField<vector<SInterceptorState>> interceptorStates;
 
 	//set in constructor, constant afterwards
 	eAggressionLevel eAggression;
@@ -1412,6 +1459,8 @@ protected:
 	//------------
 	const vector<int>& getRangeAttackPlotsForUnit(const SUnitStats& unit) const;
 	void getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const;
+	// Vox Deorum: strikes, sweeps and standing down for an aircraft that acts from its base
+	void getPreferredAssignmentsForAirUnit(const SUnitStats& unit, int nMaxCount) const;
 	size_t addChild(CvTacticalPosition* pChild);
 	bool removeChild(CvTacticalPosition* pChild);
 	bool isMoveBlockedByOtherUnit(const STacticalAssignment& move, DomainTypes eDomain) const;
@@ -1426,6 +1475,9 @@ protected:
 		tactPlots.wipe();
 		enemyPlots.wipe();
 		unitDamageDealt.wipe();
+		uncertainDamage.wipe();
+		uncertainKillChance.wipe();
+		interceptorStates.wipe();
 	}
 
 	// the pool releases expanded positions' state and recycles their buffers
@@ -1479,6 +1531,8 @@ public:
 	void countEnemiesAndCheckVisibility();
 	void refreshVolatilePlotProperties(bool bInitial = false);
 	void dropSuperfluousUnits(int iMaxUnitsToKeep);
+	// Vox Deorum: the units over the cap under the air search, where aircraft groups count once and carriers stay with the cargo that depends on them
+	vector<SUnitStats> getUnitsToDropWithAircraft(int iMaxUnitsToKeep) const;
 	void addInitialAssignments();
 	bool makeNextAssignments(int iMaxBranches, int iMaxChoicesPerUnit, CvTactPosStorage& storage, 
 		vector<CvTacticalPosition*>& openPositionsHeap, vector<CvTacticalPosition*>& completedPositions,
@@ -1486,6 +1540,8 @@ public:
 	void updateMovePlotsIfRequired();
 	bool addTacticalPlot(const CvPlot* pPlot, const vector<const CvUnit*>& allOurUnits);
 	bool addAvailableUnit(const CvUnit* pUnit);
+	// Vox Deorum: fills in the carrying ship, the carrier-move need, an endangered base and the group of a new aircraft
+	void initAircraftStats(SUnitStats& unit) const;
 	int countChildren() const;
 	float getAggressionBias() const;
 	bool canProbablyEndTurnAfterAssignment(const SUnitStats& unit, const CvTacticalPlot* endPlot, eUnitAssignmentType eAssignmentType) const;
@@ -1509,6 +1565,7 @@ public:
 	const vector<CvTacticalPosition*>& getChildren() const { return childPositions; }
 	const SUnitIDValueContainer& GetUnitDamageDealt() const { return unitDamageDealt.read(); }
 	const PlotIndexContainer& getFreedPlots() const { return freedPlots.read(); }
+	const PlotIndexContainer& getEnemyPlots() const { return enemyPlots.read(); }
 	int getNumEnemies() const { return (int)(nOriginalEnemies - nKilledEnemies); }
 	size_t getNumPlots() const { return (int)tactPlots.read().size(); }
 	int getTotalNumFriendlyUnits() const { return (int)nOurOriginalUnits; }
@@ -1519,8 +1576,50 @@ public:
 	void HealFriendlyUnit(int iUnitID, int iChange);
 	bool IsTargetToDistanceRelevant() const { return bTargetDistanceRelevant; }
 
-	bool HasSupport(DomainTypes eDomain) const { return eDomain == DOMAIN_SEA ? bHasAdmiral : bHasGeneral; }
+	// Vox Deorum: with the air search, aircraft never get the general bonus
+	bool HasSupport(DomainTypes eDomain) const { return (MOD_VOX_TACTICAL_AIR_SEARCH && eDomain == DOMAIN_AIR) ? false : (eDomain == DOMAIN_SEA ? bHasAdmiral : bHasGeneral); }
 	bool HasCitySupport() const { return bHasSiegetower; }
+
+	// Vox Deorum: air search state (VOX_TACTICAL_AIR_SEARCH)
+	const vector<SInterceptorState>& getInterceptorStates() const { return interceptorStates.read(); }
+	int getInterceptionsUsed(int iUnitID) const;
+	bool isInterceptorBaseLost(int iUnitID) const;
+	void changeInterceptionsUsed(int iUnitID, int iChange);
+	void markInterceptorBaseLost(int iUnitID);
+	const SUnitIDValueContainer& getUncertainDamage() const { return uncertainDamage.read(); }
+	int GetUncertainUnitDamage(int iUnitID) const;
+	int GetUncertainCityDamage(int iCityID) const;
+	void ChangeUncertainUnitDamage(int iUnitID, int iChange);
+	void ChangeUncertainCityDamage(int iCityID, int iChange);
+	int GetUncertainKillChance(int iUnitID) const;
+	// true for a unit without an aircraft group, or the lowest-ID member of its group that has not acted
+	bool isAirGroupLeader(int iUnitID) const;
+	// removes a fired missile, a predicted-dead aircraft, or the cargo of a predicted-dead ship from the available units
+	void removeSpentAircraft(int iUnitID);
+	// spends an interception of the interceptor an air sweep or air strike faces; does nothing for any other row
+	void applyAirInterception(const STacticalAssignment& row);
+	// moves the aircraft carried by a ship that was assigned to a new plot
+	void moveCargoWithCarrier(int iCarrierID, int iToPlotIndex);
+	// marks the visible enemy aircraft based on a captured city or carried by a killed ship as having lost their base
+	void markAircraftBasesLost(const CvPlot* pPlot, const CvUnit* pKilledShip);
+	// for a kill on the plot, before the enemy is removed: marks a captured city's aircraft or a sunk ship's cargo
+	void markBasesLostForKill(int iPlotIndex, bool bCityCaptured);
+	// true if the interceptor states and both damage records match
+	bool airStateEquals(const CvTacticalPosition& other) const;
+	// removes the aircraft carried by a ship that is predicted to die from the available units
+	void removeCargoOfCarrier(int iCarrierID);
+	// the aircraft aboard this ship in the position: its actual cargo minus the aircraft the plan has spent.
+	// bTrackedOnly counts only the cargo the search tracks.
+	int countCargoAircraft(int iCarrierID, bool bTrackedOnly = false) const;
+	// records, for every ship of the root position, the aircraft aboard that the search does not track
+	void recordCarrierCargo() const;
+	// adds the stand-down rows for the remaining members of an aircraft group, in unit ID order
+	void standDownAirGroup(int iGroup);
+	// adds a combo move's assignment and its optional second one; when either stands down the leader of an aircraft group,
+	// the rest of that group stands down after them
+	void addAssignmentsWithAirGroups(const STacticalAssignment& first, const STacticalAssignment* pSecond, AddAssignmentResult& resultFirst, AddAssignmentResult& resultSecond);
+	// applies the damage of a strike to the certain or the uncertain record
+	void applyStrikeDamage(const STacticalAssignment& strike);
 
 	//debugging
 	void dumpPlotStatus(const char* fname) const;
@@ -1606,7 +1705,7 @@ public:
 	// reserves the spare lists up front so they never reallocate. Every buffer sits in
 	// a slot or a spare list, and new ones are made only when the list is empty, so a list never
 	// holds more buffers than the slots have fields of its type: one plot table and three unit lists.
-	CvTactPosStorage(int iPreallocationSize) : iSize(iPreallocationSize), iCount(0), aPositions(new CvTacticalPosition[iPreallocationSize]), attackCache()
+	CvTactPosStorage(int iPreallocationSize) : iSize(iPreallocationSize), iUsableSize(iPreallocationSize), iCount(0), aPositions(new CvTacticalPosition[iPreallocationSize]), attackCache()
 	{
 		spareTactPlots.reserve(iPreallocationSize);
 		spareUnitLists.reserve(3 * iPreallocationSize);
@@ -1614,12 +1713,14 @@ public:
 	~CvTactPosStorage() { delete[] aPositions; }
 	void reset(bool bHard);
 	int getSizeLimit() const { return iSize; }
+	// Vox Deorum: a search takes at most this many positions of the pool, so the pool can be larger than the default search needs
+	void setUsableSize(int iLimit) { iUsableSize = iLimit < iSize ? iLimit : iSize; }
 	int getSize() const { return iCount; }
 	CvTacticalPosition* first() { return aPositions; }
 	// hands a slot that lost its buffers the spare ones before it is used
 	CvTacticalPosition* peekNext()
 	{
-		if (iCount >= iSize)
+		if (iCount >= iUsableSize)
 			return NULL;
 
 		CvTacticalPosition* pNext = aPositions + iCount;
@@ -1635,7 +1736,7 @@ public:
 
 	// frees the state only an open position needs, once its children exist. Later
 	// steps read just the assignments and freed plots of a non-root ancestor, so its plots, units,
-	// plot scores and damage go. Most of the pool is expanded positions, so this cuts search
+	// plot scores and, without the air search, damage go. Most of the pool is expanded positions, so this cuts search
 	// memory, and the plot and unit buffers return to the spare lists for new children.
 	void releaseScratch(CvTacticalPosition* pPos)
 	{
@@ -1647,7 +1748,8 @@ public:
 			pPos->tactPlotLookup.wipe();
 		if (!isBorrowed(pPos, &CvTacticalPosition::enemyPlots))
 			pPos->enemyPlots.wipe();
-		if (!isBorrowed(pPos, &CvTacticalPosition::unitDamageDealt))
+		// Vox Deorum: with the air search, duplicate detection compares the damage and interceptor records, so they stay
+		if (!MOD_VOX_TACTICAL_AIR_SEARCH && !isBorrowed(pPos, &CvTacticalPosition::unitDamageDealt))
 			pPos->unitDamageDealt.wipe();
 		if (!isBorrowed(pPos, &CvTacticalPosition::plotScores))
 			pPos->plotScores.wipe();
@@ -1655,6 +1757,7 @@ public:
 
 protected:
 	int iSize; //how many do we have
+	int iUsableSize; //how many the current search may use
 	int iCount; //how many are currently in use
 	CvTacticalPosition* aPositions; //preallocated block of N positions
 	CAttackCache attackCache; //performance optimization, unit strength calculation takes too long

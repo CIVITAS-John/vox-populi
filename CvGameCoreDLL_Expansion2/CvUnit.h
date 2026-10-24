@@ -941,7 +941,8 @@ public:
 	void UpdateEraCombatStrength(EraTypes eEra);
 	// Vox Deorum: Shares the native pillaged-improvement strength overwrite.
 	void UpdatePillageCombatStrength(bool bPillaged);
-	int GetBestAttackStrength() const; //ranged or melee, whichever is greater
+	// Vox Deorum: iAssumeExtraDamage applies the wound penalty of damage the unit has not taken yet
+	int GetBestAttackStrength(int iAssumeExtraDamage = 0) const; //ranged or melee, whichever is greater
 	int GetDamageCombatModifier(bool bForDefenseAgainstRanged = false, int iAssumeSelfDamage = 0) const;
 
 	int GetCombatModifierFromCapitalDistance(const CvPlot* pBattlePlot) const;
@@ -979,7 +980,9 @@ public:
 	bool canAirDefend(const CvPlot* pPlot = NULL) const;
 
 	int GetAirStrikeDefenseDamage(const CvUnit* pAttacker, bool bIncludeRand = true, const CvPlot* pTargetPlot = NULL) const;
-	int GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncludeRand = true, const CvPlot* pTargetPlot = NULL) const;
+	// Vox Deorum: the tactical simulation can assume extra damage on the interceptor and on the attacker
+	int GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncludeRand = true, const CvPlot* pTargetPlot = NULL,
+									int iAssumeSelfDamage = 0, int iAssumeAttackerDamage = 0) const;
 
 	int GetResistancePower(const CvUnit* pOtherUnit) const;
 
@@ -2084,7 +2087,8 @@ public:
 	bool canRangeStrike() const;
 	bool canEverRangeStrikeAt(int iX, int iY, const CvPlot* pSourcePlot, bool bIgnoreVisibility) const;
 	bool canEverRangeStrikeAt(int iX, int iY) const;
-	bool canRangeStrikeAt(int iX, int iY, bool bNeedWar = true, bool bNoncombatAllowed = true) const;
+	// Vox Deorum: pSourcePlot checks the strike from an assumed plot instead of the unit's own
+	bool canRangeStrikeAt(int iX, int iY, bool bNeedWar = true, bool bNoncombatAllowed = true, const CvPlot* pSourcePlot = NULL) const;
 
 #if defined(MOD_GLOBAL_STACKING_RULES)
 	int getNumberStackingUnits() const;
@@ -2098,6 +2102,8 @@ public:
 
 	bool canAirSweep() const;
 	bool canAirSweepAt(int iX, int iY) const;
+	// Vox Deorum: as above, but from an assumed base plot instead of the unit's own plot
+	bool canAirSweepAt(int iX, int iY, const CvPlot* pSourcePlot) const;
 	bool airSweep(int iX, int iY);
 
 	bool attemptGroundAttacks(const CvPlot& pPlot);

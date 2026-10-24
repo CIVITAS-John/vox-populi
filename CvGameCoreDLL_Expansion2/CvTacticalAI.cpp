@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvTacticalAI.h"
+// Vox Deorum: the search internals the air search scorers in CvTacticalAirSearch.cpp share
+#include "CvTacticalSearchShared.h"
 #include "CvTacticalAnalysisMap.h"
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
@@ -39,6 +41,13 @@ const short TACTICAL_COMBAT_IMPOSSIBLE_SCORE = (short) -1000;
 const int TACTSIM_UNIQUENESS_CHECK_GENERATIONS = 3; //higher means check more siblings for permutations
 const int TACTSIM_BREADTH_FIRST_GENERATIONS = 3; //switch to depth-first later
 const int TACTSIM_MAX_UNITS = 13; //we have limited storage and time ...
+// Vox Deorum: with VOX_TACTICAL_AIR_SEARCH land, sea and air participants share one cap, where each group of
+// interchangeable aircraft counts once, and a search may use a larger share of the position pool
+const int TACTSIM_MAX_UNITS_AIR_SEARCH = 19;
+const int TACTSIM_POSITIONS = 6000;
+const int TACTSIM_POSITIONS_AIR_SEARCH = 10000;
+// Vox Deorum: assignment rows for one round of scoring; VP's 2000 for 13 units, scaled to the air search cap of 19
+const int TACTSIM_ASSIGNMENTS = 3000;
 
 // Vox Deorum: default flavor adjustment for each search intent, in 0..100 points.
 // Applied last, after the game-scale civ, operation, and zone modifiers, and only when
@@ -79,9 +88,10 @@ const char* const TACTICAL_FLAVOR_TYPES[STacticalFlavors::NUM_SLOTS] =
 	{ "FLAVOR_RISK", "FLAVOR_OCCUPATION", "FLAVOR_ATTRITION", "FLAVOR_HOLD_CITY", "FLAVOR_HOLD_GROUND" };
 
 //global memory for tactical simulation
-CvTactPosStorage gTactPosStorage(6000);
+// Vox Deorum: sized for the air search; a search without it stops at TACTSIM_POSITIONS (see FindBestUnitAssignments)
+CvTactPosStorage gTactPosStorage(10000);
 CvSupportPosStorage gSupportPosStorage(60);
-CvTactAssignmentStorage gAssignmentStorage(2000);
+CvTactAssignmentStorage gAssignmentStorage(TACTSIM_ASSIGNMENTS);
 TCachedMovePlots gReachablePlotsLookup;
 TCachedRangeAttackPlots gRangeAttackPlotsLookup;
 TCachedDistanceToTargetPlots gDistanceToTargetPlots;
@@ -3194,23 +3204,11 @@ void CvTacticalAI::ExecuteAirAttack(CvPlot* pTargetPlot)
 // Weight an air strike and its retaliation by the chance that a visible interceptor aborts it.
 static void AdjustAirAttackDamageForInterception(const CvUnit* pAttacker, const CvPlot* pTargetPlot, int& iDamage, int& iAttackerDamage, int& iGarrisonDamage, int iExtraSelfDamage = 0)
 {
-	// Cap each possible loss before averaging, including damage assumed by the tactical simulation.
-	int iRemainingHitPoints = max(0, pAttacker->GetCurrHitPoints() - iExtraSelfDamage);
-	iAttackerDamage = min(iAttackerDamage, iRemainingHitPoints);
+	// Vox Deorum: the chance is shared with the tactical simulation (GetAirStrikeChanceInPosition)
 	CvUnit* pInterceptor = pTargetPlot->GetBestInterceptor(pAttacker->getOwner(), pAttacker, false, true);
-	if (!pInterceptor)
-		return;
-
-	int iInterceptionDamage = min(pInterceptor->GetInterceptionDamage(pAttacker, false, pTargetPlot), iRemainingHitPoints);
-	// Execution continues the strike when an interception does no damage.
-	if (iInterceptionDamage <= 0)
-		return;
-
-	int iInterceptionChance = range(pInterceptor->interceptionProbability(), 0, 100) * (100 - range(pAttacker->evasionProbability(), 0, 100));
-	int iStrikeChance = 10000 - iInterceptionChance;
+	int iStrikeChance = TacticalAIHelpers::GetAirStrikeChance(pAttacker, pInterceptor, pTargetPlot, 0, iExtraSelfDamage, iAttackerDamage);
 	iDamage = (iDamage * iStrikeChance) / 10000;
 	iGarrisonDamage = (iGarrisonDamage * iStrikeChance) / 10000;
-	iAttackerDamage = (iInterceptionDamage * iInterceptionChance + iAttackerDamage * iStrikeChance) / 10000;
 }
 
 /// Queues up attacks on enemy units on or adjacent to army's desired center
@@ -3406,6 +3404,8 @@ bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTa
 	}
 
 	//last resort. use an air sweep to an adjacent plot for recon
+	// Vox Deorum: this stays with the air search too, because without it the attack is abandoned. The fighter that sweeps
+	// is then out of attacks and does not join the search.
 	CvPlot** aPlotsToCheck = GC.getMap().getNeighborsUnchecked(pTargetPlot);
 	for (unsigned int iI = 0; iI < m_CurrentAirSweepUnits.size(); iI++)
 	{
@@ -3465,13 +3465,36 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 	if (!ExecuteSpotterMove(vUnits,pTargetPlot))
 		return false;
 
-	//first handle air units (including missiles)
-	ExecuteAirSweep(pTargetPlot);
-	ExecuteAirAttack(pTargetPlot);
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+	{
+		// Vox Deorum: aircraft and missiles are planned together with the ground and naval units, so the greedy air passes
+		// and the early return are skipped. Fighters recruited for sweeps join the search, and so do the ships
+		// carrying aircraft, because a carrier may move before it launches.
+		for (size_t i = 0; i < m_CurrentAirSweepUnits.size(); i++)
+		{
+			CvUnit* pSweeper = m_pPlayer->getUnit(m_CurrentAirSweepUnits[i].GetID());
+			if (pSweeper && std::find(vUnits.begin(), vUnits.end(), pSweeper) == vUnits.end())
+				vUnits.push_back(pSweeper);
+		}
+		size_t nUnitsBeforeCarriers = vUnits.size();
+		for (size_t i = 0; i < nUnitsBeforeCarriers; i++)
+		{
+			// carriers belong to operations and are never tactical units on their own, so only the unit's state is checked
+			CvUnit* pShip = (vUnits[i] && vUnits[i]->getDomainType() == DOMAIN_AIR) ? vUnits[i]->getTransportUnit() : NULL;
+			if (pShip && pShip->canUseNow() && std::find(vUnits.begin(), vUnits.end(), pShip) == vUnits.end())
+				vUnits.push_back(pShip);
+		}
+	}
+	else
+	{
+		//first handle air units (including missiles)
+		ExecuteAirSweep(pTargetPlot);
+		ExecuteAirAttack(pTargetPlot);
 
-	//did the air attack already kill the enemy?
-	if (pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), NULL, true, true) == NULL && !pTargetPlot->isCity())
-		return true;
+		//did the air attack already kill the enemy?
+		if (pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), NULL, true, true) == NULL && !pTargetPlot->isCity())
+			return true;
+	}
 
 #if defined(MOD_CORE_DEBUGGING)
 	if (MOD_CORE_DEBUGGING)
@@ -4567,6 +4590,9 @@ void CvTacticalAI::FindAirUnitsToAirSweep(CvPlot* pTarget)
 {
 	// Always use one if available in case we need it for recon
 	int interceptionsOnPlot = max(1, pTarget->GetInterceptorCount(m_pPlayer->GetID(), NULL, false, true));
+	// Vox Deorum: with air search every fighter that can sweep is recruited; the search and its cap choose among them
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		interceptionsOnPlot = INT_MAX;
 
 	// Loop through all units available to tactical AI this turn
 	m_CurrentAirSweepUnits.clear();
@@ -4579,7 +4605,11 @@ void CvTacticalAI::FindAirUnitsToAirSweep(CvPlot* pTarget)
 			if (pLoopUnit->getDomainType() == DOMAIN_AIR && pLoopUnit->canMove())
 			{
 				// Is able to sweep at target
-				if (pLoopUnit->canAirSweepAt(pTarget->getX(), pTarget->getY()))
+				// Vox Deorum: a carried fighter also qualifies when its carrier could sail into range first
+				bool bCanSweep = pLoopUnit->canAirSweepAt(pTarget->getX(), pTarget->getY());
+				if (!bCanSweep && MOD_VOX_TACTICAL_AIR_SEARCH)
+					bCanSweep = TacticalAIHelpers::GetFirstAirLaunchPlot(pLoopUnit, pTarget, false, true) != NULL;
+				if (bCanSweep)
 				{
 					int iAttackStrength = pLoopUnit->GetMaxRangedCombatStrength(pTarget->GetBestInterceptor(pLoopUnit->getOwner(),pLoopUnit,false,true),NULL,true,NULL,pTarget);
 					// Mod to air sweep strength
@@ -4754,6 +4784,9 @@ CvUnit* CvTacticalAI::FindUnitForThisMove(AITacticalMove eMove, CvPlot* pTarget,
 bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 {
 	m_CurrentMoveUnits.clear();
+	// Vox Deorum: the air caches, carrier reach among them, are rebuilt for every recruitment, as earlier combat may have
+	// opened or closed routes and moved interceptors
+	TacticalAIHelpers::ResetAirSearchCaches();
 
 	bool rtnValue = false;
 	bool bIsCityTarget = pTarget->isCity();
@@ -4777,7 +4810,9 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 			continue;
 
 		// Don't bother with pathfinding if we're very far away
-		if (plotDistance(*pLoopUnit->plot(), *pTarget) > pLoopUnit->baseMoves(false) * 4 && !pLoopUnit->getUnitInfo().IsCanChangePort())
+		// Vox Deorum: aircraft are checked against their air range from every plot they can launch from below
+		if (!(MOD_VOX_TACTICAL_AIR_SEARCH && pLoopUnit->getDomainType() == DOMAIN_AIR) &&
+			plotDistance(*pLoopUnit->plot(), *pTarget) > pLoopUnit->baseMoves(false) * 4 && !pLoopUnit->getUnitInfo().IsCanChangePort())
 			continue;
 
 		//if it's a fighter plane, don't use it here, we need it for interceptions / sweeps
@@ -4791,11 +4826,19 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 		//also note that units in citadels are recruited, but the combat sim knows about their importance
 
 		bool bCanReach = false;
+		// Vox Deorum: for an aircraft out of range from where it stands, the first plot its carrying ship could launch it from
+		const CvPlot* pDamageSourcePlot = NULL;
 		if ( pLoopUnit->IsCanAttackRanged() )
 		{
 			//can attack without moving ... for aircraft and other long-range units
 			if (pLoopUnit->canRangeStrikeAt(pTarget->getX(), pTarget->getY()))
 				bCanReach = true;
+			else if (MOD_VOX_TACTICAL_AIR_SEARCH && pLoopUnit->getDomainType() == DOMAIN_AIR)
+			{
+				// Vox Deorum: an aircraft in range from its base, or from any plot its carrying ship can reach this turn
+				pDamageSourcePlot = TacticalAIHelpers::GetFirstAirLaunchPlot(pLoopUnit, pTarget, true, false);
+				bCanReach = pDamageSourcePlot != NULL;
+			}
 			else if (pLoopUnit->canMove() && pLoopUnit->getDomainType()!=DOMAIN_AIR)
 			{
 				//note that we also take units which can reach an attack plot but can only attack next turn. that's ok.
@@ -4832,7 +4875,8 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 		{
 			// Will we do a significant amount of damage
 			int iTargetHitpoints = pDefender ? pDefender->GetCurrHitPoints() : 0;
-			if(IsExpectedToDamageWithRangedAttack(pLoopUnit, pTarget, MIN(iTargetHitpoints/20, 3)))
+			// Vox Deorum: an aircraft that needs its carrier to move is judged from the plot found above
+			if(IsExpectedToDamageWithRangedAttack(pLoopUnit, pTarget, MIN(iTargetHitpoints/20, 3), pDamageSourcePlot))
 			{
 				//first-line ranged and air
 				CvTacticalUnit unit(pLoopUnit->GetID());
@@ -4870,7 +4914,9 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 	}
 
 	// As we have air units on the attack targets we should also check possible air sweeps
-	if (bAirUnitsAdded)
+	// Vox Deorum: with the air search, fighters strike and sweep in the search on their own, so they are recruited even
+	// when no bomber or missile is. Whether to attack still depends on the other recruits, as before.
+	if (bAirUnitsAdded || MOD_VOX_TACTICAL_AIR_SEARCH)
 		FindAirUnitsToAirSweep(pTarget);
 	else
 		m_CurrentAirSweepUnits.clear();
@@ -5195,7 +5241,7 @@ int CvTacticalAI::ComputeTotalExpectedCityBombardDamage(CvUnit* pTarget)
 	return iExpectedDamage;
 }
 
-bool CvTacticalAI::IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot* pTargetPlot, int iMinDamage)
+bool CvTacticalAI::IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot* pTargetPlot, int iMinDamage, const CvPlot* pSourcePlot)
 {
 	int iExpectedDamage = 0;
 
@@ -5208,14 +5254,14 @@ bool CvTacticalAI::IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot*
 		{
 			iGarrisonMaxHP = pCity->GetGarrisonedUnit()->GetMaxHitPoints();
 		}
-		iExpectedDamage = pAttacker->GetRangeCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, /*bIncludeRand*/ false, 0, 0, NULL, NULL, true, true);
+		iExpectedDamage = pAttacker->GetRangeCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, /*bIncludeRand*/ false, 0, 0, NULL, pSourcePlot, true, true);
 	}
 	else
 	{
 		CvUnit* pDefender = pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID());
 		if(pDefender)
 		{
-			iExpectedDamage = pAttacker->GetRangeCombatDamage(pDefender, NULL, 0, iGarrisonDamage, false, 0, 0, NULL, NULL, true, true);
+			iExpectedDamage = pAttacker->GetRangeCombatDamage(pDefender, NULL, 0, iGarrisonDamage, false, 0, 0, NULL, pSourcePlot, true, true);
 		}
 	}
 
@@ -5805,7 +5851,8 @@ void TacticalAIHelpers::UpdatePlotDistanceToTarget(PlayerTypes ePlayer, CvPlot* 
 
 int TacticalAIHelpers::GetPlotDistanceToTarget(int iPlotIndex, DomainTypes eDomain)
 {
-	if (gDistanceToTargetPlots.empty())
+	// Vox Deorum: with the air search, aircraft ignore terrain and the plain plot distance applies
+	if (gDistanceToTargetPlots.empty() || (MOD_VOX_TACTICAL_AIR_SEARCH && eDomain == DOMAIN_AIR))
 		return plotDistance(gTargetPlot->GetPlotIndex(), iPlotIndex);
 
 	if (eDomain == DOMAIN_HOVER)
@@ -5991,7 +6038,10 @@ bool TacticalAIHelpers::PerformRangedOpportunityAttack(CvUnit* pUnit, bool bAllo
 	if (bIsAirUnit || (pUnit->IsGarrisoned() && pUnit->getDomainType() == DOMAIN_LAND && pUnit->plot()->getPlotCity()->NeedsGarrison()))
 		bAllowMovement = false;
 
-	if (bAllowMovement || pUnit->canMoveAfterAttacking())
+	// Vox Deorum: with the air search, aircraft always take the stationary branch. Only an aircraft that can move after attacking
+	// would reach the one-unit search, and that search only looks about 4 tiles around the unit, short of air range.
+	// Stock data gives no aircraft that ability, so aircraft opportunity attacks never reach the search or the learned policy.
+	if ((bAllowMovement || pUnit->canMoveAfterAttacking()) && !(MOD_VOX_TACTICAL_AIR_SEARCH && bIsAirUnit))
 	{
 		//no loop needed, there is only one unit anyway
 		set<int> dummy;
@@ -6547,7 +6597,8 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, c
 	{
 		if (pAttacker->getDomainType() == DOMAIN_AIR)
 		{
-			iDamage = pAttacker->GetAirCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, false, iExtraSelfDamage, iExtraCityDamage);
+			// Vox Deorum: strike from the given plot, which is the launch plot after a simulated carrier move
+			iDamage = pAttacker->GetAirCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, false, iExtraSelfDamage, iExtraCityDamage, pCity->plot(), pAttackerPlot);
 			iAttackerDamage = pCity->GetAirStrikeDefenseDamage(pAttacker, false);
 			if (!bQuickAndDirty)
 				AdjustAirAttackDamageForInterception(pAttacker, pCity->plot(), iDamage, iAttackerDamage, iGarrisonDamage, iExtraSelfDamage);
@@ -6635,6 +6686,13 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 	}
 
 	return iDamage;
+}
+
+// Vox Deorum: the cap on search participants. With the air search land, sea and air participants share one cap,
+// where each group of interchangeable aircraft counts once.
+int TacticalAIHelpers::GetTactSimMaxUnits()
+{
+	return MOD_VOX_TACTICAL_AIR_SEARCH ? TACTSIM_MAX_UNITS_AIR_SEARCH : TACTSIM_MAX_UNITS;
 }
 
 bool TacticalAIHelpers::KillLoneEnemyIfPossible(CvUnit* pOurUnit, CvUnit* pEnemyUnit)
@@ -7370,17 +7428,16 @@ static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iS
 }
 
 // what is the rough state looking like after this assignment
-static void GetNextPosition(const CvTacticalPosition& previousPosition, const STacticalAssignment* assignment, CvTacticalPosition& newPosition)
+// Vox Deorum: shared with the air search scorers (CvTacticalSearchShared.h)
+void GetNextPosition(const CvTacticalPosition& previousPosition, const STacticalAssignment* assignment, CvTacticalPosition& newPosition)
 {
 	newPosition.initFromParent(previousPosition);
 
-	for (SUnitIDValueContainer::const_iterator it2 = assignment->unitDamage.begin(); it2 != assignment->unitDamage.end(); ++it2)
-	{
-		const SUnitIDValueContainer::value_type& p = *it2;
-		newPosition.ChangeUnitDamage(p.first, p.second);
-	}
-	if (assignment->iDamagedCityId != -1)
-		newPosition.ChangeCityDamage(assignment->iDamagedCityId, assignment->iCityDamage);
+	// Vox Deorum: an air sweep or strike uses up an interception, and an uncertain strike damages the uncertain record only
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		newPosition.applyAirInterception(*assignment);
+
+	newPosition.applyStrikeDamage(*assignment);
 }
 
 // what does the unit look like after this assignment
@@ -7430,6 +7487,14 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	int iBonusScore = 0; //splash damage and other bonuses
 	bool bRanged = pUnit->IsCanAttackRanged();
 
+	// Vox Deorum: every attack has a landing chance (in 1/10000). It is below 10000 only for an air strike an interceptor may
+	// stop. The damage below is what the attack deals if it lands. The score credits that damage, capped at the HP expected
+	// to be left after earlier uncertain strikes, times the landing chance. Kills need a sure landing and enough damage for
+	// the certain HP, and every kill bonus is weighted by the landing chance and the chance the target is still alive.
+	// Without uncertain strikes this is exactly the old scoring.
+	bool bAir = MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->getDomainType() == DOMAIN_AIR;
+	int iStrikeChance = 10000;
+
 	//the damage calculation doesn't know about hypothetical flanking units, so we ignore it here and add it ourselves 
 	int iPrevCityDamage = 0;
 	SUnitIDValueContainer prevUnitDamage;
@@ -7473,8 +7538,14 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 		int iGarrisonDamage = 0;
 
+		if (bAir)
+		{
+			// Vox Deorum: the attack cache cannot see the interceptor state, so aircraft are never cached
+			iCityDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pEnemyCity, pUnit, pUnitPlot, iDamageReceived, iGarrisonDamage, true, iSelfDamage, iPrevCityDamage, iPrevUnitDamage, true, true, pEnemyUnit);
+			iStrikeChance = TacticalAIHelpers::GetAirStrikeChanceInPosition(pUnit, pTestPlot, assumedPosition, iDamageReceived, iSelfDamage);
+		}
 		//first try the cache
-		if (!cache.findAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived))
+		else if (!cache.findAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived))
 		{
 			iCityDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pEnemyCity, pUnit, pUnitPlot, iDamageReceived, iGarrisonDamage, true, iSelfDamage, iPrevCityDamage, iPrevUnitDamage, true, true, pEnemyUnit);
 			cache.storeAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived);
@@ -7482,7 +7553,6 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 		iBonusScore += pUnit->GetRangeCombatSplashDamage(pTestPlot) + (pUnit->GetCityAttackPlunderModifier() / 50);
 		iPrevCityHitPoints = pEnemyCity->GetMaxHitPoints() - pEnemyCity->getDamage() - iPrevCityDamage;
-
 
 		bool bBlockaded = pEnemyCity->IsBlockadedWaterAndLand() || tactPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_BOTH, -1) == pTestPlot->countPassableNeighbors(NO_DOMAIN);
 
@@ -7556,7 +7626,14 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 		//first use the cache
 		int iCityDamageDealt;
-		if (!cache.findAttack(pUnit->GetID(), pUnitPlot->GetPlotIndex(), pEnemyUnit->GetID(), -1, iSelfDamage, iPrevUnitDamage, 0, iUnitDamageDealt, iCityDamageDealt, iDamageReceived))
+		if (bAir)
+		{
+			// Vox Deorum: the attack cache cannot see the interceptor state, so aircraft are never cached.
+			// The landing chance against the interceptors the position has left is applied once, in the scoring below.
+			iUnitDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(pEnemyUnit, pUnit, pTestPlot, pUnitPlot, iDamageReceived, true, iSelfDamage, iPrevUnitDamage, true);
+			iStrikeChance = TacticalAIHelpers::GetAirStrikeChanceInPosition(pUnit, pTestPlot, assumedPosition, iDamageReceived, iSelfDamage);
+		}
+		else if (!cache.findAttack(pUnit->GetID(), pUnitPlot->GetPlotIndex(), pEnemyUnit->GetID(), -1, iSelfDamage, iPrevUnitDamage, 0, iUnitDamageDealt, iCityDamageDealt, iDamageReceived))
 		{
 			//use the quick and dirty method ... and don't check for general bonus etc (their position isn't official yet - we handle that below)
 			iUnitDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(pEnemyUnit, pUnit, pTestPlot, pUnitPlot, iDamageReceived, true, iSelfDamage, iPrevUnitDamage, true);
@@ -7588,11 +7665,16 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 			fAggBias /= 2;
 
 		//don't be distracted by attacks on barbarians or melee units in other domain when there are real enemies around
-		if ((pEnemyUnit->getOwner() == BARBARIAN_PLAYER || (!pEnemyUnit->IsCanAttackRanged() && pEnemyUnit->getDomainType() != pUnit->getDomainType())) && !tactPlot->isEnemyCity())
+		// Vox Deorum: aircraft attack every domain, so the domain comparison does not apply to them
+		if ((pEnemyUnit->getOwner() == BARBARIAN_PLAYER || (!bAir && !pEnemyUnit->IsCanAttackRanged() && pEnemyUnit->getDomainType() != pUnit->getDomainType())) && !tactPlot->isEnemyCity())
 			bScoreReduction = true;
 
 		unitDamageDealt.ChangeValue(pEnemyUnit->GetID(), iUnitDamageDealt);
 	}
+
+	// Vox Deorum: a missile is expended anyway, so its own loss does not count against the strike
+	if (bAir && pUnit->isSuicide())
+		iDamageReceived = 0;
 
 	// Splash damage is always applied
 	int iSplashDamage = pUnit->getSplashDamage();
@@ -7644,6 +7726,10 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	int iTotalActualUnitDamageDealt = 0;
 	bool bCityKill = false;
 	bool bUnitKill = false;
+	// Vox Deorum: landing chance model, see the top of the function
+	bool bUncertainStrike = iStrikeChance < 10000;
+	bool bLethalToTarget = false; //the direct target dies if the attack lands
+	int iTargetKillWeight = 0; //in 1/10000: the landing chance times the chance the target is still alive
 
 	//bonus for a kill
 	//don't be too precise because of randomness in damage calculation added later
@@ -7653,7 +7739,8 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	{
 		bScoreReduction = false;
 
-		iBonusScore += pUnit->GetExtraXPOnKill();
+		// Vox Deorum: weighted by the landing chance
+		iBonusScore += (pUnit->GetExtraXPOnKill() * iStrikeChance) / 10000;
 
 		//only melee can capture/kill a city!
 		if (!bRanged && pUnit->IsCanAttackWithMove())
@@ -7661,34 +7748,56 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		else
 		{
 			if (iPrevCityHitPoints > 1)
-				iBonusScore += min(iCityDamageDealt - iPrevCityHitPoints + 1, 3);
+				iBonusScore += (min(iCityDamageDealt - iPrevCityHitPoints + 1, 3) * iStrikeChance) / 10000;
 			iCityDamageDealt = min(iCityDamageDealt, iPrevCityHitPoints - 1);
 		}
 	}
 	for (SUnitIDValueContainer::const_iterator it = unitDamageDealt.begin(); it != unitDamageDealt.end(); ++it)
 	{
+		// Vox Deorum: kills read the certain HP; the damage credit reads the HP expected after earlier uncertain strikes
 		int iPrevUnitHitPoints = prevUnitHitPoints.GetValue((*it).first);
+		int iExpectedUnitHitPoints = max(0, iPrevUnitHitPoints - assumedPosition.GetUncertainUnitDamage((*it).first));
 		int iUnitDamageDealt = (*it).second;
+		int iUnitDamageCredit = (min(iExpectedUnitHitPoints, iUnitDamageDealt) * iStrikeChance) / 10000;
+		bool bDirectTarget = pEnemyUnit && pEnemyUnit->GetID() == (*it).first;
 
-		if (iUnitDamageDealt > iPrevUnitHitPoints)
+		if (iUnitDamageDealt > iPrevUnitHitPoints && !bUncertainStrike)
 			iBonusScore += min(iUnitDamageDealt - iPrevUnitHitPoints, 10);
 
-		actualDamageDealt.SetValue((*it).first, min(iPrevUnitHitPoints, iUnitDamageDealt));
+		actualDamageDealt.SetValue((*it).first, iUnitDamageCredit);
 
 		iTotalUnitDamageDealt += iUnitDamageDealt;
-		iTotalActualUnitDamageDealt += min(iPrevUnitHitPoints, iUnitDamageDealt);
+		iTotalActualUnitDamageDealt += iUnitDamageCredit;
 
-		if (iPrevUnitHitPoints > 0 && iUnitDamageDealt >= iPrevUnitHitPoints)
+		// Vox Deorum: an uncertain strike on a city cannot kill the garrison
+		if (iPrevUnitHitPoints > 0 && iUnitDamageDealt >= iPrevUnitHitPoints && !(bUncertainStrike && bDirectTarget && tactPlot->isEnemyCity()))
 		{
-			if (pEnemyUnit && pEnemyUnit->GetID() == (*it).first)
-				bUnitKill = true;
+			// Vox Deorum: only a sure landing kills in the plan. Every kill bonus counts only the kill chance this attack adds.
+			int iKillWeight = ((10000 - range(assumedPosition.GetUncertainKillChance((*it).first), 0, 10000)) * iStrikeChance) / 10000;
+			int iKillBonus = 0;
+			if (bDirectTarget)
+			{
+				bLethalToTarget = true;
+				iTargetKillWeight = iKillWeight;
+				if (bUncertainStrike)
+					result->iUncertainKillChance = (short)iKillWeight;
+				else
+					bUnitKill = true;
+			}
 
-			iBonusScore += pUnit->GetExtraXPOnKill();
+			iKillBonus += pUnit->GetExtraXPOnKill();
 
-			bScoreReduction = false;
+			// Vox Deorum: sinking a ship also destroys the aircraft it carries, which we can see
+			if (MOD_VOX_TACTICAL_AIR_SEARCH && bDirectTarget && pEnemyUnit->getDomainType() == DOMAIN_SEA)
+				iKillBonus += 15 * TacticalAIHelpers::CountVisibleAircraftCargo(pEnemyUnit, pUnit->getTeam());
 
-			if (pUnit->getHPHealedIfDefeatEnemy() > 0)
-				iDamageReceived = max(iDamageReceived - pUnit->getHPHealedIfDefeatEnemy(), -pUnit->getDamage()); //may turn negative, but can't heal more than current damage
+			if (!bUncertainStrike)
+			{
+				bScoreReduction = false;
+
+				if (pUnit->getHPHealedIfDefeatEnemy() > 0)
+					iDamageReceived = max(iDamageReceived - pUnit->getHPHealedIfDefeatEnemy(), -pUnit->getDamage()); //may turn negative, but can't heal more than current damage
+			}
 
 			// pillage fortification on kill?
 			if (pUnit->IsPillageFortificationsOnKill())
@@ -7698,11 +7807,11 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 					CvImprovementEntry* pkImprovementInfo = GC.getImprovementInfo(pTestPlot->getImprovementType());
 					if (pkImprovementInfo->IsNoFollowUp() && GET_PLAYER(pUnit->getOwner()).IsAtWarWith(pTestPlot->getOwner()))
 					{
-						iBonusScore += 15;
+						iKillBonus += 15;
 						// Citadel
 						if (pkImprovementInfo->GetNearbyEnemyDamage() > 0 || pkImprovementInfo->GetDefenseModifier() >= 50)
 						{
-							iBonusScore += 15;
+							iKillBonus += 15;
 						}
 					}
 				}
@@ -7732,10 +7841,21 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 				}
 
 				if (bYieldBonus)
-					iBonusScore += 20;
+					iKillBonus += 20;
 			}
+
+			iBonusScore += (iKillBonus * iKillWeight) / 10000;
 		}
 	}
+
+	// Vox Deorum: the city damage credit, like the unit credit, reads the HP expected after earlier uncertain strikes and is
+	// weighted by the landing chance
+	int iExpectedCityHitPoints = iPrevCityHitPoints;
+	if (pEnemyCity && assumedPosition.GetUncertainCityDamage(pEnemyCity->GetID()) > 0)
+		iExpectedCityHitPoints = max(1, iPrevCityHitPoints - assumedPosition.GetUncertainCityDamage(pEnemyCity->GetID()));
+	int iActualCityDamageDealt = (min(iCityDamageDealt, iExpectedCityHitPoints + (pUnit->IsCanAttackRanged() ? 2 : 10)) * iStrikeChance) / 10000;
+
+	result->bUncertain = bUncertainStrike;
 
 	if (bCityKill)
 		result->eAssignmentType = A_MELEEKILL;
@@ -7751,12 +7871,15 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	else
 		result->eAssignmentType = bRanged ? A_RANGEATTACK : A_MELEEATTACK;
 
+	// Vox Deorum: a sure attack records the damage it deals (certain record); an uncertain strike records its expected
+	// credit (uncertain record, see applyStrikeDamage)
 	result->iSelfDamage = iDamageReceived;
-	result->unitDamage = unitDamageDealt;
-	result->iCityDamage = iCityDamageDealt;
+	result->unitDamage = bUncertainStrike ? actualDamageDealt : unitDamageDealt;
+	result->iCityDamage = bUncertainStrike ? iActualCityDamageDealt : iCityDamageDealt;
 
 	//for melee units we check if the damage received is worth it ...
-	if (iDamageReceived > 0 && gSafePlotCount[pUnit->GetID()] > 0)
+	// Vox Deorum: aircraft return to their base, the turn end danger does not apply to them
+	if (iDamageReceived > 0 && !bAir && gSafePlotCount[pUnit->GetID()] > 0)
 	{
 		float fAggFactor = /*100*/ GD_INT_GET(COMBAT_AI_OFFENSE_DAMAGEWEIGHT) / 100.f;
 		switch (eAggLvl)
@@ -7811,8 +7934,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	//add previous damage again and again to make concentrated fire attractive
 	//todo: consider pEnemy->getUnitInfo().GetProductionCost() and pEnemy->GetBaseCombatStrength()
 	//todo: normalize damage done by max hp to balance between city attacks and unit attacks?
-
-	int iActualCityDamageDealt = min(iCityDamageDealt, iPrevCityHitPoints + (pUnit->IsCanAttackRanged() ? 2 : 10));
+	//(Vox Deorum: iActualCityDamageDealt is computed above, with the landing chance)
 
 	int iActualDamageTaken = min(iDamageReceived, pUnit->GetCurrHitPoints() - iSelfDamage);
 	if (iActualDamageTaken < 0)
@@ -7823,10 +7945,13 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	int iTotalActualDamageDealt = iActualCityDamageDealt + iTotalActualUnitDamageDealt;
 	if (iTotalActualDamageDealt > 0)
 	{
+		// Vox Deorum: against the HP expected after earlier uncertain strikes, like the damage credit
 		int iPrevUnitHitPoints = pEnemyUnit ? prevUnitHitPoints.GetValue(pEnemyUnit->GetID()) : 0;
+		if (pEnemyUnit && iPrevUnitHitPoints > 0)
+			iPrevUnitHitPoints = max(1, iPrevUnitHitPoints - assumedPosition.GetUncertainUnitDamage(pEnemyUnit->GetID()));
 		int iHpAfterAttack = iPrevUnitHitPoints > 0 ? iPrevUnitHitPoints - actualDamageDealt.GetValue(pEnemyUnit->GetID()) : -1;
-		if (iHpAfterAttack == -1 || iHpAfterAttack > iPrevCityHitPoints - iActualCityDamageDealt)
-			iHpAfterAttack = iPrevCityHitPoints - iActualCityDamageDealt;
+		if (iHpAfterAttack == -1 || iHpAfterAttack > iExpectedCityHitPoints - iActualCityDamageDealt)
+			iHpAfterAttack = iExpectedCityHitPoints - iActualCityDamageDealt;
 		iBonusScore += min(max(30 - iHpAfterAttack, 0), iTotalActualDamageDealt);
 	}
 
@@ -7840,7 +7965,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		iUnitDamageWeight = assumedPosition.getGroundAttritionWeight();
 	int iCityDamageShift = assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, iActualCityDamageDealt) - iActualCityDamageDealt;
 	int iUnitDamageShift = CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, iTotalActualUnitDamageDealt) - iTotalActualUnitDamageDealt;
-	int iKillBonusShift = (bUnitKill && !bCityKill) ? CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, 15) - 15 : 0;
+	int iKillBonusShift = (bLethalToTarget && !bCityKill) ? CvTacticalPosition::scaleAttackByWeight(iUnitDamageWeight, 15) - 15 : 0;
 
 	// Vox Deorum: fade each positive damage shift by trade quality t x safety s, and the kill bonus shift by s.
 	// t = (dealt - max(0, taken)) / dealt and s = 1 - k x danger / HP^2 after the attack, both within [0, 1],
@@ -7848,10 +7973,15 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	// The capture bonus keeps its full shift.
 	if (iCityDamageShift > 0 || iUnitDamageShift > 0 || iKillBonusShift > 0)
 	{
-		const CvPlot* pPlotAfterAttack = result->eAssignmentType == A_MELEEKILL ? pTestPlot : pUnitPlot;
-		CvTacticalPosition pNewPosition;
-		GetNextPosition(assumedPosition, result, pNewPosition);
-		int iDanger = GetUnitDangerForPlot(pUnit, pPlotAfterAttack, iSelfDamage + iDamageReceived, pNewPosition);
+		// Vox Deorum: an aircraft returns to its base, so it has no turn end danger to fade the shifts by
+		int iDanger = 0;
+		if (!bAir)
+		{
+			const CvPlot* pPlotAfterAttack = result->eAssignmentType == A_MELEEKILL ? pTestPlot : pUnitPlot;
+			CvTacticalPosition pNewPosition;
+			GetNextPosition(assumedPosition, result, pNewPosition);
+			iDanger = GetUnitDangerForPlot(pUnit, pPlotAfterAttack, iSelfDamage + iDamageReceived, pNewPosition);
+		}
 
 		int iHitPointsAfterAttack = max(1, pUnit->GetCurrHitPoints() - iSelfDamage - iActualDamageTaken);
 		int iSafetyFactor = GetTurnEndSafetyFactor(pUnit, result->eAssignmentType, assumedPosition);
@@ -7868,10 +7998,11 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 			iKillBonusShift = (int)(iKillBonusShift * iSafety / iSafetyScale);
 	}
 
+	// Vox Deorum: the kill bonus counts only the kill chance this attack adds (all of it for a sure kill of an untouched target)
 	if (bCityKill)
 		iBonusScore += assumedPosition.scaleAttackByFlavor(STacticalFlavors::OCCUPATION, 100);
-	else if (bUnitKill)
-		iBonusScore += 15 + iKillBonusShift;
+	else if (bLethalToTarget)
+		iBonusScore += ((15 + iKillBonusShift) * iTargetKillWeight) / 10000;
 
 	// Vox Deorum: divide each enemy's fixed city-threat credit across the HP this search removes.
 	// Difference cumulative credit so split hits and overkill cannot earn the same protection twice.
@@ -7884,7 +8015,8 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 			if (threat == gTacticalCityThreats.end() || (*it).second <= 0)
 				continue;
 			const SCityThreatCredit& budget = threat->second;
-			int iDamageBefore = range(assumedPosition.GetUnitDamage((*it).first), 0, budget.iRootHP);
+			// Vox Deorum: earlier uncertain strikes' expected damage already earned its share
+			int iDamageBefore = range(assumedPosition.GetUnitDamage((*it).first) + assumedPosition.GetUncertainUnitDamage((*it).first), 0, budget.iRootHP);
 			int iDamageAfter = min(budget.iRootHP, iDamageBefore + (*it).second);
 			iCityThreatBonus += budget.iCredit * iDamageAfter / budget.iRootHP - budget.iCredit * iDamageBefore / budget.iRootHP;
 		}
@@ -8037,7 +8169,9 @@ static int DamageAdjacentUnits(SUnitIDValueContainer& unitDamage, int& iDamageDe
 	return iDamage;
 }
 
-static int GetPrevPlotScore(int iUnitID, const CvBasePosition& position)
+// the plot score of the unit's latest assignment in the position, or 0
+// Vox Deorum: shared with the air search scorers (CvTacticalSearchShared.h)
+int GetPrevPlotScore(int iUnitID, const CvBasePosition& position)
 {
 	const STacticalAssignment* prevAssignment = position.getLatestAssignment(iUnitID);
 	return prevAssignment ? prevAssignment->GetPlotScore() : 0;
@@ -8193,6 +8327,10 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 			//no reason to run into the enemy alone
 			if (iNumAdjFriendlies == 0)
 				iScaledDanger *= 2;
+
+			// Vox Deorum: a ship counts the aircraft it carries as lost with it
+			if (MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->getDomainType() == DOMAIN_SEA)
+				iScaledDanger *= 1 + assumedPosition.countCargoAircraft(pUnit->GetID());
 
 			//penalty for high danger plots (should this be personality dependent?)
 			// Vox Deorum: a set RISK divides the danger penalty, so a higher flavor tolerates more danger
@@ -9058,6 +9196,10 @@ void CvTacticalPlot::changeNeighboringUnitCount(CvTacticalPosition& currentPosit
 
 void CvTacticalPlot::friendlyUnitMovingIn(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment)
 {
+	// Vox Deorum: aircraft act from their base without occupying it
+	if (assignment.eMoveType == MS_AIR)
+		return;
+
 	//no more enemies here
 	removeEnemyUnitIfPresent();
 	removeEnemyUnitIfPresent(); // there may be several units in the plot
@@ -9072,6 +9214,10 @@ void CvTacticalPlot::friendlyUnitMovingIn(CvTacticalPosition& currentPosition, c
 
 void CvTacticalPlot::friendlyUnitMovingOut(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment)
 {
+	// Vox Deorum: aircraft act from their base without occupying it
+	if (assignment.eMoveType == MS_AIR)
+		return;
+
 	for (vector<STacticalUnit>::iterator it = vUnitsHere.begin(); it != vUnitsHere.end(); it++)
 	{
 		if (assignment.iUnitID == it->iUnitID)
@@ -9255,6 +9401,9 @@ bool IsCombatUnit(const SUnitStats& unit)
 
 static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode)
 {
+	if (unit.eMoveStrategy == MS_AIR)
+		return ScorePlotForAirUnitMove(unit, testPlot, assumedPosition, evalMode);
+
 	if (IsCombatUnit(unit))
 		return ScorePlotForCombatUnitMove(unit, testPlot, assumedPosition, evalMode);
 	else
@@ -9272,6 +9421,13 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 	//so we go with option B, even if it means we need to skip some daring moves.
 	//on the other hand, the daring moves may still be possible later in the sim when they are not so daring anymore.
 	//todo: try "fixup moves", meaning if a possible move is invalid, see if it can be made valid by moving another unit.
+	// Vox Deorum: aircraft strike, sweep or stand down from their base
+	if (unit.eMoveStrategy == MS_AIR)
+	{
+		getPreferredAssignmentsForAirUnit(unit, nMaxCount);
+		return;
+	}
+
 	gPossibleMoves.clear();
 	gPossibleRangedAttacks.clear();
 
@@ -9533,13 +9689,26 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 	vector<SUnitStats>& availableUnits_w = availableUnits.write();
 
 	//get the best move for each unit
+	// Vox Deorum: with the air search an aircraft group is ranked once, by its leader, and its members share the rank
+	map<int, int> groupImportance;
 	for (size_t i = 0; i < availableUnits_w.size() && iMaxUnitsToKeep>0; i++)
 	{
+		bool bAirGroup = MOD_VOX_TACTICAL_AIR_SEARCH && availableUnits_w[i].eMoveStrategy == MS_AIR;
+		if (bAirGroup && !isAirGroupLeader(availableUnits_w[i].iUnitID))
+			continue;
+
 		//this always returns at least one move
 		getPreferredAssignmentsForUnit(availableUnits_w[i], 1);
-		availableUnits_w[i].iImportanceScore = gPossibleMoves.front().score;
+		availableUnits_w[i].iImportanceScore = gPossibleMoves.empty() ? SHRT_MIN : gPossibleMoves.front().score;
 		gAssignmentStorage.reset(false);
+
+		if (bAirGroup)
+			groupImportance[availableUnits_w[i].iAirGroup] = availableUnits_w[i].iImportanceScore;
 	}
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		for (size_t i = 0; i < availableUnits_w.size(); i++)
+			if (availableUnits_w[i].eMoveStrategy == MS_AIR && !isAirGroupLeader(availableUnits_w[i].iUnitID))
+				availableUnits_w[i].iImportanceScore = groupImportance[availableUnits_w[i].iAirGroup];
 
 	//reset aggression to the original value
 	eAggression = actualLevel;
@@ -9548,7 +9717,9 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 
 	//simply consider those extra units as blocked.
 	//since addAssignment will modify availableUnits, we copy the relevant units first
-	vector<SUnitStats> unitsToDrop(availableUnits_w.begin()+iMaxUnitsToKeep, availableUnits_w.end() );
+	// Vox Deorum: the air search picks the units over its cap by group and carrier
+	vector<SUnitStats> unitsToDrop = MOD_VOX_TACTICAL_AIR_SEARCH ? getUnitsToDropWithAircraft(iMaxUnitsToKeep) :
+		vector<SUnitStats>(availableUnits_w.begin()+iMaxUnitsToKeep, availableUnits_w.end() );
 	if (!unitsToDrop.empty())
 	{
 		vector<STacticalAssignment>& assignedMoves_w = assignedMoves.write();
@@ -9749,11 +9920,10 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 
 		const STacticalAssignment& aRef = gMovesToAdd[i].getA();
 
-		AddAssignmentResult a = pNewChild->addAssignment(aRef);
-
-		AddAssignmentResult b = RESULT_NOOP;
-		if (gMovesToAdd[i].hasB())
-			b = pNewChild->addAssignment(gMovesToAdd[i].getB());
+		// Vox Deorum: adds A and the optional B, and an aircraft group leader's stand-down among them stands the rest of its
+		// group down too
+		AddAssignmentResult a, b;
+		pNewChild->addAssignmentsWithAirGroups(aRef, gMovesToAdd[i].hasB() ? &gMovesToAdd[i].getB() : NULL, a, b);
 
 		//cannot add a RESTART in the middle of a combo move for consistency, so add afterwards
 		if (a == RESULT_ADDED_W_VIS_CHANGE || b == RESULT_ADDED_W_VIS_CHANGE)
@@ -9940,10 +10110,11 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		tmp.iMovesLeft = 0;
 		STacticalAssignment* nextAssignment = ScorePlotForMove(unit, tactPlot, *this, EM_FINAL);
 
-		if (bReturnToStartPositions && unit.pUnit->plot()->GetPlotIndex() != tactPlot->getPlotIndex())
+		// Vox Deorum: aircraft act from their base and may sail along with their carrier, so neither rule applies to them
+		if (unit.eMoveStrategy != MS_AIR && bReturnToStartPositions && unit.pUnit->plot()->GetPlotIndex() != tactPlot->getPlotIndex())
 			return false;
 
-		if (unit.iMovesLeft < nSaveMovement)
+		if (unit.eMoveStrategy != MS_AIR && unit.iMovesLeft < nSaveMovement)
 			return false;
 
 		bool bAccept = nextAssignment->IsAcceptable();
@@ -10038,6 +10209,10 @@ bool CvTacticalPosition::isKillOrImprovedPosition() const
 			if (!unit)
 				continue;
 
+			// Vox Deorum: aircraft do not take a position
+			if (unit->eMoveStrategy == MS_AIR)
+				continue;
+
 			CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(unit->iUnitID);
 			const CvTacticalPlot* initialPlot = root->getTactPlot(initial->iFromPlotIndex);
 			const CvTacticalPlot* finalPlot = getTactPlot(move.iFromPlotIndex);
@@ -10090,11 +10265,12 @@ bool CvTacticalPosition::isKillOrImprovedPosition() const
 				break;
 			case MS_SUPPORT:
 			case MS_EMBARKED:
+			case MS_AIR:
 				//ignore for now
 				break;
 			}
 		}
-		else if (move.eAssignmentType == A_RANGEATTACK || move.eAssignmentType == A_MELEEATTACK)
+		else if (move.eAssignmentType == A_RANGEATTACK || move.eAssignmentType == A_MELEEATTACK || move.eAssignmentType == A_AIRSWEEP)
 			//we already checked for kills!
 			iAttacksNoMove++;
 		else if (move.eAssignmentType == A_HEAL)
@@ -10131,7 +10307,11 @@ void CvTacticalPosition::countEnemiesAndCheckVisibility()
 	vector<CvTacticalPlot>& tactPlots_w = tactPlots.write();
 
 	//will add non-sim friendly units later
-	nOurOriginalUnits = availableUnits_r.size();
+	// Vox Deorum: aircraft do not count, they do not change how many ground and naval units face the enemy
+	nOurOriginalUnits = 0;
+	for (size_t i = 0; i < availableUnits_r.size(); i++)
+		if (availableUnits_r[i].eMoveStrategy != MS_AIR)
+			nOurOriginalUnits++;
 	nOriginalEnemies = 0;
 	enemyPlots_w.clear();
 
@@ -10435,7 +10615,11 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	enemyPlots.clear();
 	freedPlots.clear();
 	unitDamageDealt.clear();
+	uncertainDamage.clear();
+	uncertainKillChance.clear();
+	interceptorStates.clear();
 	plotScores.clear();
+	iRankBonusOverParent = 0;
 }
 
 void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
@@ -10462,6 +10646,7 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	iDamageDelta = parent.iDamageDelta;
 	iTotalScore = parent.iTotalScore;
 	iScoreOverParent = 0;
+	iRankBonusOverParent = 0;
 	parentPosition = &parent;
 	movePlotUpdateFlagA = parent.movePlotUpdateFlagA;
 	movePlotUpdateFlagB = parent.movePlotUpdateFlagB;
@@ -10487,6 +10672,9 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	freedPlots.inheritFrom(parent.freedPlots.read());
 	enemyPlots.inheritFrom(parent.enemyPlots.read());
 	unitDamageDealt.inheritFrom(parent.unitDamageDealt.read());
+	uncertainDamage.inheritFrom(parent.uncertainDamage.read());
+	uncertainKillChance.inheritFrom(parent.uncertainKillChance.read());
+	interceptorStates.inheritFrom(parent.interceptorStates.read());
 	plotScores.inheritFrom(parent.plotScores.read());
 }
 
@@ -10583,6 +10771,11 @@ void CvTacticalPosition::getPlotsWithChangedVisibility(const STacticalAssignment
 
 void CvTacticalPosition::updateMoveAndAttackPlotsForUnit(SUnitStats unit)
 {
+	// Vox Deorum: aircraft reach only their base plot, and their targets come from the position's enemy plots (GetAirTargetPlots),
+	// so there is no movement or range table to build for them
+	if (unit.eMoveStrategy == MS_AIR)
+		return;
+
 	CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(unit.iUnitID);
 	CvPlot* pStartPlot = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
 	const PlotIndexContainer& freedPlots_r = freedPlots.read();
@@ -10795,6 +10988,10 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
 		itUnit->iPlotIndex = newAssignment.iToPlotIndex;
 
+		// Vox Deorum: the aircraft carried by this ship sail along, so their later rows start from the new plot
+		if (MOD_VOX_TACTICAL_AIR_SEARCH)
+			moveCargoWithCarrier(itUnit->iUnitID, newAssignment.iToPlotIndex);
+
 		//do the visibility update first so all newly neighboring plots become part of the sim
 		visibilityResult = doVisibilityUpdate(newAssignment);
 
@@ -10828,26 +11025,57 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
 		itUnit->iAttacksLeft--;
 		itUnit->iSelfDamage += newAssignment.iSelfDamage;
+		// Vox Deorum: an air strike spends an interception, and damage from a strike an interceptor may stop goes into
+		// the uncertain record
+		if (MOD_VOX_TACTICAL_AIR_SEARCH)
+			applyAirInterception(newAssignment);
+		applyStrikeDamage(newAssignment);
+		break;
+	}
+	case A_AIRSWEEP:
+	{
+		// Vox Deorum: the sweeper spends an attack and a move, takes the interceptor's reply, and the interceptor
+		// spends an interception and takes the sweep damage
+		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
+		itUnit->iAttacksLeft--;
+		itUnit->iSelfDamage += newAssignment.iSelfDamage;
+		applyAirInterception(newAssignment);
 		for (SUnitIDValueContainer::const_iterator it = newAssignment.unitDamage.begin(); it != newAssignment.unitDamage.end(); ++it)
 			ChangeUnitDamage((*it).first, (*it).second);
-		if (newAssignment.iDamagedCityId != -1)
-			ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
 		break;
 	}
 	case A_RANGEKILL:
 	{
 		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
 		itUnit->iAttacksLeft--;
-		getTactPlotMutable(newAssignment.iToPlotIndex)->removeEnemyUnitIfPresent();
+		// Vox Deorum: an aircraft that kills still takes the retaliation damage, like one that does not
+		if (itUnit->eMoveStrategy == MS_AIR)
+			itUnit->iSelfDamage += newAssignment.iSelfDamage;
+		// Vox Deorum: an air strike spends the interception it faces, even one with no chance to stop it
+		if (MOD_VOX_TACTICAL_AIR_SEARCH)
+			applyAirInterception(newAssignment);
+		// Vox Deorum: sinking a ship destroys the aircraft it carries, so they no longer intercept
+		if (MOD_VOX_TACTICAL_AIR_SEARCH)
+			markBasesLostForKill(newAssignment.iToPlotIndex, false);
+		// Vox Deorum: an aircraft that kills a garrison leaves the city hostile, so the rest of the search can still attack it
+		CvTacticalPlot* pKillPlot = getTactPlotMutable(newAssignment.iToPlotIndex);
+		bool bKeepCity = itUnit->eMoveStrategy == MS_AIR && pKillPlot->isEnemyCity();
+		unsigned char aiCityDistance[3] = { pKillPlot->getEnemyDistance(CvTacticalPlot::TD_LAND), pKillPlot->getEnemyDistance(CvTacticalPlot::TD_SEA), pKillPlot->getEnemyDistance(CvTacticalPlot::TD_BOTH) };
+		pKillPlot->removeEnemyUnitIfPresent();
+		if (bKeepCity)
+			for (int iDomain = CvTacticalPlot::TD_LAND; iDomain <= CvTacticalPlot::TD_BOTH; iDomain++)
+				pKillPlot->setEnemyDistance((CvTacticalPlot::eTactPlotDomain)iDomain, aiCityDistance[iDomain]);
 		refreshVolatilePlotProperties();
 		bRecomputeAllMoves = true; //ZOC changed
 		for (SUnitIDValueContainer::const_iterator it = newAssignment.unitDamage.begin(); it != newAssignment.unitDamage.end(); ++it)
 			ChangeUnitDamage((*it).first, (*it).second);
 		if (newAssignment.iDamagedCityId != -1)
 			ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
-		freedPlots.write().push_back(newAssignment.iToPlotIndex);
+		// Vox Deorum: a kept city still exerts its zone of control, so pathfinding must not ignore its plot
+		if (!bKeepCity)
+			freedPlots.write().push_back(newAssignment.iToPlotIndex);
 		nKilledEnemies++;
-		if (!getTactPlot(newAssignment.iToPlotIndex)->getEnemyUnit())
+		if (!bKeepCity && !getTactPlot(newAssignment.iToPlotIndex)->getEnemyUnit())
 		{
 			PlotIndexContainer& enemyPlots_w = enemyPlots.write();
 			enemyPlots_w.erase(std::remove(enemyPlots_w.begin(), enemyPlots_w.end(), newAssignment.iToPlotIndex), enemyPlots_w.end());
@@ -10861,9 +11089,15 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 		itUnit->iAttacksLeft--;
 		itUnit->iSelfDamage += newAssignment.iSelfDamage;
 
+		// Vox Deorum: a captured city loses its aircraft and a sunk ship its cargo; checked before the enemy leaves the plot
+		if (MOD_VOX_TACTICAL_AIR_SEARCH)
+			markBasesLostForKill(newAssignment.iToPlotIndex, newAssignment.eAssignmentType == A_MELEEKILL);
+
 		if (newAssignment.eAssignmentType == A_MELEEKILL)
 		{
 			itUnit->iPlotIndex = newAssignment.iToPlotIndex; //this is because we're advancing
+			if (MOD_VOX_TACTICAL_AIR_SEARCH)
+				moveCargoWithCarrier(itUnit->iUnitID, newAssignment.iToPlotIndex);
 
 			//do the visibility update first so all newly neighboring plots become part of the sim
 			//do this before the distance update
@@ -10894,6 +11128,9 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 		for (int iI = 0; iI < pFutureExEnemyPlot->getNumUnits(); iI++)
 		{
 			CvUnit* pEnemyUnit = pFutureExEnemyPlot->getUnitByIndex(iI);
+			// Vox Deorum: a garrison an aircraft killed earlier in the plan was counted then; this row's own damage is already applied
+			if (MOD_VOX_TACTICAL_AIR_SEARCH && GetUnitDamage(pEnemyUnit->GetID()) - newAssignment.unitDamage.GetValue(pEnemyUnit->GetID()) >= pEnemyUnit->GetCurrHitPoints())
+				continue;
 			if (pEnemyUnit->IsCombatUnit())
 				nKilledEnemies++;
 		}
@@ -10979,6 +11216,36 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 
 		UpdateScore(modifiedAssignment);
 
+		// Vox Deorum: the ranking value of an air sweep orders the heap but never enters the plan score. It is in damage
+		// points, the same unit as the damage delta in iScoreOverParent.
+		addRankBonusLastRound(newAssignment.GetRankBonus());
+	}
+
+	// Vox Deorum: an aircraft that has acted leaves its group of interchangeable aircraft. A fired missile, or an aircraft whose
+	// predicted self damage kills it, is spent and gets no later strike, sweep or finish row. A ship that is predicted to die
+	// takes its cargo with it.
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+	{
+		if (itUnit->eMoveStrategy == MS_AIR)
+		{
+			bool bAttackRow = newAssignment.eAssignmentType == A_RANGEATTACK || newAssignment.eAssignmentType == A_RANGEKILL || newAssignment.eAssignmentType == A_AIRSWEEP;
+			if (bAttackRow)
+			{
+				itUnit->iAirGroup = -1;
+				if (itUnit->pUnit->isSuicide() || itUnit->pUnit->GetCurrHitPoints() - itUnit->iSelfDamage <= 0)
+				{
+					removeSpentAircraft(itUnit->iUnitID);
+					return RESULT_ADDED;
+				}
+			}
+		}
+		else if (itUnit->iSelfDamage > 0 && itUnit->pUnit->GetCurrHitPoints() - itUnit->iSelfDamage <= 0)
+		{
+			int iShipID = itUnit->iUnitID;
+			removeCargoOfCarrier(iShipID);
+			//removing the cargo may have moved the ship in the list
+			itUnit = find_if(availableUnits_w.begin(), availableUnits_w.end(), PrMatchingUnit(iShipID));
+		}
 	}
 
 	//are we done or can we do further moves with this unit?
@@ -11059,7 +11326,9 @@ static bool tacticalPositionIsEquivalentToAnyChild(const CvTacticalPosition* ref
 			return bMatch;
 	}
 
-	return positionIsEquivalent(ref, current);
+	// Vox Deorum: sweeps over different tiles can engage different interceptors depending on their order,
+	// so equal assignment sets are only equivalent when the interceptor state and the damage records match too
+	return positionIsEquivalent(ref, current) && (!MOD_VOX_TACTICAL_AIR_SEARCH || ref->airStateEquals(*current));
 }
 
 bool CvTacticalPosition::isUnique(int levels) const
@@ -11237,10 +11506,18 @@ bool CvTacticalPosition::addAvailableUnit(const CvUnit* pUnit)
 			eStrategy = MS_SUPPORT;
 			break;
 
-		//air units. ignore here, attack / rebase is handled elsewhere
+		// Vox Deorum: with the air search, bombers, fighters and missiles take part in the search
 		case UNITAI_ATTACK_AIR:
 		case UNITAI_DEFENSE_AIR:
 		case UNITAI_MISSILE_AIR:
+			if (MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->getDomainType() == DOMAIN_AIR && !pUnit->isOutOfAttacks())
+			{
+				eStrategy = MS_AIR;
+				break;
+			}
+			return false;
+
+		//air units. ignore here, attack / rebase is handled elsewhere
 		case UNITAI_ICBM:
 		default:
 			//skip the unit (other civilians as well)
@@ -11253,7 +11530,7 @@ bool CvTacticalPosition::addAvailableUnit(const CvUnit* pUnit)
 		return false;
 
 	//careful with damaged units
-	if (pUnit->isProjectedToDieNextTurn())
+	if (eStrategy != MS_AIR && pUnit->isProjectedToDieNextTurn())
 	{
 		//do not use for purely defensive moves
 		if (!haveEnemies())
@@ -11264,7 +11541,11 @@ bool CvTacticalPosition::addAvailableUnit(const CvUnit* pUnit)
 	}
 
 	//we will update the importance later, use 0 for now
-	availableUnits.write().push_back(SUnitStats(pUnit, 0, eStrategy));
+	SUnitStats newUnit(pUnit, 0, eStrategy);
+	// Vox Deorum: the carrying ship, the carrier-move need, an endangered base and the group of an aircraft
+	if (eStrategy == MS_AIR)
+		initAircraftStats(newUnit);
+	availableUnits.write().push_back(newUnit);
 
 	//lazy update of move plots later
 	movePlotUpdateFlagA = -1; 
@@ -11296,13 +11577,26 @@ static bool IsAttackMove(eUnitAssignmentType eAssignmentType)
 		|| eAssignmentType == A_RANGEATTACK || eAssignmentType == A_RANGEKILL;
 }
 
+// Vox Deorum: answers whether support units should line up behind this attack. With the air search, air strikes are skipped,
+// since generals, admirals and siege towers give aircraft no bonus.
+static bool IsSupportCheckpointAttack(const STacticalAssignment& assignment, PlayerTypes ePlayer)
+{
+	if (!IsAttackMove(assignment.eAssignmentType))
+		return false;
+	if (!MOD_VOX_TACTICAL_AIR_SEARCH)
+		return true;
+	const CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(assignment.iUnitID);
+	return !pUnit || pUnit->getDomainType() != DOMAIN_AIR;
+}
+
 // Trailing finish, bundled stay-put, and restart rows do not hide this position's attack.
 const STacticalAssignment* CvTacticalPosition::getSupportCheckpointAttack() const
 {
 	const vector<STacticalAssignment>& assignments = getAssignments();
 	size_t iFirstNewAssignment = getParent() ? getParent()->getAssignments().size() : 0;
 	for (size_t i = assignments.size(); i > iFirstNewAssignment; --i)
-		if (IsAttackMove(assignments[i - 1].eAssignmentType))
+		// Vox Deorum: the merge in AddSupportMoves uses the same rule
+		if (IsSupportCheckpointAttack(assignments[i - 1], getPlayer()))
 			return &assignments[i - 1];
 
 	return NULL;
@@ -11927,6 +12221,7 @@ CvSupportPosition::CvSupportPosition()
 	iBonusScore = 0;
 	iDamageDelta = 0;
 	iScoreOverParent = 0;
+	iRankBonusOverParent = 0;
 	parentPosition = NULL;
 	tacticalPosition = NULL;
 	finalTacticalPosition = NULL;
@@ -12024,6 +12319,7 @@ void CvSupportPosition::initFromTacticalPosition(const CvTacticalPosition& tactP
 	iBonusScore = 0;
 	iDamageDelta = 0;
 	iScoreOverParent = 0;
+	iRankBonusOverParent = 0;
 	parentPosition = NULL;
 	UpdateTacticalPosition(tactPos);
 	finalTacticalPosition = &finalTactPos;
@@ -12053,7 +12349,8 @@ void CvSupportPosition::initFromTacticalPosition(const CvTacticalPosition& tactP
 		const CvUnit* pUnit = *it;
 
 		const STacticalAssignment* lastAssignment = finalTacticalPosition->getLatestMoveAssignment(pUnit->GetID());
-		if (!AddAvailableUnit(pUnit) && pUnit->IsCombatUnit())
+		// Vox Deorum: with the air search, aircraft act from their bases and do not take part in the support search
+		if (!AddAvailableUnit(pUnit) && pUnit->IsCombatUnit() && !(MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->getDomainType() == DOMAIN_AIR))
 		{
 			int iPlotIndex = lastAssignment ? lastAssignment->iToPlotIndex : pUnit->plot()->GetPlotIndex();
 			finalCombatPositionUnits_w.push_back(SUnitStats(pUnit, pUnit->GetID(), iPlotIndex, 0, 0, 0, MS_NONE));
@@ -12080,6 +12377,7 @@ void CvSupportPosition::initFromParent(const CvSupportPosition& parent)
 	iBonusScore = parent.iBonusScore;
 	iDamageDelta = parent.iDamageDelta;
 	iScoreOverParent = 0;
+	iRankBonusOverParent = 0;
 	parentPosition = &parent;
 	tacticalPosition = parent.tacticalPosition;
 	finalTacticalPosition = parent.finalTacticalPosition;
@@ -12376,6 +12674,10 @@ bool CvTacticalPosition::canProbablyEndTurnAfterAssignment(const SUnitStats& uni
 	const CvUnit* pUnit = unit.pUnit;
 	if (!pUnit || !assumedUnitPlot)
 		return false;
+
+	// Vox Deorum: aircraft return to their base, there is no turn end plot to check
+	if (unit.eMoveStrategy == MS_AIR)
+		return true;
 
 	if (pUnit->IsCanDefend())
 	{
@@ -12875,6 +13177,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 	//clean up from the last run, more if the player changed to limit memory usage
 	gTactPosStorage.reset(eLastTactSimPlayer!=ePlayer);
+	// Vox Deorum: the air search may use a larger share of the pool than the default search
+	gTactPosStorage.setUsableSize(MOD_VOX_TACTICAL_AIR_SEARCH ? TACTSIM_POSITIONS_AIR_SEARCH : TACTSIM_POSITIONS);
 	gSupportPosStorage.reset(eLastTactSimPlayer!=ePlayer);
 	gAssignmentStorage.reset(eLastTactSimPlayer != ePlayer);
 	eLastTactSimPlayer = ePlayer;
@@ -12882,6 +13186,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	gReachablePlotsLookup.clear();
 	gRangeAttackPlotsLookup.clear();
 	gSafePlotCount.clear();
+	TacticalAIHelpers::ResetAirSearchCaches();
 	gBadUnitsCount.clear();
 	unuseableUnits.clear();
 
@@ -12890,7 +13195,16 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	STacticalFlavors searchFlavors = flavors;
 	if (searchFlavors.iFlavor[STacticalFlavors::RISK] < 0)
 		TacticalAIHelpers::GetGeneralTacticalFlavors(ePlayer, searchFlavors);
-	TacticalAIHelpers::SetSearchRiskThresholds(searchFlavors.iFlavor[STacticalFlavors::RISK], vUnits.size());
+	// Vox Deorum: with the air search the thresholds are sized by the ground and naval participants only
+	size_t nRiskUnits = vUnits.size();
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+	{
+		nRiskUnits = 0;
+		for (size_t i = 0; i < vUnits.size(); i++)
+			if (vUnits[i] && vUnits[i]->getDomainType() != DOMAIN_AIR)
+				nRiskUnits++;
+	}
+	TacticalAIHelpers::SetSearchRiskThresholds(searchFlavors.iFlavor[STacticalFlavors::RISK], nRiskUnits);
 	
 	//set up the initial position
 	CvTacticalPosition* initialPosition = gTactPosStorage.peekNext(); gTactPosStorage.consumeOne();
@@ -12977,6 +13291,17 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	for(vector<const CvUnit*>::const_iterator it=ourUnits.begin(); it!=ourUnits.end(); ++it)
 	{
 		const CvUnit* pUnit = *it;
+
+		// Vox Deorum: an aircraft acts from its base plot, which needs a tactical plot of its own but no ring around it.
+		// Without that plot it cannot take part.
+		if (MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->getDomainType() == DOMAIN_AIR)
+		{
+			initialPosition->addTacticalPlot(pUnit->plot(), ourUnits);
+			if (initialPosition->getTactPlot(pUnit->plot()->GetPlotIndex()))
+				initialPosition->addAvailableUnit(pUnit);
+			continue;
+		}
+
 		if (initialPosition->addAvailableUnit(pUnit))
 		{
 			//make sure we know the immediate surroundings of every unit
@@ -12988,6 +13313,11 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 			}
 		}
 	}
+
+	// Vox Deorum: a loaded ship's danger counts all its cargo, including aircraft that already acted or were not
+	// recruited. Recorded before any scoring, and again once the cap has dropped units.
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		initialPosition->recordCarrierCargo();
 
 	// Vox Deorum: prepare city-threat credit after all root enemies are known, before any scoring.
 	TacticalAIHelpers::SetSearchCityFlavorTerms(initialPosition, ePlayer);
@@ -13006,7 +13336,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	initialPosition->setFirstInterestingAssignment(initialPosition->getAssignments().size());
 
 	//around 15 units everything becomes slow so don't use too many
-	initialPosition->dropSuperfluousUnits(TACTSIM_MAX_UNITS);
+	// Vox Deorum: the cap is 19 with the air search, where each group of interchangeable aircraft counts once
+	initialPosition->dropSuperfluousUnits(TacticalAIHelpers::GetTactSimMaxUnits());
+
+	// Vox Deorum: aircraft the cap dropped are now untracked cargo
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		initialPosition->recordCarrierCargo();
 
 	openPositionsHeap.clear();
 	completedPositions.clear();
@@ -13163,7 +13498,8 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(vAssignments[i].iUnitID);
 		//be extra careful with the unit here, if we capture cities and liberate them strange instakills can happen
 		//so we need to guess whether the pointer is still valid
-		if (!pUnit || pUnit->isDelayedDeath() || pUnit->plot()==NULL)
+		// Vox Deorum: with the air search this also covers aircraft killed by an interception or a sweep earlier in the stream
+		if (!pUnit || pUnit->isDelayedDeath() || (MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->IsDead()) || pUnit->plot()==NULL)
 			continue;
 
 		CvPlot* pFromPlot = GC.getMap().plotByIndexUnchecked(vAssignments[i].iFromPlotIndex);
@@ -13294,6 +13630,14 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			}
 			break;
 		}
+		case A_AIRSWEEP:
+			// Vox Deorum: a sweep needs an interceptor over the target when it flies. Without one the row is skipped, so the
+			// sweep's ground attack fallback never fires, and its outcome never fails the plan.
+			bPrecondition = true;
+			bPostcondition = true;
+			if (pUnit->plot() == pFromPlot && pUnit->canAirSweepAt(pToPlot->getX(), pToPlot->getY()) && pToPlot->GetBestInterceptor(ePlayer, pUnit) != NULL)
+				pUnit->PushMission(CvTypes::getMISSION_AIR_SWEEP(), pToPlot->getX(), pToPlot->getY());
+			break;
 		case A_PILLAGE:
 			pUnit->PushMission(CvTypes::getMISSION_PILLAGE());
 			bPrecondition = true;
@@ -13313,6 +13657,16 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			break;
 		case A_HEAL:
 		case A_FINISH:
+			if (vAssignments[i].eMoveType == MS_AIR)
+			{
+				// Vox Deorum: an aircraft that did not act pushes no mission and stays available, for example for patrols.
+				// One that has used up its attacks is done for the turn.
+				if (pUnit->getNumAttacksMadeThisTurn() > 0 && pUnit->isOutOfAttacks())
+					finishedUnits.push_back(pUnit);
+				bPrecondition = true;
+				bPostcondition = true;
+				break;
+			}
 			pUnit->PushMission(CvTypes::getMISSION_SKIP());
 			//this is the difference to a blocked unit, we prevent anyone else from moving it unless we want it to heal
 			if (!pUnit->shouldHeal(false) || pUnit->getMoves() == 0 || pUnit->isBarbarian()) //barbarians don't heal
@@ -13322,7 +13676,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			bPostcondition = true;
 			break;
 		case A_BLOCKED:
-			pUnit->PushMission(CvTypes::getMISSION_SKIP());
+			// Vox Deorum: a blocked aircraft is left alone
+			if (vAssignments[i].eMoveType != MS_AIR)
+				pUnit->PushMission(CvTypes::getMISSION_SKIP());
 			//do not mark the unit as processed, it can be reused for other tasks!
 			bPrecondition = true;
 			bPostcondition = true;
@@ -13413,6 +13769,9 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 	if (bEarlyExit)
 	{
 		initialPosition->initFromTacticalPosition(positionAfterCombatMoves, positionAfterCombatMoves, ourUnits);
+		// Vox Deorum: with the air search a force of aircraft alone leaves nothing on the map to support, so support units sit out
+		if (initialPosition->GetFinalCombatPositions().empty())
+			return true;
 		initialPosition->addInitialAssignments();
 		initialPosition->setFirstInterestingAssignment(initialPosition->getAssignments().size());
 
@@ -13465,6 +13824,9 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 	}
 
 	initialPosition->initFromTacticalPosition(*nextAttackPosition.begin()->first, positionAfterCombatMoves, ourUnits);
+	// Vox Deorum: as in the feasibility check, support units sit out when there is nothing on the map to support
+	if (initialPosition->GetFinalCombatPositions().empty())
+		return true;
 	initialPosition->addInitialAssignments();
 	initialPosition->setFirstInterestingAssignment(initialPosition->getAssignments().size());
 
@@ -13529,7 +13891,8 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 
 		while (combatIt != positionAfterCombatMoves.getAssignments().end())
 		{
-			if (IsAttackMove(combatIt->eAssignmentType) || combatIt == positionAfterCombatMoves.getAssignments().end() - 1)
+			// Vox Deorum: same checkpoints as getSupportCheckpointAttack, so support moves line up with the attacks they support
+			if (IsSupportCheckpointAttack(*combatIt, positionAfterCombatMoves.getPlayer()) || combatIt == positionAfterCombatMoves.getAssignments().end() - 1)
 			{
 				int iWaitingUnits = 0;
 				while (supportIt != pBestPosition->getAssignments().end())
@@ -13700,5 +14063,6 @@ const char* assignmentTypeNames[] =
 	"USEPOWER",
 	"FINISHTEMP",
 	"HEAL",
-	"WAIT"
+	"WAIT",
+	"AIRSWEEP"
 };

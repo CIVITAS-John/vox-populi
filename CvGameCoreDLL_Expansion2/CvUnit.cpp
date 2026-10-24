@@ -16069,10 +16069,11 @@ int CvUnit::GetBaseCombatStrength() const
 	return m_iBaseCombat;
 }
 
-int CvUnit::GetBestAttackStrength() const
+int CvUnit::GetBestAttackStrength(int iAssumeExtraDamage) const
 {
-	int iRangedStrength = GetMaxRangedCombatStrength(NULL,NULL,true,NULL,NULL,true,true);
-	int iMeleeStrength = GetMaxAttackStrength(NULL,NULL,NULL,true,true);
+	// Vox Deorum: the tactical simulation ranks interceptors after damage it has planned but not dealt yet
+	int iRangedStrength = GetMaxRangedCombatStrength(NULL,NULL,true,NULL,NULL,true,true,iAssumeExtraDamage);
+	int iMeleeStrength = GetMaxAttackStrength(NULL,NULL,NULL,true,true,iAssumeExtraDamage);
 
 	return max(iRangedStrength,iMeleeStrength);
 }
@@ -17787,7 +17788,10 @@ int CvUnit::GetAirStrikeDefenseDamage(const CvUnit* pAttacker, bool bIncludeRand
 
 
 
-int CvUnit::GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncludeRand, const CvPlot* pTargetPlot) const
+// Vox Deorum: iAssumeSelfDamage and iAssumeAttackerDamage are damage the tactical simulation expects the interceptor and
+// the attacker to have taken; with both at 0 this is the live calculation
+int CvUnit::GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncludeRand, const CvPlot* pTargetPlot,
+	int iAssumeSelfDamage, int iAssumeAttackerDamage) const
 {
 	if (pTargetPlot == NULL)
 		pTargetPlot = plot();
@@ -17798,14 +17802,15 @@ int CvUnit::GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncl
 	{
 		case DOMAIN_AIR:
 			//interception happens at the target plot
-			iInterceptedAttackerStrength = pInterceptedAttacker->GetMaxRangedCombatStrength(this, /*pCity*/ NULL, false, pTargetPlot, pTargetPlot);
+			iInterceptedAttackerStrength = pInterceptedAttacker->GetMaxRangedCombatStrength(this, /*pCity*/ NULL, false, pTargetPlot, pTargetPlot,
+				false, false, iAssumeAttackerDamage, iAssumeSelfDamage);
 			break;
 
 		case DOMAIN_SEA:
 		case DOMAIN_LAND:
 		case DOMAIN_IMMOBILE:
 		case DOMAIN_HOVER:
-			iInterceptedAttackerStrength = pInterceptedAttacker->GetMaxDefenseStrength(pTargetPlot, this, pTargetPlot, false);
+			iInterceptedAttackerStrength = pInterceptedAttacker->GetMaxDefenseStrength(pTargetPlot, this, pTargetPlot, false, false, iAssumeAttackerDamage);
 			break;
 
 		default:
@@ -17818,14 +17823,15 @@ int CvUnit::GetInterceptionDamage(const CvUnit* pInterceptedAttacker, bool bIncl
 	{
 		case DOMAIN_AIR:
 			//interception happens at the target plot
-			iInterceptorStrength = GetMaxRangedCombatStrength(pInterceptedAttacker, /*pCity*/ NULL, true, pTargetPlot, pTargetPlot);
+			iInterceptorStrength = GetMaxRangedCombatStrength(pInterceptedAttacker, /*pCity*/ NULL, true, pTargetPlot, pTargetPlot,
+				false, false, iAssumeSelfDamage, iAssumeAttackerDamage);
 			break;
 
 		case DOMAIN_SEA:
 		case DOMAIN_LAND:
 		case DOMAIN_IMMOBILE:
 		case DOMAIN_HOVER:
-			iInterceptorStrength = GetMaxAttackStrength(NULL, NULL, pInterceptedAttacker);
+			iInterceptorStrength = GetMaxAttackStrength(NULL, NULL, pInterceptedAttacker, false, false, iAssumeSelfDamage, iAssumeAttackerDamage);
 			break;
 
 		default:
@@ -29240,7 +29246,7 @@ bool CvUnit::canEverRangeStrikeAt(int iX, int iY, const CvPlot* pSourcePlot, boo
 }
 
 //	--------------------------------------------------------------------------------
-bool CvUnit::canRangeStrikeAt(int iX, int iY, bool bNeedWar, bool bNoncombatAllowed) const
+bool CvUnit::canRangeStrikeAt(int iX, int iY, bool bNeedWar, bool bNoncombatAllowed, const CvPlot* pSourcePlot) const
 {
 	VALIDATE_OBJECT();
 
@@ -29249,7 +29255,8 @@ bool CvUnit::canRangeStrikeAt(int iX, int iY, bool bNeedWar, bool bNoncombatAllo
 		return false;
 	}
 
-	if(!canEverRangeStrikeAt(iX, iY, plot(), false))
+	// Vox Deorum: the tactical simulation may assume another source plot
+	if(!canEverRangeStrikeAt(iX, iY, pSourcePlot ? pSourcePlot : plot(), false))
 	{
 		return false;
 	}
@@ -29433,13 +29440,23 @@ bool CvUnit::canAirSweep() const
 /// Sweep the skies and clear out interceptors
 bool CvUnit::canAirSweepAt(int iX, int iY) const
 {
+	return canAirSweepAt(iX, iY, plot());
+}
+
+//	--------------------------------------------------------------------------------
+/// Vox Deorum: sweep the skies from an assumed base plot (execution uses the unit's own plot)
+bool CvUnit::canAirSweepAt(int iX, int iY, const CvPlot* pSourcePlot) const
+{
 	VALIDATE_OBJECT();
 	if(!canAirSweep())
 	{
 		return false;
 	}
 
-	CvPlot* pSourcePlot = plot();
+	if(NULL == pSourcePlot)
+	{
+		return false;
+	}
 
 	CvPlot* pTargetPlot = GC.getMap().plot(iX, iY);
 

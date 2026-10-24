@@ -106,6 +106,7 @@
     <ClCompile Include="CvStartPositioner.cpp" />
     <ClCompile Include="cvStopWatch.cpp" />
     <ClCompile Include="CvTacticalAI.cpp" />
+    <ClCompile Include="CvTacticalAirSearch.cpp" />
     <ClCompile Include="CvTacticalAnalysisMap.cpp" />
     <ClCompile Include="CvTargeting.cpp" />
     <ClCompile Include="CvTeam.cpp" />
@@ -465,6 +466,8 @@
     <ClInclude Include="CvStartPositioner.h" />
     <ClInclude Include="cvStopWatch.h" />
     <ClInclude Include="CvTacticalAI.h" />
+    <ClInclude Include="CvTacticalAirSearch.h" />
+    <ClInclude Include="CvTacticalSearchShared.h" />
     <ClInclude Include="CvTacticalAnalysisMap.h" />
     <ClInclude Include="CvTargeting.h" />
     <ClInclude Include="CvTeam.h" />

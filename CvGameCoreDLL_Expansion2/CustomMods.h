@@ -1070,6 +1070,8 @@
 #define MOD_IPC_CHANNEL					gCustomMods.isIPC_CHANNEL()
 // Vox Deorum: zone postures and operation-triggered searches add default tactical flavor modifiers
 #define MOD_VOX_TACTICAL_INTENT_FLAVORS	gCustomMods.isVOX_TACTICAL_INTENT_FLAVORS()
+// Vox Deorum: tactical search plans air strikes, air sweeps and carrier launches together with ground and naval moves
+#define MOD_VOX_TACTICAL_AIR_SEARCH	gCustomMods.isVOX_TACTICAL_AIR_SEARCH()
 
 //
 // NOTHING BELOW HERE SHOULD NEED CHANGING
@@ -1818,6 +1820,7 @@ public:
 
 	MOD_OPT_DECL(IPC_CHANNEL);
 	MOD_OPT_DECL(VOX_TACTICAL_INTENT_FLAVORS);
+	MOD_OPT_DECL(VOX_TACTICAL_AIR_SEARCH);
 
 protected:
 	bool m_bInit;

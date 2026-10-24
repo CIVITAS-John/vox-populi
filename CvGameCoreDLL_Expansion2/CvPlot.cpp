@@ -3714,29 +3714,10 @@ CvUnit* CvPlot::GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* p
 			if (!pInterceptorUnit || pInterceptorUnit->isDelayedDeath())
 				continue;
 
-			// Must not have already intercepted this turn
-			if (!pInterceptorUnit->canInterceptNow())
+			// Vox Deorum: the eligibility and ranking rules are shared with the tactical simulation
+			int iValue = GetInterceptorValue(pInterceptorUnit, iDistance, bLandInterceptorsOnly, 0, 0);
+			if (iValue < 0)
 				continue;
-
-			// Check conditions
-			if (bLandInterceptorsOnly && pInterceptorUnit->getDomainType() != DOMAIN_LAND)
-				continue;
-			if (iDistance > pInterceptorUnit->GetAirInterceptRange())
-				continue;
-			
-			//do not violate neutral players' airspace
-			if (isOwned() && !kLoopPlayer.IsAtWarWith(getOwner()) && !IsFriendlyTerritory(kLoopPlayer.GetID()))
-				continue;
-
-			// we're fine with truncation here; take promotions boosting intercept strength into account
-			int attackStrength = (pInterceptorUnit->GetBestAttackStrength() * (100 + pInterceptorUnit->GetInterceptionCombatModifier())) / 100;
-			
-			// interceptionProbability contains product of actual intercept chance and health percentage; lets be careful with air units at low health in case of air sweeps
-			int healthFactor = pInterceptorUnit->interceptionProbability();
-			if (pInterceptorUnit->getDomainType() == DOMAIN_AIR)
-				healthFactor = (healthFactor * (pInterceptorUnit->GetCurrHitPoints() * 100) / pInterceptorUnit->GetMaxHitPoints()) / 100;
-			
-			int iValue = attackStrength * healthFactor;
 
 			if (iValue>0 && piNumPossibleInterceptors)
 				(*piNumPossibleInterceptors)++;
@@ -3751,6 +3732,41 @@ CvUnit* CvPlot::GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* p
 	}
 
 	return pBestUnit;
+}
+
+// Vox Deorum: how well this unit would intercept an attack over this plot, or -1 if it cannot. The tactical simulation
+// passes the damage it has dealt to the interceptor and the interceptions it has used up; the live game passes zero.
+int CvPlot::GetInterceptorValue(const CvUnit* pInterceptorUnit, int iDistance, bool bLandInterceptorsOnly, int iExtraDamage, int iExtraInterceptionsUsed) const
+{
+	// Must not have already intercepted this turn
+	if (!pInterceptorUnit->canIntercept() || pInterceptorUnit->getMadeInterceptionCount() + iExtraInterceptionsUsed >= pInterceptorUnit->GetNumInterceptions())
+		return -1;
+
+	// Check conditions
+	if (bLandInterceptorsOnly && pInterceptorUnit->getDomainType() != DOMAIN_LAND)
+		return -1;
+	if (iDistance > pInterceptorUnit->GetAirInterceptRange())
+		return -1;
+
+	//do not violate neutral players' airspace
+	CvPlayer& kInterceptorOwner = GET_PLAYER(pInterceptorUnit->getOwner());
+	if (isOwned() && !kInterceptorOwner.IsAtWarWith(getOwner()) && !IsFriendlyTerritory(kInterceptorOwner.GetID()))
+		return -1;
+
+	int iHitPoints = pInterceptorUnit->GetCurrHitPoints() - iExtraDamage;
+	if (iExtraDamage > 0 && iHitPoints <= 0)
+		return -1;
+
+	// we're fine with truncation here; take promotions boosting intercept strength into account
+	// Vox Deorum: the simulation's planned damage also weakens the interceptor's strength, as it will in execution
+	int attackStrength = (pInterceptorUnit->GetBestAttackStrength(iExtraDamage) * (100 + pInterceptorUnit->GetInterceptionCombatModifier())) / 100;
+
+	// interceptionProbability contains product of actual intercept chance and health percentage; lets be careful with air units at low health in case of air sweeps
+	int healthFactor = (pInterceptorUnit->getInterceptChance() * iHitPoints) / pInterceptorUnit->GetMaxHitPoints();
+	if (pInterceptorUnit->getDomainType() == DOMAIN_AIR)
+		healthFactor = (healthFactor * (iHitPoints * 100) / pInterceptorUnit->GetMaxHitPoints()) / 100;
+
+	return attackStrength * healthFactor;
 }
 
 CvCity* CvPlot::GetNukeInterceptor(PlayerTypes eAttackingPlayer) const
