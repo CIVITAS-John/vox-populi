@@ -6990,24 +6990,24 @@ void CDangerCache::clear()
 	dangerStats.clear();
 }
 
-void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger)
+void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, size_t iDamageHash, int iDanger)
 {
 	DefendKey key;
 	key.iDefenderId = iDefenderId;
 	key.iPlotId = iDefenderPlot;
 	key.iPrevDamage = iPrevDamage;
-	key.iDamageHash = unitDamageDealt.GetHash();
+	key.iDamageHash = iDamageHash;
 
 	dangerStats[key] = iDanger;
 }
 
-bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const
+bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, size_t iDamageHash, int& iDanger) const
 {
 	DefendKey key;
 	key.iDefenderId = iDefenderId;
 	key.iPlotId = iDefenderPlot;
 	key.iPrevDamage = iPrevDamage;
-	key.iDamageHash = unitDamageDealt.GetHash();
+	key.iDamageHash = iDamageHash;
 
 	std::tr1::unordered_map<DefendKey, int, DefendKeyHash>::const_iterator it =
 		dangerStats.find(key);
@@ -7413,15 +7413,19 @@ static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iS
 {
 	int iDanger = 0;
 
+	// Vox Deorum: the danger reads only the damage dealt to the plot's attackers, so the key hashes just that part, and
+	// positions that differ only in damage to other units share an entry
+	size_t iDamageHash = GET_PLAYER(pUnit->getOwner()).GetPlotDangerDamageHash(*pPlot, assumedPosition.GetUnitDamageDealt());
+
 	//first try the cache
-	if (!gTactPosStorage.getDangerCache().findDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger))
+	if (!gTactPosStorage.getDangerCache().findDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, iDamageHash, iDanger))
 	{
 		iDanger = pUnit->GetDanger(pPlot, assumedPosition.GetUnitDamageDealt(), iSelfDamage);
 		//can happen with garrisons, catch this case as it messes up the math
 		if (iDanger == INT_MAX)
 			iDanger = 10 * pUnit->GetMaxHitPoints();
 
-		gTactPosStorage.getDangerCache().storeDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger);
+		gTactPosStorage.getDangerCache().storeDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, iDamageHash, iDanger);
 	}
 
 	return iDanger;

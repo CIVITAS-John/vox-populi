@@ -54,6 +54,8 @@ struct CvDangerPlotContents
 
 	int GetDanger(const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction);
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison, const SUnitIDValueContainer& extraUnitDamage, int iExtraSelfDamage = 0);
+	// Vox Deorum: a hash of the extra damage the danger reads, which is the damage dealt to this plot's attackers
+	size_t GetDamageHash(const SUnitIDValueContainer& extraUnitDamage) const;
 	std::vector<CvUnit*> GetPossibleAttackers(TeamTypes eTeamForVisibilityCheck) const;
 
 	// should not normally be used if a city or unit is known, primarily for compatibility
@@ -91,6 +93,8 @@ public:
 	int GetDanger(const CvPlot& pPlot, const CvUnit* pUnit, const SUnitIDValueContainer& unitDamageDealt, int iExtraDamage = 0, AirActionType iAirAction = AIR_ACTION_ATTACK);
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison = NULL, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer());
 	int GetDanger(const CvPlot& pPlot, bool bFixedDamageOnly);
+	// Vox Deorum: a hash of the part of the damage dealt that the plot's danger reads
+	size_t GetDamageHash(const CvPlot& Plot, const SUnitIDValueContainer& unitDamageDealt) const;
 
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck) const;
 	bool IsKnownAttacker(const CvUnit* pUnit) const;

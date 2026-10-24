@@ -1,8 +1,10 @@
 /*	-------------------------------------------------------------------------------------------------------
-	Vox Deorum: the air search (VOX_TACTICAL_AIR_SEARCH): launch plots, air targets, interceptors and the chance a
-	strike lands, sweep damage, the scorers for strikes, sweeps and standing down, the option cut for an aircraft,
-	and the aircraft, interceptor and carrier state a CvTacticalPosition keeps. CvTacticalSearchShared.h declares
-	the search internals from CvTacticalAI.cpp that the scorers use.
+	Vox Deorum: the air search (VOX_TACTICAL_AIR_SEARCH). This file holds:
+	- the helpers for launch plots, air targets, interceptors, the chance a strike lands and sweep damage;
+	- the caches that keep those answers for one search, one search tree or one expansion;
+	- the scorers for strikes, sweeps and standing down, and the cut that keeps an aircraft's best options;
+	- the aircraft, interceptor and carrier state a CvTacticalPosition keeps, and the idle groups of a search.
+	CvTacticalSearchShared.h declares the search internals from CvTacticalAI.cpp that the scorers use.
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvTacticalAI.h"
@@ -10,24 +12,26 @@
 #include "CvGameCoreUtils.h"
 #include "LintFree.h"
 
-// Vox Deorum: visible enemy interceptors near each target plot, and air targets per (unit, base plot), for this search
+// Vox Deorum: a visible enemy interceptor near a target plot, with its plot distance to that target
 struct SInterceptorCandidate
 {
 	CvUnit* pUnit;
 	int iDistance;
 	SInterceptorCandidate(CvUnit* pUnit_, int iDistance_) : pUnit(pUnit_), iDistance(iDistance_) {}
 };
+// Vox Deorum: the interceptor candidates per target plot, for this search (see GetInterceptorCandidates)
 map<int, vector<SInterceptorCandidate> > gInterceptorCandidates;
+// Vox Deorum: the air targets per (unit ID, base plot), for this search (see GetAirTargetPlots)
 map<pair<int, int>, vector<int> > gAirTargetPlots;
-// Vox Deorum: per ship in this search, the aircraft aboard that the search does not track (see recordCarrierCargo)
+// Vox Deorum: ship ID to the number of aircraft aboard that the search does not track (see recordCarrierCargo)
 map<int, int> gUntrackedCargo;
 // Vox Deorum: the plots a carrying ship can reach this turn, per (owner, ship). Kept for one recruitment or one search only,
 // since moves executed in between change both the ship and the routes.
 map<pair<int, int>, vector<int> > gCargoLaunchPlots;
-// Vox Deorum: interchangeable aircraft groups of this search, keyed by owner, type, base, promotions, HP, moves and attacks made
+// Vox Deorum: the group ID of each kind of interchangeable aircraft in this search (see initAircraftStats for the key)
 map<vector<int>, int> gAirGroupKeys;
-// Vox Deorum: an air group leader's scored options before the cut keeps the best. The rows are reused, so only
-// the first options of a call are current.
+// Vox Deorum: scratch rows where ScoreAirOptions scores one aircraft's options before getPreferredAssignmentsForAirUnit
+// keeps the best. Every call reuses the rows, so only the ones the last call counted are current.
 vector<STacticalAssignment> gAirOptions;
 // Vox Deorum: the inputs of one interception's damage to the attacker: both units, the target plot and the damage the position
 // assumes for each. Real units and the map stay fixed while a search runs, so nothing else changes the result.
@@ -89,29 +93,50 @@ struct SInterceptorValueKeyHash
 	}
 };
 
-// Vox Deorum: the position a search is expanding (see BeginAirExpansion), or NULL. The caches below are read only
+// Vox Deorum: what ranking sweeps in the position being expanded has learned about one aircraft and one swept interceptor.
+// A certain sweep child differs from that position only in the interceptor's damage and interceptions, so for an aircraft
+// other than the sweeper the gain depends on the sweep's damage alone.
+struct SGuardedAirStrikes
+{
+	// true once targets is filled
+	bool bTargetsKnown;
+	// the target plots the interceptor guards against the aircraft, each with the aircraft's strike value there
+	vector<pair<const CvTacticalPlot*, int> > targets;
+	// (damage a sweep deals the interceptor, the aircraft's best strike gain after it)
+	vector<pair<int, int> > gainsByDamage;
+
+	SGuardedAirStrikes() : bTargetsKnown(false) {}
+};
+
+// Vox Deorum: the position a search is expanding (see BeginAirExpansion), or NULL. The caches below are used only
 // while it is set, since outside a search executed moves change the real units.
 const CvTacticalPosition* gAirExpansion = NULL;
 // Vox Deorum: interception damage to the attacker, for one search tree
 tr1::unordered_map<SInterceptionKey, int, SInterceptionKeyHash> gInterceptionDamage;
 // Vox Deorum: interceptor values over a plot, for one search tree
 tr1::unordered_map<SInterceptorValueKey, int, SInterceptorValueKeyHash> gInterceptorValues;
-// Vox Deorum: per (aircraft, target plot) in the position being expanded, the strike value and the interceptor it meets.
+// Vox Deorum: per (aircraft, target plot) in the position being expanded, the strike value (see GetAirStrikeValueInExpansion).
 // Every sweep the position ranks compares against these same strikes.
 tr1::unordered_map<pair<int, int>, int, SIntPairHash> gExpansionStrikeValues;
+// Vox Deorum: per (aircraft, target plot) in the position being expanded, the interceptor the strike meets
 tr1::unordered_map<pair<int, int>, const CvUnit*, SIntPairHash> gExpansionInterceptors;
+// Vox Deorum: per (aircraft, swept interceptor) in the position being expanded, the aircraft's guarded strikes and the gains
+// found so far (see GetAirSweepRankBonus)
+tr1::unordered_map<pair<int, int>, SGuardedAirStrikes, SIntPairHash> gExpansionGuardedStrikes;
 // Vox Deorum: a missile on a base about to be lost fires before an equal missile on a safe base. The bonus is the value of a
 // unit that would otherwise be lost, on the scale of the bonus for sinking a ship with aircraft on board.
 const int TACTSIM_ENDANGERED_MISSILE_BONUS = 15;
-// Vox Deorum: an aircraft group with no positive option whose best strike ranks below this when a search starts only stands
-// down until the interceptors over its targets change. The margin of 10 damage points covers targets that other attacks
-// soften first.
+// Vox Deorum: an aircraft group with no positive option, whose best strike ranks below this when a search starts, only
+// stands down until the interceptors over its targets change. RankScore counts 10 per damage point, so the margin is 10
+// damage points, which covers targets that other attacks soften first.
 const int TACTSIM_AIR_HOPELESS_RANK = -100;
-// Vox Deorum: the idle aircraft groups of the search, each with the visible interceptors near its targets
+// Vox Deorum: group ID of each idle aircraft group of the search to the visible interceptors near its targets
+// (see getUnitsToDropWithAircraft and IsAirGroupIdle)
 map<int, vector<int> > gIdleAirGroups;
 
-// Vox Deorum: forgets the aircraft groups, idle groups and the cached interceptors, air targets, untracked cargo and carrier reach. Every
-// entry is built again on first use, so a recruitment or a search starts from the current units and routes.
+// Vox Deorum: forgets the aircraft groups, the idle groups, and the cached interceptors, air targets, untracked cargo,
+// carrier reach, interception damage and interceptor values. Every entry is built again on first use, so a recruitment or
+// a search starts from the current units and routes.
 void TacticalAIHelpers::ResetAirSearchCaches()
 {
 	gAirGroupKeys.clear();
@@ -125,7 +150,8 @@ void TacticalAIHelpers::ResetAirSearchCaches()
 }
 
 // Vox Deorum: marks the position a search is about to expand, so the air scorers can remember what stays fixed until
-// EndAirExpansion. A position without a parent starts a new search tree, which forgets the last tree's interceptions.
+// EndAirExpansion. The expansion caches start empty. A position without a parent starts a new search tree, so the
+// interception damage and interceptor values of the last tree are forgotten too.
 void TacticalAIHelpers::BeginAirExpansion(const CvTacticalPosition& position)
 {
 	if (!position.getParent())
@@ -135,6 +161,7 @@ void TacticalAIHelpers::BeginAirExpansion(const CvTacticalPosition& position)
 	}
 	gExpansionStrikeValues.clear();
 	gExpansionInterceptors.clear();
+	gExpansionGuardedStrikes.clear();
 	gAirExpansion = &position;
 }
 
@@ -294,8 +321,8 @@ const CvPlot* TacticalAIHelpers::GetFirstAirLaunchPlot(const CvUnit* pUnit, cons
 	return NULL;
 }
 
-// Vox Deorum: is the aircraft's base about to be lost? The same rule CvTacticalAI::ShouldRebase uses: a city in danger
-// of falling, or a carrying ship projected to die next turn.
+// Vox Deorum: true if the aircraft's base is about to be lost, by the rule CvTacticalAI::ShouldRebase uses: a city in
+// danger of falling, or a carrying ship projected to die next turn.
 bool TacticalAIHelpers::IsAirBaseEndangered(const CvUnit* pUnit)
 {
 	if (!pUnit || !pUnit->plot())
@@ -308,14 +335,14 @@ bool TacticalAIHelpers::IsAirBaseEndangered(const CvUnit* pUnit)
 	return pCarrier && pCarrier->isProjectedToDieNextTurn();
 }
 
-// Vox Deorum: can the aircraft strike the target plot from the assumed base plot?
+// Vox Deorum: true if the aircraft can strike the target plot from the assumed base plot
 bool TacticalAIHelpers::CanAirUnitStrikeFrom(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvPlot* pTarget)
 {
 	// the game's own target rules, which execution checks too, from the assumed base
 	return pUnit && pBasePlot && pTarget && pUnit->canRangeStrikeAt(pTarget->getX(), pTarget->getY(), true, true, pBasePlot);
 }
 
-// Vox Deorum: can the aircraft strike or sweep the target plot from the assumed base plot?
+// Vox Deorum: true if the aircraft can strike or sweep the target plot from the assumed base plot
 bool TacticalAIHelpers::CanAirUnitActAgainstPlot(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvPlot* pTarget)
 {
 	if (!pUnit || !pBasePlot || !pTarget)
@@ -324,13 +351,15 @@ bool TacticalAIHelpers::CanAirUnitActAgainstPlot(const CvUnit* pUnit, const CvPl
 	return CanAirUnitStrikeFrom(pUnit, pBasePlot, pTarget) || pUnit->canAirSweepAt(pTarget->getX(), pTarget->getY(), pBasePlot);
 }
 
-// Vox Deorum: the enemy plots of the search that the aircraft can strike from the assumed base plot.
-// Air range is not limited by the ring tables, so any range works. Cached per unit and base for the search; the list
-// comes from the root position, because enemy plots only disappear later, so callers re-check isEnemy().
-vector<int> TacticalAIHelpers::GetAirTargetPlots(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvTacticalPosition& position)
+// Vox Deorum: the enemy plots of the search that the aircraft can strike from the assumed base plot. The enemy plots
+// are checked by plot distance, so air ranges beyond the ring tables work. The list is built once per unit and base for
+// the search, from the root position. Later positions can only lose enemy plots, so callers check isEnemy() in their own
+// position.
+const vector<int>& TacticalAIHelpers::GetAirTargetPlots(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvTacticalPosition& position)
 {
+	static const vector<int> noTargets;
 	if (!pUnit || !pBasePlot)
-		return vector<int>();
+		return noTargets;
 
 	pair<int, int> key(pUnit->GetID(), pBasePlot->GetPlotIndex());
 	map<pair<int, int>, vector<int> >::const_iterator itCached = gAirTargetPlots.find(key);
@@ -356,7 +385,8 @@ vector<int> TacticalAIHelpers::GetAirTargetPlots(const CvUnit* pUnit, const CvPl
 	return result;
 }
 
-// Vox Deorum: the visible enemy interceptors within the rough 11-tile reach of a target plot, cached for the search
+// Vox Deorum: the visible enemy interceptors within 11 plots of a target plot, a rough bound on interception range. Cached
+// per plot for the search, since only one player searches at a time.
 static const vector<SInterceptorCandidate>& GetInterceptorCandidates(const CvPlot* pTargetPlot, PlayerTypes eAttackingPlayer)
 {
 	map<int, vector<SInterceptorCandidate> >::const_iterator itCached = gInterceptorCandidates.find(pTargetPlot->GetPlotIndex());
@@ -393,9 +423,9 @@ static const vector<SInterceptorCandidate>& GetInterceptorCandidates(const CvPlo
 	return candidates;
 }
 
-// Vox Deorum: the interceptor that would engage the attacker over the plot, given what the plan has done so far.
+// Vox Deorum: the interceptor that would engage the attacker over the plot, given what the plan has done so far, or NULL.
 // Uses the visible interceptors only, skips any whose base the position has taken, and ranks with the game's own rule
-// (CvPlot::GetInterceptorValue) against the HP and interceptions the position has left them.
+// (CvPlot::GetInterceptorValue) against the HP and interceptions the position has left them. The nearer one wins a tie.
 CvUnit* TacticalAIHelpers::GetBestInterceptorInPosition(const CvPlot* pTargetPlot, const CvUnit* pAttacker, const CvTacticalPosition& position)
 {
 	if (!pTargetPlot || !pAttacker)
@@ -435,7 +465,8 @@ CvUnit* TacticalAIHelpers::GetBestInterceptorInPosition(const CvPlot* pTargetPlo
 }
 
 // Vox Deorum: one sweep for each distinct interceptor that covers an enemy plot the aircraft can sweep from the assumed base,
-// over the covered plot nearest the real target. The simulator's command checks and tokens use the same list.
+// over the covered plot nearest the real target, the lower plot index breaking ties. The pairs are (plot, interceptor),
+// ordered by interceptor ID. The simulator's command checks and tokens use the same list.
 vector<pair<int, const CvUnit*> > TacticalAIHelpers::GetAirSweepPlots(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvTacticalPosition& position)
 {
 	//interceptor ID -> ((distance to target, plot), interceptor)
@@ -607,10 +638,10 @@ void CvTacticalPosition::markInterceptorBaseLost(int iUnitID)
 
 // an air sweep or an air strike uses up one interception of the interceptor the game would pick, whether or not the
 // interception succeeds (CvUnitCombat spends it either way). Any damage goes through the assignment's damage record.
-// The interceptor is derived again, because an assignment does not carry it, from the same state the row was scored
-// against. That holds because a combo move only pairs such a row with a later stand-down, finish or blocked row
-// (makeNextAssignments), which leaves the interceptor state alone. Call it before the row's damage is applied, since
-// the game picks the interceptor before the attack resolves.
+// An assignment does not carry its interceptor, so it is picked again here. The pick matches the scored one, because the
+// state is the one the row was scored against: a combo move only pairs such a row with a later stand-down, finish or
+// blocked row (makeNextAssignments), and none of those touch the interceptor state. Call it before the row's damage is
+// applied, since the game picks the interceptor before the attack resolves.
 void CvTacticalPosition::applyAirInterception(const STacticalAssignment& row)
 {
 	bool bAirStrike = row.eMoveType == MS_AIR && (row.eAssignmentType == A_RANGEATTACK || row.eAssignmentType == A_RANGEKILL);
@@ -627,7 +658,8 @@ void CvTacticalPosition::applyAirInterception(const STacticalAssignment& row)
 		changeInterceptionsUsed(pInterceptor->GetID(), 1);
 }
 
-// true for a unit without an aircraft group, or the lowest-ID member of its group that has not acted
+// true for a unit without an aircraft group or missing from the available units, and for the lowest-ID member of its
+// group that is still available
 bool CvTacticalPosition::isAirGroupLeader(int iUnitID) const
 {
 	const vector<SUnitStats>& units = availableUnits.read();
@@ -671,8 +703,9 @@ void CvTacticalPosition::removeCargoOfCarrier(int iCarrierID)
 	}
 }
 
-// the aircraft aboard a ship in this position: the ones the search tracks, which drop out when the plan spends them, plus
-// the ones it never tracked (already acted, dropped by the cap, or not recruited), counted once by recordCarrierCargo
+// the aircraft aboard a ship in this position: the ones the search tracks, which drop out when the plan spends them. Unless
+// bTrackedOnly, also the ones it never tracked (already acted, dropped by the cap, or not recruited), which
+// recordCarrierCargo counts once at the root.
 int CvTacticalPosition::countCargoAircraft(int iCarrierID, bool bTrackedOnly) const
 {
 	int iCount = 0;
@@ -802,9 +835,9 @@ static int GetAirRemainingMovesAfterAttack(const SUnitStats& unit)
 	return unit.iMovesLeft - min(unit.iMovesLeft, (int)GD_INT_GET(MOVE_DENOMINATOR));
 }
 
-// Vox Deorum: an aircraft strike from its base, scored into the given row. The damage is weighted once for the interceptors
-// the position has left (in ScoreAttackDamage), and a strike an interceptor may stop is A_RANGEATTACK and scores its
-// expected damage only.
+// Vox Deorum: an aircraft strike from its base, scored into the given row. ScoreAttackDamage weights the damage once by the
+// chance the strike lands past the interceptors the position has left. A strike an interceptor may stop stays A_RANGEATTACK,
+// even when it would kill, and scores its expected damage only.
 static void ScorePlotForAirStrike(const SUnitStats& unit, const CvTacticalPlot* assumedUnitPlot, const CvTacticalPlot* enemyPlot, const CvTacticalPosition& assumedPosition, STacticalAssignment& result)
 {
 	result.init(unit.iPlotIndex, enemyPlot->getPlotIndex(), unit.iUnitID, unit.iMovesLeft, unit.eMoveStrategy, A_RANGEATTACK, GetPrevPlotScore(unit.iUnitID, assumedPosition));
@@ -837,7 +870,8 @@ static int GetAirStrikeValue(const SUnitStats& unit, const CvTacticalPlot* unitP
 	return strike.IsAcceptable() ? max(0, strike.Score()) : 0;
 }
 
-// Vox Deorum: GetAirStrikeValue, remembered for the position a search is expanding. Other positions are scored directly.
+// Vox Deorum: GetAirStrikeValue, remembered for the position a search is expanding. ScoreAirOptions also fills the memo with
+// the strikes it scores there. Other positions are scored directly.
 static int GetAirStrikeValueInExpansion(const SUnitStats& unit, const CvTacticalPlot* unitPlot, const CvTacticalPlot* targetPlot, const CvTacticalPosition& position)
 {
 	if (&position != gAirExpansion)
@@ -869,41 +903,64 @@ static const CvUnit* GetBestInterceptorInExpansion(const SUnitStats& unit, const
 	return pInterceptor;
 }
 
-// Vox Deorum: the best gain, in damage points, of an aircraft's strike once the swept interceptor is out of the way. The
-// strike is scored with the aircraft's state in the parent position before, and in the child position after; the two
-// differ only for the sweeper, whose attack, moves and damage change with the sweep. Only the targets the swept interceptor
-// was the best interceptor for are compared.
-static int GetBestAirStrikeGain(const SUnitStats& before, const CvTacticalPlot* plotBefore, const SUnitStats& after, const CvTacticalPlot* plotAfter,
-	const CvUnit* pInterceptor, const CvTacticalPosition& parent, const CvTacticalPosition& child)
+// Vox Deorum: the target plots where the swept interceptor is the one an aircraft's strike meets in the parent position,
+// each with the aircraft's strike value there. Only these strikes can change when the interceptor is swept.
+static void GetGuardedAirStrikes(const SUnitStats& before, const CvTacticalPlot* plotBefore, const CvUnit* pInterceptor,
+	const CvTacticalPosition& parent, vector<pair<const CvTacticalPlot*, int> >& result)
 {
-	int iBestGain = 0;
-	vector<int> targets = TacticalAIHelpers::GetAirTargetPlots(before.pUnit, plotBefore->getPlot(), parent);
+	const vector<int>& targets = TacticalAIHelpers::GetAirTargetPlots(before.pUnit, plotBefore->getPlot(), parent);
 	for (size_t j = 0; j < targets.size(); j++)
 	{
 		const CvTacticalPlot* targetPlot = parent.getTactPlot(targets[j]);
-		const CvTacticalPlot* childTargetPlot = child.getTactPlot(targets[j]);
-		if (!targetPlot || !childTargetPlot || !targetPlot->isEnemy())
+		if (!targetPlot || !targetPlot->isEnemy())
 			continue;
 
 		const CvUnit* pParentBest = GetBestInterceptorInExpansion(before, targetPlot, parent);
 		if (!pParentBest || pParentBest != pInterceptor)
 			continue;
 
-		int iGain = GetAirStrikeValue(after, plotAfter, childTargetPlot, child) - GetAirStrikeValueInExpansion(before, plotBefore, targetPlot, parent);
-		iBestGain = max(iBestGain, iGain);
+		result.push_back(make_pair(targetPlot, GetAirStrikeValueInExpansion(before, plotBefore, targetPlot, parent)));
 	}
+}
+
+// Vox Deorum: the best gain, in damage points, of an aircraft's strike once the swept interceptor is out of the way, over
+// the guarded strikes. The strike is scored with the aircraft's state in the child position, which differs from the parent
+// state only for the sweeper, whose attack, moves and damage change with the sweep. A child shares the parent's plots, so
+// the plots work for both.
+static int GetBestAirStrikeGain(const vector<pair<const CvTacticalPlot*, int> >& guarded, const SUnitStats& after, const CvTacticalPlot* plotAfter,
+	const CvTacticalPosition& child)
+{
+	int iBestGain = 0;
+	for (size_t j = 0; j < guarded.size(); j++)
+		iBestGain = max(iBestGain, GetAirStrikeValue(after, plotAfter, guarded[j].first, child) - guarded[j].second);
 	return iBestGain;
 }
 
-// Vox Deorum: how much the best strike of each remaining aircraft gains from this sweep, in damage points (the unit of
-// iDamageDelta; RankScore scales it by 10). The gain covers both the higher landing chance and the lower interception damage.
-// Only the plots the swept interceptor was the best interceptor for can change. A group of identical aircraft counts for every
-// member that has not acted, through its lowest-ID member other than the sweeper, so the sweeper's own group mates count too.
-// The sweeper counts through its remaining attack, from its state after the sweep.
+// Vox Deorum: the sweep's ranking bonus: how much the best strike of each remaining aircraft gains from it, summed. Gains are
+// in damage points (the unit of iDamageDelta; RankScore scales it by 10), and cover both the higher landing chance and the
+// lower interception damage. Only the strikes the swept interceptor guards can change (GetGuardedAirStrikes).
+// - A group of identical aircraft counts once per available member, through its lowest-ID member other than the sweeper,
+//   so the sweeper's own group mates count too.
+// - The sweeper counts through its remaining attack, from its state after the sweep.
+// - In the position a search is expanding, the guarded strikes are remembered per aircraft and interceptor. For a certain
+//   sweep that damages only the interceptor, the gain of each aircraft other than the sweeper is remembered per damage
+//   too, since nothing else in the child changes for that aircraft.
 static int GetAirSweepRankBonus(const SUnitStats& sweeper, const CvUnit* pInterceptor, const STacticalAssignment* sweep, const CvTacticalPosition& parent)
 {
+	//the child is built only when a gain is not remembered
 	CvTacticalPosition child;
-	GetNextPosition(parent, sweep, child);
+	bool bChildBuilt = false;
+
+	//a certain sweep that damages only the interceptor gives a child that its damage fixes for every other aircraft
+	bool bRemember = &parent == gAirExpansion && !sweep->bUncertain && sweep->iDamagedCityId == -1;
+	int iSweepDamage = 0;
+	for (SUnitIDValueContainer::const_iterator it = sweep->unitDamage.begin(); it != sweep->unitDamage.end(); ++it)
+	{
+		if ((*it).first == pInterceptor->GetID())
+			iSweepDamage += (*it).second;
+		else
+			bRemember = false;
+	}
 
 	int iBonus = 0;
 	const vector<SUnitStats>& units = parent.getAvailableUnits();
@@ -934,11 +991,44 @@ static int GetAirSweepRankBonus(const SUnitStats& sweeper, const CvUnit* pInterc
 			continue;
 
 		const CvTacticalPlot* otherPlot = parent.getTactPlot(other.iPlotIndex);
-		const CvTacticalPlot* otherChildPlot = child.getTactPlot(other.iPlotIndex);
-		if (!otherPlot || !otherChildPlot)
+		if (!otherPlot)
 			continue;
 
-		int iBestGain = GetBestAirStrikeGain(other, otherPlot, other, otherChildPlot, pInterceptor, parent, child);
+		//the remembered gain for this damage if there is one, and the guarded strikes to score it from otherwise
+		int iBestGain = -1;
+		vector<pair<const CvTacticalPlot*, int> > localGuarded;
+		SGuardedAirStrikes* pRemembered = NULL;
+		if (bRemember)
+		{
+			pRemembered = &gExpansionGuardedStrikes[make_pair(other.iUnitID, pInterceptor->GetID())];
+			for (size_t k = 0; k < pRemembered->gainsByDamage.size(); k++)
+				if (pRemembered->gainsByDamage[k].first == iSweepDamage)
+					iBestGain = pRemembered->gainsByDamage[k].second;
+			if (!pRemembered->bTargetsKnown)
+			{
+				GetGuardedAirStrikes(other, otherPlot, pInterceptor, parent, pRemembered->targets);
+				pRemembered->bTargetsKnown = true;
+			}
+		}
+		else
+			GetGuardedAirStrikes(other, otherPlot, pInterceptor, parent, localGuarded);
+
+		if (iBestGain < 0)
+		{
+			const vector<pair<const CvTacticalPlot*, int> >& guarded = pRemembered ? pRemembered->targets : localGuarded;
+			iBestGain = 0;
+			if (!guarded.empty())
+			{
+				if (!bChildBuilt)
+				{
+					GetNextPosition(parent, sweep, child);
+					bChildBuilt = true;
+				}
+				iBestGain = GetBestAirStrikeGain(guarded, other, otherPlot, child);
+			}
+			if (pRemembered)
+				pRemembered->gainsByDamage.push_back(make_pair(iSweepDamage, iBestGain));
+		}
 		iBonus += (iBestGain * iGroupSize) / 10;
 	}
 
@@ -951,18 +1041,27 @@ static int GetAirSweepRankBonus(const SUnitStats& sweeper, const CvUnit* pInterc
 		sweeper.pUnit->GetCurrHitPoints() > sweeperAfter.iSelfDamage)
 	{
 		const CvTacticalPlot* sweeperPlot = parent.getTactPlot(sweeper.iPlotIndex);
-		const CvTacticalPlot* sweeperChildPlot = child.getTactPlot(sweeper.iPlotIndex);
-		if (sweeperPlot && sweeperChildPlot)
-			iBonus += GetBestAirStrikeGain(sweeper, sweeperPlot, sweeperAfter, sweeperChildPlot, pInterceptor, parent, child) / 10;
+		vector<pair<const CvTacticalPlot*, int> > guarded;
+		if (sweeperPlot)
+			GetGuardedAirStrikes(sweeper, sweeperPlot, pInterceptor, parent, guarded);
+		if (!guarded.empty())
+		{
+			if (!bChildBuilt)
+			{
+				GetNextPosition(parent, sweep, child);
+				bChildBuilt = true;
+			}
+			iBonus += GetBestAirStrikeGain(guarded, sweeperAfter, sweeperPlot, child) / 10;
+		}
 	}
 
 	return iBonus;
 }
 
-// Vox Deorum: an air sweep against the best interceptor over the target plot. The score is the damage the sweep trades with
-// that interceptor and nothing else, so a sweep followed by no strike earns only its fight. Its ranking value is how much
-// the remaining aircraft's strikes gain afterwards; it steers exploration but never enters a plan score. Scored into the
-// given row.
+// Vox Deorum: an air sweep against the best interceptor over the target plot, scored into the given row. The score is the
+// damage the sweep trades with that interceptor and nothing else, so a sweep followed by no strike earns only its fight.
+// Its ranking bonus is how much the remaining aircraft's strikes gain afterwards (GetAirSweepRankBonus). The bonus steers
+// exploration but never enters a plan score.
 static void ScorePlotForAirSweep(const SUnitStats& unit, const CvTacticalPlot* assumedUnitPlot, const CvTacticalPlot* targetPlot, const CvTacticalPosition& assumedPosition, STacticalAssignment& result)
 {
 	result.init(unit.iPlotIndex, targetPlot->getPlotIndex(), unit.iUnitID, unit.iMovesLeft, unit.eMoveStrategy, A_AIRSWEEP, GetPrevPlotScore(unit.iUnitID, assumedPosition));
@@ -1099,8 +1198,9 @@ void CvTacticalPosition::addAssignmentsWithAirGroups(const STacticalAssignment& 
 		standDownAirGroup(iGroupSecond);
 }
 
-// Vox Deorum: scores an aircraft's strikes and sweeps from the assumed base into gAirOptions and returns how many rank above
-// zero; those come first. When asked, also gives the rank of the best acceptable strike, INT_MIN for none.
+// Vox Deorum: scores an aircraft's strikes and sweeps from the assumed base into gAirOptions. The acceptable options that
+// rank above zero fill the first rows, and the return value counts them. When asked, also gives the rank of the best
+// acceptable strike at any rank, INT_MIN for none.
 static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const CvTacticalPlot* assumedUnitPlot, const CvTacticalPosition& position, int* piBestStrikeRank)
 {
 	if (piBestStrikeRank)
@@ -1115,7 +1215,7 @@ static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const
 	//strikes
 	if (pUnit->IsCanAttackRanged())
 	{
-		vector<int> targets = TacticalAIHelpers::GetAirTargetPlots(pUnit, pBasePlot, position);
+		const vector<int>& targets = TacticalAIHelpers::GetAirTargetPlots(pUnit, pBasePlot, position);
 		for (size_t i = 0; i < targets.size(); i++)
 		{
 			const CvTacticalPlot* enemyPlot = position.getTactPlot(targets[i]);
@@ -1126,7 +1226,7 @@ static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const
 				gAirOptions.resize(nOptions + 1);
 			STacticalAssignment& strike = gAirOptions[nOptions];
 			ScorePlotForAirStrike(unit, assumedUnitPlot, enemyPlot, position, strike);
-			//the sweeps ranked in this expansion compare against the same value (GetAirStrikeValueInExpansion)
+			//the sweeps ranked in this expansion compare against this same value (GetAirStrikeValueInExpansion)
 			if (&position == gAirExpansion)
 				gExpansionStrikeValues[make_pair(unit.iUnitID, targets[i])] = strike.IsAcceptable() ? max(0, strike.Score()) : 0;
 			if (piBestStrikeRank && strike.IsAcceptable())
@@ -1158,7 +1258,8 @@ static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const
 	return nOptions;
 }
 
-// Vox Deorum: the visible interceptors near any target an aircraft can strike or sweep from its base, sorted by ID
+// Vox Deorum: the IDs of the visible interceptors near any target the aircraft can strike or sweep from its base, sorted
+// and without repeats
 static vector<int> GetAirGroupInterceptors(const SUnitStats& unit, const CvTacticalPosition& position)
 {
 	vector<int> result;
@@ -1202,8 +1303,10 @@ static bool IsAirGroupIdle(const SUnitStats& unit, const CvTacticalPosition& pos
 	return true;
 }
 
-// Strikes, sweeps and standing down for an aircraft. Aircraft act from their base at full air range; a group of interchangeable
-// aircraft acts through its leader only. Every ranking here uses RankScore, so a sweep that protects strikes survives the cuts.
+// Strikes, sweeps and standing down for an aircraft, into gPossibleMoves. Aircraft act from their base at full air range; a
+// group of interchangeable aircraft acts through its leader only. Every ranking here uses RankScore, so a sweep that
+// protects strikes survives the cuts. piBestStrikeRank is passed to ScoreAirOptions, and stays as the caller set it when
+// no option is scored: a missing unit or plot, a group member that is not the leader, a full pool, or an idle group.
 void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& unit, int nMaxCount, int* piBestStrikeRank) const
 {
 	gPossibleMoves.clear();
@@ -1247,10 +1350,11 @@ void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& uni
 // With the air search the cap counts land and sea units and aircraft groups together, each group once, as the group
 // acts through its leader. A group that can only act after its ship moves keeps that ship, and the ship's cargo
 // goes if the ship cannot be kept. Reads the units in order of importance and returns the ones over the cap.
-// Also records the idle groups of the search: a leader with no positive strike or sweep (its importance from
-// dropSuperfluousUnits) whose best strike there, under the interceptors the position has left, ranks below
-// TACTSIM_AIR_HOPELESS_RANK. Sweeps need no check, since a leader without a positive option has no positive sweep.
-// Aircraft aboard a ship are never idle, since the ship's moves can bring new targets in range.
+// Also records the idle groups of the search. A group is idle when its leader has no positive strike or sweep (its
+// importance from dropSuperfluousUnits is not positive) and bestStrikeRanks, filled by that same pass, holds a rank below
+// TACTSIM_AIR_HOPELESS_RANK for it. Sweeps need no check of their own, since a leader without a positive option has no
+// positive sweep. A leader missing from bestStrikeRanks is never idle, and neither are aircraft aboard a ship, since the
+// ship's moves can bring new targets in range.
 vector<SUnitStats> CvTacticalPosition::getUnitsToDropWithAircraft(int iMaxUnitsToKeep, const map<int, int>& bestStrikeRanks) const
 {
 	const vector<SUnitStats>& availableUnits_r = availableUnits.read();

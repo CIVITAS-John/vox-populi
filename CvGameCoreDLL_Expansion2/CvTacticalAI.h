@@ -1142,8 +1142,9 @@ struct AttackResult
 class CDangerCache {
 public:
 	void clear();
-	void storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger);
-	bool findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const;
+	// Vox Deorum: the key takes a hash of the damage dealt that the danger reads (CvPlayer::GetPlotDangerDamageHash)
+	void storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, size_t iDamageHash, int iDanger);
+	bool findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, size_t iDamageHash, int& iDanger) const;
 protected:
 	//key is defender id, plot, previous damage and a hash of unit damage dealt
 	std::tr1::unordered_map<DefendKey, int, DefendKeyHash> dangerStats;

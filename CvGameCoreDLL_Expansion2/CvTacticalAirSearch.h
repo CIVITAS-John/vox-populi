@@ -34,8 +34,8 @@ namespace TacticalAIHelpers
 	// Vox Deorum: air search (VOX_TACTICAL_AIR_SEARCH)
 	// the number of participants a search keeps: land, sea and aircraft groups together
 	int GetTactSimMaxUnits();
-	// the plots an aircraft can launch from this turn: its base, plus every plot its carrying ship can reach
-	// Only plots a search around pSearchTarget can move the ship to are included.
+	// the plots an aircraft can launch from this turn: its base, plus the plots its carrying ship can reach that a search
+	// around pSearchTarget can move the ship to
 	vector<int> GetCargoLaunchPlots(const CvUnit* pUnit, const CvPlot* pSearchTarget);
 	// the first launch plot, base first, from which the aircraft can strike and/or sweep the target, or NULL
 	const CvPlot* GetFirstAirLaunchPlot(const CvUnit* pUnit, const CvPlot* pTarget, bool bStrike, bool bSweep);
@@ -46,8 +46,8 @@ namespace TacticalAIHelpers
 	// true if the aircraft could strike or sweep the target plot from the assumed base
 	bool CanAirUnitActAgainstPlot(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvPlot* pTarget);
 	// the enemy plots of the position within air range of the assumed base that the aircraft can strike
-	vector<int> GetAirTargetPlots(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvTacticalPosition& position);
-	// the interceptor that would engage the attacker over the plot given what the position has done so far
+	const vector<int>& GetAirTargetPlots(const CvUnit* pUnit, const CvPlot* pBasePlot, const CvTacticalPosition& position);
+	// the interceptor that would engage the attacker over the plot given what the position has done so far, or NULL
 	CvUnit* GetBestInterceptorInPosition(const CvPlot* pTargetPlot, const CvUnit* pAttacker, const CvTacticalPosition& position);
 	// the air sweeps the search considers from the assumed base: for each interceptor that covers an enemy plot the aircraft
 	// can sweep, the covered plot nearest the target, the lower plot index breaking ties. Pairs are (plot, interceptor),
@@ -65,7 +65,8 @@ namespace TacticalAIHelpers
 		int iExtraSelfDamage, int& iAttackerDamage);
 	// the aircraft and missiles aboard a ship that the viewing team can see
 	int CountVisibleAircraftCargo(const CvUnit* pShip, TeamTypes eViewerTeam);
-	// clears the per-search air state (aircraft groups, interceptors, air targets, untracked cargo, carrier reach, interception damage)
+	// clears the per-search air state: aircraft groups, idle groups, interceptors, air targets, untracked cargo, carrier reach,
+	// interception damage and interceptor values
 	void ResetAirSearchCaches();
 	// marks the position a search expands until EndAirExpansion, so the air scorers can remember what stays fixed meanwhile
 	void BeginAirExpansion(const CvTacticalPosition& position);
