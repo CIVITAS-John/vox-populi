@@ -1459,8 +1459,9 @@ protected:
 	//------------
 	const vector<int>& getRangeAttackPlotsForUnit(const SUnitStats& unit) const;
 	void getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const;
-	// Vox Deorum: strikes, sweeps and standing down for an aircraft that acts from its base
-	void getPreferredAssignmentsForAirUnit(const SUnitStats& unit, int nMaxCount) const;
+	// Vox Deorum: strikes, sweeps and standing down for an aircraft that acts from its base. When asked, also gives the
+	// rank of its best acceptable strike, INT_MIN for none; it stays as the caller set it when no option is scored.
+	void getPreferredAssignmentsForAirUnit(const SUnitStats& unit, int nMaxCount, int* piBestStrikeRank = NULL) const;
 	size_t addChild(CvTacticalPosition* pChild);
 	bool removeChild(CvTacticalPosition* pChild);
 	bool isMoveBlockedByOtherUnit(const STacticalAssignment& move, DomainTypes eDomain) const;
@@ -1531,10 +1532,9 @@ public:
 	void countEnemiesAndCheckVisibility();
 	void refreshVolatilePlotProperties(bool bInitial = false);
 	void dropSuperfluousUnits(int iMaxUnitsToKeep);
-	// Vox Deorum: the units over the cap under the air search, where aircraft groups count once and carriers stay with the cargo that depends on them
-	vector<SUnitStats> getUnitsToDropWithAircraft(int iMaxUnitsToKeep) const;
-	// Vox Deorum: true if an aircraft group's leader has no strike or sweep worth a search
-	bool isAirGroupHopeless(const SUnitStats& unit) const;
+	// Vox Deorum: the units over the cap under the air search, where aircraft groups count once and carriers stay with the cargo
+	// that depends on them. Also records the idle groups from the best strike rank of each group leader (unit ID to rank).
+	vector<SUnitStats> getUnitsToDropWithAircraft(int iMaxUnitsToKeep, const map<int, int>& bestStrikeRanks) const;
 	void addInitialAssignments();
 	bool makeNextAssignments(int iMaxBranches, int iMaxChoicesPerUnit, CvTactPosStorage& storage, 
 		vector<CvTacticalPosition*>& openPositionsHeap, vector<CvTacticalPosition*>& completedPositions,

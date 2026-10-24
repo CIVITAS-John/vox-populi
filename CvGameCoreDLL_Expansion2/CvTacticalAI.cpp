@@ -9688,8 +9688,11 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 	vector<SUnitStats>& availableUnits_w = availableUnits.write();
 
 	//get the best move for each unit
-	// Vox Deorum: with the air search an aircraft group is ranked once, by its leader, and its members share the rank
+	// Vox Deorum: with the air search an aircraft group is ranked once, by its leader, and its members share the rank. The
+	// leader's best strike rank, from the same scoring, decides whether the group is idle. The search start forgets the
+	// idle groups, so every leader is scored in full here.
 	map<int, int> groupImportance;
+	map<int, int> bestStrikeRanks;
 	for (size_t i = 0; i < availableUnits_w.size() && iMaxUnitsToKeep>0; i++)
 	{
 		bool bAirGroup = MOD_VOX_TACTICAL_AIR_SEARCH && availableUnits_w[i].eMoveStrategy == MS_AIR;
@@ -9697,7 +9700,14 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 			continue;
 
 		//this always returns at least one move
-		getPreferredAssignmentsForUnit(availableUnits_w[i], 1);
+		if (bAirGroup)
+		{
+			int iBestStrikeRank = INT_MAX;
+			getPreferredAssignmentsForAirUnit(availableUnits_w[i], 1, &iBestStrikeRank);
+			bestStrikeRanks[availableUnits_w[i].iUnitID] = iBestStrikeRank;
+		}
+		else
+			getPreferredAssignmentsForUnit(availableUnits_w[i], 1);
 		availableUnits_w[i].iImportanceScore = gPossibleMoves.empty() ? SHRT_MIN : gPossibleMoves.front().score;
 		gAssignmentStorage.reset(false);
 
@@ -9717,7 +9727,7 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 	//simply consider those extra units as blocked.
 	//since addAssignment will modify availableUnits, we copy the relevant units first
 	// Vox Deorum: the air search picks the units over its cap by group and carrier
-	vector<SUnitStats> unitsToDrop = MOD_VOX_TACTICAL_AIR_SEARCH ? getUnitsToDropWithAircraft(iMaxUnitsToKeep) :
+	vector<SUnitStats> unitsToDrop = MOD_VOX_TACTICAL_AIR_SEARCH ? getUnitsToDropWithAircraft(iMaxUnitsToKeep, bestStrikeRanks) :
 		vector<SUnitStats>(availableUnits_w.begin()+iMaxUnitsToKeep, availableUnits_w.end() );
 	if (!unitsToDrop.empty())
 	{

@@ -1100,9 +1100,12 @@ void CvTacticalPosition::addAssignmentsWithAirGroups(const STacticalAssignment& 
 }
 
 // Vox Deorum: scores an aircraft's strikes and sweeps from the assumed base into gAirOptions and returns how many rank above
-// zero; those come first.
-static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const CvTacticalPlot* assumedUnitPlot, const CvTacticalPosition& position)
+// zero; those come first. When asked, also gives the rank of the best acceptable strike, INT_MIN for none.
+static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const CvTacticalPlot* assumedUnitPlot, const CvTacticalPosition& position, int* piBestStrikeRank)
 {
+	if (piBestStrikeRank)
+		*piBestStrikeRank = INT_MIN;
+
 	if (unit.iAttacksLeft <= 0 || unit.iMovesLeft <= 0)
 		return 0;
 
@@ -1126,6 +1129,8 @@ static size_t ScoreAirOptions(const SUnitStats& unit, const CvUnit* pUnit, const
 			//the sweeps ranked in this expansion compare against the same value (GetAirStrikeValueInExpansion)
 			if (&position == gAirExpansion)
 				gExpansionStrikeValues[make_pair(unit.iUnitID, targets[i])] = strike.IsAcceptable() ? max(0, strike.Score()) : 0;
+			if (piBestStrikeRank && strike.IsAcceptable())
+				*piBestStrikeRank = max(*piBestStrikeRank, strike.RankScore());
 			if (strike.RankScore() > 0 && strike.IsAcceptable())
 				nOptions++;
 		}
@@ -1199,7 +1204,7 @@ static bool IsAirGroupIdle(const SUnitStats& unit, const CvTacticalPosition& pos
 
 // Strikes, sweeps and standing down for an aircraft. Aircraft act from their base at full air range; a group of interchangeable
 // aircraft acts through its leader only. Every ranking here uses RankScore, so a sweep that protects strikes survives the cuts.
-void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& unit, int nMaxCount) const
+void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& unit, int nMaxCount, int* piBestStrikeRank) const
 {
 	gPossibleMoves.clear();
 
@@ -1218,7 +1223,7 @@ void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& uni
 		return;
 
 	//an idle group has nothing but standing down until the interceptors over its targets change
-	size_t nOptions = IsAirGroupIdle(unit, *this) ? 0 : ScoreAirOptions(unit, pUnit, assumedUnitPlot, *this);
+	size_t nOptions = IsAirGroupIdle(unit, *this) ? 0 : ScoreAirOptions(unit, pUnit, assumedUnitPlot, *this, piBestStrikeRank);
 
 	//keep the best attacks, ties cut in option order like ranged attacks, so a group takes a bounded share of the
 	//pool the later units are scored in; a row always stays free for standing down
@@ -1239,41 +1244,14 @@ void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& uni
 	gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(standDown, standDown->RankScore()));
 }
 
-// true if an aircraft has no strike worth a search under the interceptors the position has left: none ranks at
-// TACTSIM_AIR_HOPELESS_RANK or better. Sweeps are left to the caller, which only asks about aircraft without a positive
-// option. Aircraft aboard a ship are always worth one, since the ship's moves can bring new targets in range.
-bool CvTacticalPosition::isAirGroupHopeless(const SUnitStats& unit) const
-{
-	const CvTacticalPlot* assumedUnitPlot = getTactPlot(unit.iPlotIndex);
-	if (unit.iCarrierID >= 0 || !unit.pUnit || !assumedUnitPlot)
-		return false;
-
-	if (unit.iAttacksLeft <= 0 || unit.iMovesLeft <= 0 || !unit.pUnit->IsCanAttackRanged())
-		return true;
-
-	int iBestRank = INT_MIN;
-	vector<int> targets = TacticalAIHelpers::GetAirTargetPlots(unit.pUnit, assumedUnitPlot->getPlot(), *this);
-	for (size_t i = 0; i < targets.size(); i++)
-	{
-		const CvTacticalPlot* enemyPlot = getTactPlot(targets[i]);
-		if (!enemyPlot || !enemyPlot->isEnemy())
-			continue;
-
-		STacticalAssignment strike;
-		ScorePlotForAirStrike(unit, assumedUnitPlot, enemyPlot, *this, strike);
-		if (strike.IsAcceptable())
-			iBestRank = max(iBestRank, strike.RankScore());
-	}
-
-	return iBestRank < TACTSIM_AIR_HOPELESS_RANK;
-}
-
 // With the air search the cap counts land and sea units and aircraft groups together, each group once, as the group
 // acts through its leader. A group that can only act after its ship moves keeps that ship, and the ship's cargo
 // goes if the ship cannot be kept. Reads the units in order of importance and returns the ones over the cap.
 // Also records the idle groups of the search: a leader with no positive strike or sweep (its importance from
-// dropSuperfluousUnits) and no strike at TACTSIM_AIR_HOPELESS_RANK or better.
-vector<SUnitStats> CvTacticalPosition::getUnitsToDropWithAircraft(int iMaxUnitsToKeep) const
+// dropSuperfluousUnits) whose best strike there, under the interceptors the position has left, ranks below
+// TACTSIM_AIR_HOPELESS_RANK. Sweeps need no check, since a leader without a positive option has no positive sweep.
+// Aircraft aboard a ship are never idle, since the ship's moves can bring new targets in range.
+vector<SUnitStats> CvTacticalPosition::getUnitsToDropWithAircraft(int iMaxUnitsToKeep, const map<int, int>& bestStrikeRanks) const
 {
 	const vector<SUnitStats>& availableUnits_r = availableUnits.read();
 
@@ -1283,7 +1261,11 @@ vector<SUnitStats> CvTacticalPosition::getUnitsToDropWithAircraft(int iMaxUnitsT
 	{
 		const SUnitStats& unit = availableUnits_r[i];
 		presentIds.insert(unit.iUnitID);
-		if (unit.eMoveStrategy == MS_AIR && unit.iImportanceScore <= 0 && isAirGroupLeader(unit.iUnitID) && isAirGroupHopeless(unit))
+		if (unit.eMoveStrategy != MS_AIR || unit.iImportanceScore > 0 || unit.iCarrierID >= 0 || !isAirGroupLeader(unit.iUnitID))
+			continue;
+
+		map<int, int>::const_iterator itRank = bestStrikeRanks.find(unit.iUnitID);
+		if (itRank != bestStrikeRanks.end() && itRank->second < TACTSIM_AIR_HOPELESS_RANK)
 			gIdleAirGroups[unit.iAirGroup] = GetAirGroupInterceptors(unit, *this);
 	}
 
