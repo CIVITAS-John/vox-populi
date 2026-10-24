@@ -29,6 +29,77 @@ map<vector<int>, int> gAirGroupKeys;
 // Vox Deorum: an air group leader's scored options before the cut keeps the best. The rows are reused, so only
 // the first options of a call are current.
 vector<STacticalAssignment> gAirOptions;
+// Vox Deorum: the inputs of one interception's damage to the attacker: both units, the target plot and the damage the position
+// assumes for each. Real units and the map stay fixed while a search runs, so nothing else changes the result.
+struct SInterceptionKey
+{
+	int iInterceptorID;
+	int iAttackerID;
+	int iPlotIndex;
+	int iInterceptorDamage;
+	int iAttackerDamage;
+
+	bool operator==(const SInterceptionKey& rhs) const
+	{
+		return iInterceptorID == rhs.iInterceptorID && iAttackerID == rhs.iAttackerID && iPlotIndex == rhs.iPlotIndex &&
+			iInterceptorDamage == rhs.iInterceptorDamage && iAttackerDamage == rhs.iAttackerDamage;
+	}
+};
+
+// Vox Deorum: hashes an SInterceptionKey, mixing its fields like AttackKeyHash
+struct SInterceptionKeyHash
+{
+	size_t operator()(const SInterceptionKey& k) const
+	{
+		size_t h = (size_t)k.iInterceptorID;
+		h ^= (size_t)k.iAttackerID + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= (size_t)k.iPlotIndex + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= (size_t)k.iInterceptorDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= (size_t)k.iAttackerDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
+		return h;
+	}
+};
+
+// Vox Deorum: the inputs of an interceptor's value over a plot (CvPlot::GetInterceptorValue) that change during a search:
+// the interceptor, the plot, and the damage and interceptions the position assumes for the interceptor
+struct SInterceptorValueKey
+{
+	int iInterceptorID;
+	int iPlotIndex;
+	int iDamage;
+	int iInterceptionsUsed;
+
+	bool operator==(const SInterceptorValueKey& rhs) const
+	{
+		return iInterceptorID == rhs.iInterceptorID && iPlotIndex == rhs.iPlotIndex && iDamage == rhs.iDamage &&
+			iInterceptionsUsed == rhs.iInterceptionsUsed;
+	}
+};
+
+// Vox Deorum: hashes an SInterceptorValueKey, mixing its fields like AttackKeyHash
+struct SInterceptorValueKeyHash
+{
+	size_t operator()(const SInterceptorValueKey& k) const
+	{
+		size_t h = (size_t)k.iInterceptorID;
+		h ^= (size_t)k.iPlotIndex + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= (size_t)k.iDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= (size_t)k.iInterceptionsUsed + 0x9e3779b9 + (h << 6) + (h >> 2);
+		return h;
+	}
+};
+
+// Vox Deorum: the position a search is expanding (see BeginAirExpansion), or NULL. The caches below are read only
+// while it is set, since outside a search executed moves change the real units.
+const CvTacticalPosition* gAirExpansion = NULL;
+// Vox Deorum: interception damage to the attacker, for one search tree
+tr1::unordered_map<SInterceptionKey, int, SInterceptionKeyHash> gInterceptionDamage;
+// Vox Deorum: interceptor values over a plot, for one search tree
+tr1::unordered_map<SInterceptorValueKey, int, SInterceptorValueKeyHash> gInterceptorValues;
+// Vox Deorum: per (aircraft, target plot) in the position being expanded, the strike value and the interceptor it meets.
+// Every sweep the position ranks compares against these same strikes.
+tr1::unordered_map<pair<int, int>, int, SIntPairHash> gExpansionStrikeValues;
+tr1::unordered_map<pair<int, int>, const CvUnit*, SIntPairHash> gExpansionInterceptors;
 // Vox Deorum: a missile on a base about to be lost fires before an equal missile on a safe base. The bonus is the value of a
 // unit that would otherwise be lost, on the scale of the bonus for sinking a ship with aircraft on board.
 const int TACTSIM_ENDANGERED_MISSILE_BONUS = 15;
@@ -42,6 +113,73 @@ void TacticalAIHelpers::ResetAirSearchCaches()
 	gAirTargetPlots.clear();
 	gUntrackedCargo.clear();
 	gCargoLaunchPlots.clear();
+	gInterceptionDamage.clear();
+	gInterceptorValues.clear();
+}
+
+// Vox Deorum: marks the position a search is about to expand, so the air scorers can remember what stays fixed until
+// EndAirExpansion. A position without a parent starts a new search tree, which forgets the last tree's interceptions.
+void TacticalAIHelpers::BeginAirExpansion(const CvTacticalPosition& position)
+{
+	if (!position.getParent())
+	{
+		gInterceptionDamage.clear();
+		gInterceptorValues.clear();
+	}
+	gExpansionStrikeValues.clear();
+	gExpansionInterceptors.clear();
+	gAirExpansion = &position;
+}
+
+// Vox Deorum: ends the expansion BeginAirExpansion marked, so later calls compute everything directly
+void TacticalAIHelpers::EndAirExpansion()
+{
+	gAirExpansion = NULL;
+}
+
+// Vox Deorum: CvUnit::GetInterceptionDamage without randomness, remembered for the search tree while a search expands a position
+static int GetInterceptionDamageInSearch(const CvUnit* pInterceptor, const CvUnit* pAttacker, const CvPlot* pTargetPlot,
+	int iInterceptorDamage, int iAttackerDamage)
+{
+	if (!gAirExpansion)
+		return pInterceptor->GetInterceptionDamage(pAttacker, false, pTargetPlot, iInterceptorDamage, iAttackerDamage);
+
+	SInterceptionKey key;
+	key.iInterceptorID = pInterceptor->GetID();
+	key.iAttackerID = pAttacker->GetID();
+	key.iPlotIndex = pTargetPlot->GetPlotIndex();
+	key.iInterceptorDamage = iInterceptorDamage;
+	key.iAttackerDamage = iAttackerDamage;
+
+	tr1::unordered_map<SInterceptionKey, int, SInterceptionKeyHash>::const_iterator it = gInterceptionDamage.find(key);
+	if (it != gInterceptionDamage.end())
+		return it->second;
+
+	int iDamage = pInterceptor->GetInterceptionDamage(pAttacker, false, pTargetPlot, iInterceptorDamage, iAttackerDamage);
+	gInterceptionDamage[key] = iDamage;
+	return iDamage;
+}
+
+// Vox Deorum: CvPlot::GetInterceptorValue for the interceptor's distance to the plot, remembered for the search tree while a
+// search expands a position
+static int GetInterceptorValueInSearch(const CvPlot* pTargetPlot, const CvUnit* pInterceptor, int iDistance, int iDamage, int iInterceptionsUsed)
+{
+	if (!gAirExpansion)
+		return pTargetPlot->GetInterceptorValue(pInterceptor, iDistance, false, iDamage, iInterceptionsUsed);
+
+	SInterceptorValueKey key;
+	key.iInterceptorID = pInterceptor->GetID();
+	key.iPlotIndex = pTargetPlot->GetPlotIndex();
+	key.iDamage = iDamage;
+	key.iInterceptionsUsed = iInterceptionsUsed;
+
+	tr1::unordered_map<SInterceptorValueKey, int, SInterceptorValueKeyHash>::const_iterator it = gInterceptorValues.find(key);
+	if (it != gInterceptorValues.end())
+		return it->second;
+
+	int iValue = pTargetPlot->GetInterceptorValue(pInterceptor, iDistance, false, iDamage, iInterceptionsUsed);
+	gInterceptorValues[key] = iValue;
+	return iValue;
 }
 
 // Vox Deorum: the chance in 1/10000 that this interceptor stops this attacker: its interception probability from the HP it
@@ -69,7 +207,7 @@ int TacticalAIHelpers::GetAirStrikeChance(const CvUnit* pAttacker, const CvUnit*
 
 	// both sides fight at their assumed HP; without the air search the live estimate keeps the attacker at full strength
 	int iAssumedAttackerDamage = MOD_VOX_TACTICAL_AIR_SEARCH ? iExtraSelfDamage : 0;
-	int iInterceptionDamage = min(pInterceptor->GetInterceptionDamage(pAttacker, false, pTargetPlot, iInterceptorExtraDamage, iAssumedAttackerDamage), iRemainingHitPoints);
+	int iInterceptionDamage = min(GetInterceptionDamageInSearch(pInterceptor, pAttacker, pTargetPlot, iInterceptorExtraDamage, iAssumedAttackerDamage), iRemainingHitPoints);
 	// Execution continues the strike when an interception does no damage.
 	if (iInterceptionDamage <= 0)
 		return 10000;
@@ -274,7 +412,7 @@ CvUnit* TacticalAIHelpers::GetBestInterceptorInPosition(const CvPlot* pTargetPlo
 		if (position.isInterceptorBaseLost(iUnitID))
 			continue;
 
-		int iValue = pTargetPlot->GetInterceptorValue(pInterceptorUnit, candidates[i].iDistance, false, position.GetUnitDamage(iUnitID), position.getInterceptionsUsed(iUnitID));
+		int iValue = GetInterceptorValueInSearch(pTargetPlot, pInterceptorUnit, candidates[i].iDistance, position.GetUnitDamage(iUnitID), position.getInterceptionsUsed(iUnitID));
 		if (iValue < 0)
 			continue;
 
@@ -335,8 +473,9 @@ int TacticalAIHelpers::GetAirStrikeChanceInPosition(const CvUnit* pAttacker, con
 }
 
 // Vox Deorum: the damage an air sweep trades with the interceptor it engages, without randomness. Ground AA takes no damage
-// and hits the sweeper with reduced interception damage; an air interceptor trades melee-style damage.
-void TacticalAIHelpers::GetSimulatedAirSweepDamage(const CvUnit* pAttacker, const CvUnit* pInterceptor, const CvPlot* pTargetPlot,
+// and hits the sweeper with reduced interception damage; an air interceptor trades melee-style damage. The sweeper fights
+// from the assumed launch plot, which differs from its real plot when a carrier is planned to move.
+void TacticalAIHelpers::GetSimulatedAirSweepDamage(const CvUnit* pAttacker, const CvUnit* pInterceptor, const CvPlot* pAttackerPlot, const CvPlot* pTargetPlot,
 	int iAttackerExtraDamage, int iInterceptorExtraDamage, int& iDamageToInterceptor, int& iDamageToAttacker)
 {
 	iDamageToInterceptor = 0;
@@ -350,7 +489,7 @@ void TacticalAIHelpers::GetSimulatedAirSweepDamage(const CvUnit* pAttacker, cons
 	// Ground AA interceptor
 	if (pInterceptor->getDomainType() != DOMAIN_AIR)
 	{
-		int iInterceptionDamage = pInterceptor->GetInterceptionDamage(pAttacker, false, pTargetPlot, iInterceptorExtraDamage, iAttackerExtraDamage);
+		int iInterceptionDamage = GetInterceptionDamageInSearch(pInterceptor, pAttacker, pTargetPlot, iInterceptorExtraDamage, iAttackerExtraDamage);
 
 		// Reduce damage for performing a sweep
 		iInterceptionDamage *= 100 + /*-50*/ GD_INT_GET(AIR_SWEEP_INTERCEPTION_DAMAGE_MOD);
@@ -361,13 +500,13 @@ void TacticalAIHelpers::GetSimulatedAirSweepDamage(const CvUnit* pAttacker, cons
 	}
 
 	// Air interceptor
-	int iAttackerStrength = pAttacker->GetMaxRangedCombatStrength(pInterceptor, NULL, true, NULL, NULL, false, false, iAttackerExtraDamage, iInterceptorExtraDamage);
+	int iAttackerStrength = pAttacker->GetMaxRangedCombatStrength(pInterceptor, NULL, true, pAttackerPlot, NULL, false, false, iAttackerExtraDamage, iInterceptorExtraDamage);
 
 	// Mod to air sweep strength
 	iAttackerStrength *= (100 + pAttacker->GetAirSweepCombatModifier());
 	iAttackerStrength /= 100;
 
-	int iDefenderStrength = pInterceptor->GetMaxRangedCombatStrength(pAttacker, NULL, false, NULL, NULL, false, false, iInterceptorExtraDamage, iAttackerExtraDamage);
+	int iDefenderStrength = pInterceptor->GetMaxRangedCombatStrength(pAttacker, NULL, false, NULL, pAttackerPlot, false, false, iInterceptorExtraDamage, iAttackerExtraDamage);
 
 	int iDefenderDamageInflicted = 0;
 	int iAttackerDamageInflicted = pAttacker->getMeleeCombatDamage(iAttackerStrength, iDefenderStrength, iDefenderDamageInflicted, false, pInterceptor, iAttackerExtraDamage, iInterceptorExtraDamage);
@@ -691,10 +830,69 @@ static int GetAirStrikeValue(const SUnitStats& unit, const CvTacticalPlot* unitP
 	return strike.IsAcceptable() ? max(0, strike.Score()) : 0;
 }
 
+// Vox Deorum: GetAirStrikeValue, remembered for the position a search is expanding. Other positions are scored directly.
+static int GetAirStrikeValueInExpansion(const SUnitStats& unit, const CvTacticalPlot* unitPlot, const CvTacticalPlot* targetPlot, const CvTacticalPosition& position)
+{
+	if (&position != gAirExpansion)
+		return GetAirStrikeValue(unit, unitPlot, targetPlot, position);
+
+	pair<int, int> key(unit.iUnitID, targetPlot->getPlotIndex());
+	tr1::unordered_map<pair<int, int>, int, SIntPairHash>::const_iterator it = gExpansionStrikeValues.find(key);
+	if (it != gExpansionStrikeValues.end())
+		return it->second;
+
+	int iValue = GetAirStrikeValue(unit, unitPlot, targetPlot, position);
+	gExpansionStrikeValues[key] = iValue;
+	return iValue;
+}
+
+// Vox Deorum: GetBestInterceptorInPosition for an aircraft, remembered for the position a search is expanding
+static const CvUnit* GetBestInterceptorInExpansion(const SUnitStats& unit, const CvTacticalPlot* targetPlot, const CvTacticalPosition& position)
+{
+	if (&position != gAirExpansion)
+		return TacticalAIHelpers::GetBestInterceptorInPosition(targetPlot->getPlot(), unit.pUnit, position);
+
+	pair<int, int> key(unit.iUnitID, targetPlot->getPlotIndex());
+	tr1::unordered_map<pair<int, int>, const CvUnit*, SIntPairHash>::const_iterator it = gExpansionInterceptors.find(key);
+	if (it != gExpansionInterceptors.end())
+		return it->second;
+
+	const CvUnit* pInterceptor = TacticalAIHelpers::GetBestInterceptorInPosition(targetPlot->getPlot(), unit.pUnit, position);
+	gExpansionInterceptors[key] = pInterceptor;
+	return pInterceptor;
+}
+
+// Vox Deorum: the best gain, in damage points, of an aircraft's strike once the swept interceptor is out of the way. The
+// strike is scored with the aircraft's state in the parent position before, and in the child position after; the two
+// differ only for the sweeper, whose attack, moves and damage change with the sweep. Only the targets the swept interceptor
+// was the best interceptor for are compared.
+static int GetBestAirStrikeGain(const SUnitStats& before, const CvTacticalPlot* plotBefore, const SUnitStats& after, const CvTacticalPlot* plotAfter,
+	const CvUnit* pInterceptor, const CvTacticalPosition& parent, const CvTacticalPosition& child)
+{
+	int iBestGain = 0;
+	vector<int> targets = TacticalAIHelpers::GetAirTargetPlots(before.pUnit, plotBefore->getPlot(), parent);
+	for (size_t j = 0; j < targets.size(); j++)
+	{
+		const CvTacticalPlot* targetPlot = parent.getTactPlot(targets[j]);
+		const CvTacticalPlot* childTargetPlot = child.getTactPlot(targets[j]);
+		if (!targetPlot || !childTargetPlot || !targetPlot->isEnemy())
+			continue;
+
+		const CvUnit* pParentBest = GetBestInterceptorInExpansion(before, targetPlot, parent);
+		if (!pParentBest || pParentBest != pInterceptor)
+			continue;
+
+		int iGain = GetAirStrikeValue(after, plotAfter, childTargetPlot, child) - GetAirStrikeValueInExpansion(before, plotBefore, targetPlot, parent);
+		iBestGain = max(iBestGain, iGain);
+	}
+	return iBestGain;
+}
+
 // Vox Deorum: how much the best strike of each remaining aircraft gains from this sweep, in damage points (the unit of
 // iDamageDelta; RankScore scales it by 10). The gain covers both the higher landing chance and the lower interception damage.
 // Only the plots the swept interceptor was the best interceptor for can change. A group of identical aircraft counts for every
 // member that has not acted, through its lowest-ID member other than the sweeper, so the sweeper's own group mates count too.
+// The sweeper counts through its remaining attack, from its state after the sweep.
 static int GetAirSweepRankBonus(const SUnitStats& sweeper, const CvUnit* pInterceptor, const STacticalAssignment* sweep, const CvTacticalPosition& parent)
 {
 	CvTacticalPosition child;
@@ -733,24 +931,22 @@ static int GetAirSweepRankBonus(const SUnitStats& sweeper, const CvUnit* pInterc
 		if (!otherPlot || !otherChildPlot)
 			continue;
 
-		int iBestGain = 0;
-		vector<int> targets = TacticalAIHelpers::GetAirTargetPlots(other.pUnit, otherPlot->getPlot(), parent);
-		for (size_t j = 0; j < targets.size(); j++)
-		{
-			const CvTacticalPlot* targetPlot = parent.getTactPlot(targets[j]);
-			const CvTacticalPlot* childTargetPlot = child.getTactPlot(targets[j]);
-			if (!targetPlot || !childTargetPlot || !targetPlot->isEnemy())
-				continue;
-
-			CvUnit* pParentBest = TacticalAIHelpers::GetBestInterceptorInPosition(targetPlot->getPlot(), other.pUnit, parent);
-			if (!pParentBest || pParentBest != pInterceptor)
-				continue;
-
-			int iGain = GetAirStrikeValue(other, otherChildPlot, childTargetPlot, child) - GetAirStrikeValue(other, otherPlot, targetPlot, parent);
-			iBestGain = max(iBestGain, iGain);
-		}
-
+		int iBestGain = GetBestAirStrikeGain(other, otherPlot, other, otherChildPlot, pInterceptor, parent, child);
 		iBonus += (iBestGain * iGroupSize) / 10;
+	}
+
+	//the sweeper's own next attack, with the attack, moves and damage the sweep leaves it, if it survives the sweep
+	SUnitStats sweeperAfter = sweeper;
+	sweeperAfter.iAttacksLeft--;
+	sweeperAfter.iMovesLeft = sweep->iRemainingMoves;
+	sweeperAfter.iSelfDamage += sweep->iSelfDamage;
+	if (sweeperAfter.iAttacksLeft > 0 && sweeperAfter.iMovesLeft > 0 && sweeper.pUnit->IsCanAttackRanged() &&
+		sweeper.pUnit->GetCurrHitPoints() > sweeperAfter.iSelfDamage)
+	{
+		const CvTacticalPlot* sweeperPlot = parent.getTactPlot(sweeper.iPlotIndex);
+		const CvTacticalPlot* sweeperChildPlot = child.getTactPlot(sweeper.iPlotIndex);
+		if (sweeperPlot && sweeperChildPlot)
+			iBonus += GetBestAirStrikeGain(sweeper, sweeperPlot, sweeperAfter, sweeperChildPlot, pInterceptor, parent, child) / 10;
 	}
 
 	return iBonus;
@@ -775,7 +971,7 @@ static void ScorePlotForAirSweep(const SUnitStats& unit, const CvTacticalPlot* a
 
 	int iDamageToInterceptor = 0;
 	int iDamageToAttacker = 0;
-	TacticalAIHelpers::GetSimulatedAirSweepDamage(pUnit, pInterceptor, pTarget, unit.iSelfDamage, assumedPosition.GetUnitDamage(pInterceptor->GetID()), iDamageToInterceptor, iDamageToAttacker);
+	TacticalAIHelpers::GetSimulatedAirSweepDamage(pUnit, pInterceptor, assumedUnitPlot->getPlot(), pTarget, unit.iSelfDamage, assumedPosition.GetUnitDamage(pInterceptor->GetID()), iDamageToInterceptor, iDamageToAttacker);
 
 	result.iSelfDamage = iDamageToAttacker;
 	if (iDamageToInterceptor > 0)
@@ -935,6 +1131,9 @@ void CvTacticalPosition::getPreferredAssignmentsForAirUnit(const SUnitStats& uni
 					gAirOptions.resize(nOptions + 1);
 				STacticalAssignment& strike = gAirOptions[nOptions];
 				ScorePlotForAirStrike(unit, assumedUnitPlot, enemyPlot, *this, strike);
+				//the sweeps ranked in this expansion compare against the same value (GetAirStrikeValueInExpansion)
+				if (this == gAirExpansion)
+					gExpansionStrikeValues[make_pair(unit.iUnitID, targets[i])] = strike.IsAcceptable() ? max(0, strike.Score()) : 0;
 				if (strike.RankScore() > 0 && strike.IsAcceptable())
 					nOptions++;
 			}

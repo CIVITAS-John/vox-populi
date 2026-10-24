@@ -57,16 +57,20 @@ namespace TacticalAIHelpers
 	// weights the attacker's losses; the damage the strike deals is left for the caller to cap and weight.
 	int GetAirStrikeChanceInPosition(const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvTacticalPosition& position,
 		int& iAttackerDamage, int iExtraSelfDamage);
-	// the damage an air sweep trades with the interceptor, without randomness
-	void GetSimulatedAirSweepDamage(const CvUnit* pAttacker, const CvUnit* pInterceptor, const CvPlot* pTargetPlot,
+	// the damage an air sweep from the assumed launch plot trades with the interceptor, without randomness
+	void GetSimulatedAirSweepDamage(const CvUnit* pAttacker, const CvUnit* pInterceptor, const CvPlot* pAttackerPlot, const CvPlot* pTargetPlot,
 		int iAttackerExtraDamage, int iInterceptorExtraDamage, int& iDamageToInterceptor, int& iDamageToAttacker);
 	// the chance in 1/10000 that an air strike lands past the given interceptor (or none), capping and weighting the attacker's losses
 	int GetAirStrikeChance(const CvUnit* pAttacker, const CvUnit* pInterceptor, const CvPlot* pTargetPlot, int iInterceptorExtraDamage,
 		int iExtraSelfDamage, int& iAttackerDamage);
 	// the aircraft and missiles aboard a ship that the viewing team can see
 	int CountVisibleAircraftCargo(const CvUnit* pShip, TeamTypes eViewerTeam);
-	// clears the per-search air state (aircraft groups, interceptors, air targets, untracked cargo, carrier reach)
+	// clears the per-search air state (aircraft groups, interceptors, air targets, untracked cargo, carrier reach, interception damage)
 	void ResetAirSearchCaches();
+	// marks the position a search expands until EndAirExpansion, so the air scorers can remember what stays fixed meanwhile
+	void BeginAirExpansion(const CvTacticalPosition& position);
+	// ends the expansion BeginAirExpansion marked
+	void EndAirExpansion();
 }
 
 #endif //CIV5_TACTICAL_AIR_SEARCH_H

@@ -7538,18 +7538,17 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 		int iGarrisonDamage = 0;
 
-		if (bAir)
-		{
-			// Vox Deorum: the attack cache cannot see the interceptor state, so aircraft are never cached
-			iCityDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pEnemyCity, pUnit, pUnitPlot, iDamageReceived, iGarrisonDamage, true, iSelfDamage, iPrevCityDamage, iPrevUnitDamage, true, true, pEnemyUnit);
-			iStrikeChance = TacticalAIHelpers::GetAirStrikeChanceInPosition(pUnit, pTestPlot, assumedPosition, iDamageReceived, iSelfDamage);
-		}
 		//first try the cache
-		else if (!cache.findAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived))
+		if (!cache.findAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived))
 		{
 			iCityDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pEnemyCity, pUnit, pUnitPlot, iDamageReceived, iGarrisonDamage, true, iSelfDamage, iPrevCityDamage, iPrevUnitDamage, true, true, pEnemyUnit);
 			cache.storeAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived);
 		}
+
+		// Vox Deorum: an air strike's damage is cached like any attack's, as it never looks at interceptors. The landing chance
+		// against the interceptors the position has left is worked out on every call, after the damage.
+		if (bAir)
+			iStrikeChance = TacticalAIHelpers::GetAirStrikeChanceInPosition(pUnit, pTestPlot, assumedPosition, iDamageReceived, iSelfDamage);
 
 		iBonusScore += pUnit->GetRangeCombatSplashDamage(pTestPlot) + (pUnit->GetCityAttackPlunderModifier() / 50);
 		iPrevCityHitPoints = pEnemyCity->GetMaxHitPoints() - pEnemyCity->getDamage() - iPrevCityDamage;
@@ -7626,19 +7625,18 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 		//first use the cache
 		int iCityDamageDealt;
-		if (bAir)
-		{
-			// Vox Deorum: the attack cache cannot see the interceptor state, so aircraft are never cached.
-			// The landing chance against the interceptors the position has left is applied once, in the scoring below.
-			iUnitDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(pEnemyUnit, pUnit, pTestPlot, pUnitPlot, iDamageReceived, true, iSelfDamage, iPrevUnitDamage, true);
-			iStrikeChance = TacticalAIHelpers::GetAirStrikeChanceInPosition(pUnit, pTestPlot, assumedPosition, iDamageReceived, iSelfDamage);
-		}
-		else if (!cache.findAttack(pUnit->GetID(), pUnitPlot->GetPlotIndex(), pEnemyUnit->GetID(), -1, iSelfDamage, iPrevUnitDamage, 0, iUnitDamageDealt, iCityDamageDealt, iDamageReceived))
+		if (!cache.findAttack(pUnit->GetID(), pUnitPlot->GetPlotIndex(), pEnemyUnit->GetID(), -1, iSelfDamage, iPrevUnitDamage, 0, iUnitDamageDealt, iCityDamageDealt, iDamageReceived))
 		{
 			//use the quick and dirty method ... and don't check for general bonus etc (their position isn't official yet - we handle that below)
 			iUnitDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(pEnemyUnit, pUnit, pTestPlot, pUnitPlot, iDamageReceived, true, iSelfDamage, iPrevUnitDamage, true);
 			cache.storeAttack(pUnit->GetID(), pUnitPlot->GetPlotIndex(), pEnemyUnit->GetID(), -1, iSelfDamage, iPrevUnitDamage, 0, iUnitDamageDealt, iCityDamageDealt, iDamageReceived);
 		}
+
+		// Vox Deorum: an air strike's damage is cached like any attack's, as it never looks at interceptors. The landing chance
+		// against the interceptors the position has left is worked out on every call, after the damage, and applied once in
+		// the scoring below.
+		if (bAir)
+			iStrikeChance = TacticalAIHelpers::GetAirStrikeChanceInPosition(pUnit, pTestPlot, assumedPosition, iDamageReceived, iSelfDamage);
 
 		iBonusScore += pUnit->EstimatePlagueDamage(pEnemyUnit);
 
@@ -7713,7 +7711,8 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	}
 
 	//fake siege tower bonus
-	if (assumedPosition.HasCitySupport() && tactPlot->isEnemyCity())
+	// Vox Deorum: no support is arranged for air strikes, so aircraft get no hypothetical tower bonus
+	if (assumedPosition.HasCitySupport() && tactPlot->isEnemyCity() && !bAir)
 	{
 		if (pEnemyUnit)
 			unitDamageDealt.ChangeValue(pEnemyUnit->GetID(), unitDamageDealt.GetValue(pEnemyUnit->GetID()) / 5);
@@ -9803,11 +9802,18 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 	gAssignmentStorage.reset(false);
 	const vector<SUnitStats>& availableUnits_r = availableUnits.read();
 
+	// Vox Deorum: while this position is expanded, the air scorers remember interceptions and strike values
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		TacticalAIHelpers::BeginAirExpansion(*this);
+
 	for (size_t i=0; i< availableUnits_r.size(); i++)
 	{
 		getPreferredAssignmentsForUnit(availableUnits_r[i], iMaxChoicesPerUnit);
 		gOverAllChoices.insert( gOverAllChoices.end(), gPossibleMoves.begin(), gPossibleMoves.end() );
 	}
+
+	if (MOD_VOX_TACTICAL_AIR_SEARCH)
+		TacticalAIHelpers::EndAirExpansion();
 
 	//important that moves are ordered by quality instead of unit id
 	std::stable_sort(gOverAllChoices.begin(), gOverAllChoices.end());

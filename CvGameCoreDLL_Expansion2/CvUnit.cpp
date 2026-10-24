@@ -5481,9 +5481,11 @@ int CvUnit::getMeleeCombatDamage(int iStrength, int iOpponentStrength, int& iSel
 			iSelfDamageInflicted = (iSelfDamageInflicted * (pkOtherUnit->GetCurrHitPoints() - iExtraDefenderDamage)) / iDamage;
 		}
 		// will only the attacker be killed? reduce damage taken by the defender
-		else if (iSelfDamageInflicted >= GetCurrHitPoints())
+		// Vox Deorum: the attacker's HP already takes the extra self damage the simulation assumes
+		else if (iSelfDamageInflicted >= max(0, GetCurrHitPoints() - iExtraSelfDamage))
 		{
-			iDamage = (iDamage * (GetCurrHitPoints() - iExtraSelfDamage)) / iSelfDamageInflicted;
+			int iAttackerHP = max(0, GetCurrHitPoints() - iExtraSelfDamage);
+			iDamage = iSelfDamageInflicted > 0 ? (iDamage * iAttackerHP) / iSelfDamageInflicted : 0;
 		}
 	}
 	return iDamage;
