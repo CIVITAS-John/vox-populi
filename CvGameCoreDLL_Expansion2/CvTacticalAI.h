@@ -1533,6 +1533,8 @@ public:
 	void dropSuperfluousUnits(int iMaxUnitsToKeep);
 	// Vox Deorum: the units over the cap under the air search, where aircraft groups count once and carriers stay with the cargo that depends on them
 	vector<SUnitStats> getUnitsToDropWithAircraft(int iMaxUnitsToKeep) const;
+	// Vox Deorum: true if an aircraft group's leader has no strike or sweep worth a search
+	bool isAirGroupHopeless(const SUnitStats& unit) const;
 	void addInitialAssignments();
 	bool makeNextAssignments(int iMaxBranches, int iMaxChoicesPerUnit, CvTactPosStorage& storage, 
 		vector<CvTacticalPosition*>& openPositionsHeap, vector<CvTacticalPosition*>& completedPositions,
