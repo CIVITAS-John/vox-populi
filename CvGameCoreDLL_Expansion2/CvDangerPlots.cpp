@@ -402,15 +402,6 @@ int CvDangerPlots::GetDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUni
 	return m_DangerPlots[Plot.GetPlotIndex()].GetDanger(pUnit, extraUnitDamage, iExtraDamage, iAirAction);
 }
 
-// Vox Deorum: a hash of the part of the damage dealt that the plot's danger reads, so danger caches can key on it
-size_t CvDangerPlots::GetDamageHash(const CvPlot& Plot, const SUnitIDValueContainer& unitDamageDealt) const
-{
-	if (m_DangerPlots.empty())
-		return 0;
-
-	return m_DangerPlots[Plot.GetPlotIndex()].GetDamageHash(unitDamageDealt);
-}
-
 std::vector<CvUnit*> CvDangerPlots::GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck) const
 {
 	if(m_DangerPlots.empty())
@@ -1035,19 +1026,6 @@ int CvDangerPlotContents::GetDanger(const CvCity* pCity, const CvUnit* pPretendG
 
 
 	return iPlotDamage;
-}
-
-// Vox Deorum: the unit and city danger read the extra damage only for this plot's attacking units (by unit ID) and
-// cities (by negative city ID), so a hash of those values in the plot's attacker order tells apart every damage map
-// that can change the danger here. Damage to any other unit leaves the hash unchanged.
-size_t CvDangerPlotContents::GetDamageHash(const SUnitIDValueContainer& extraUnitDamage) const
-{
-	size_t iHash = 0;
-	for (DangerUnitVector::const_iterator it = m_apUnits.begin(); it < m_apUnits.end(); ++it)
-		iHash ^= (size_t)extraUnitDamage.GetValue(it->second) + 0x9e3779b9 + (iHash << 6) + (iHash >> 2);
-	for (DangerCityVector::const_iterator it = m_apCities.begin(); it < m_apCities.end(); ++it)
-		iHash ^= (size_t)extraUnitDamage.GetValue(-it->second) + 0x9e3779b9 + (iHash << 6) + (iHash >> 2);
-	return iHash;
 }
 
 std::vector<CvUnit*> CvDangerPlotContents::GetPossibleAttackers(TeamTypes eTeamForVisibilityCheck) const

@@ -45457,15 +45457,6 @@ int CvPlayer::GetPlotDanger(const CvPlot& pPlot, const CvUnit* pUnit, const SUni
 	return m_pDangerPlots->GetDanger(pPlot, pUnit, unitDamageDealt, iExtraDamage, iAirAction);
 }
 
-// Vox Deorum: a hash of the part of the damage dealt that the plot's danger reads, from danger that is up to date
-size_t CvPlayer::GetPlotDangerDamageHash(const CvPlot& pPlot, const SUnitIDValueContainer& unitDamageDealt)
-{
-	if (m_pDangerPlots->IsDirty())
-		m_pDangerPlots->UpdateDanger();
-
-	return m_pDangerPlots->GetDamageHash(pPlot, unitDamageDealt);
-}
-
 int CvPlayer::GetPlotDanger(const CvCity* pCity, const CvUnit* pPretendGarrison, const SUnitIDValueContainer& unitDamageDealt)
 {
 	if (m_pDangerPlots->IsDirty())

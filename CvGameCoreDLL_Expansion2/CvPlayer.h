@@ -2468,8 +2468,6 @@ public:
 	int GetPlotDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer(), int iExtraDamage = 0, AirActionType iAirAction = AIR_ACTION_ATTACK);
 	int GetPlotDanger(const CvCity* pCity, const CvUnit* pPretendGarrison = NULL, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer());
 	int GetPlotDanger(const CvPlot& Plot, bool bFixedDamageOnly);
-	// Vox Deorum: a hash of the part of the damage dealt that the plot's danger reads, for danger caches
-	size_t GetPlotDangerDamageHash(const CvPlot& Plot, const SUnitIDValueContainer& unitDamageDealt);
 	bool IsVanishedUnit(const IDInfo& id) const;
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck);
 
