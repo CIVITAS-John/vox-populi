@@ -411,6 +411,8 @@ private:
 //	unify these?
 ///------------------------------
 	void PlotGarrisonMoves(int iNumTurnsAway);
+	// Vox Deorum: finishes the garrisons that PlotGarrisonMoves left to the zone searches and the searches did not use
+	void PlotDeferredGarrisonMoves();
 	void PlotBastionMoves(int iNumTurnsAway);
 	void PlotGuardImprovementMoves(int iNumTurnsAway);
 //--------------------------------
@@ -1877,6 +1879,11 @@ namespace TacticalAIHelpers
 	bool PerformOpportunityAttack(CvUnit* pUnit, bool bAllowMovement = false);
 	bool IsAttackNetPositive(CvUnit* pUnit, const CvPlot* pTarget, int iSelfDamage);
 	pair<CvPlot*, int> FindSafestPlotInReach(const CvUnit* pUnit, bool bAllowEmbark, bool bConsiderPush = false);
+	// Vox Deorum: garrison helpers shared by the garrison passes, withdraw moves and the search's hold bonus
+	bool CanEnemyCaptureCity(PlayerTypes ePlayer, const CvPlot* pCityPlot, const SUnitIDValueContainer& unitDamageDealt);
+	bool IsCityFallingWithGarrison(const CvUnit* pUnit);
+	bool IsHeldGarrison(const CvUnit* pUnit);
+	int GetGarrisonStrengthScore(const CvUnit* pUnit, const CvCity* pCity);
 	pair<CvPlot*, int> FindClosestSafePlotForHealing(CvUnit* pUnit, bool bConservative = true);
 	bool IsGoodPlotForStaging(CvPlayer* pPlayer, CvPlot* pCandidate, DomainTypes eDomain);
 	bool IsCloseToContestedBorder(CvPlayer* pPlayer, CvPlot* pPlot);
