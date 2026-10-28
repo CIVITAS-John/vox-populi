@@ -824,21 +824,49 @@ void CvTacticalPosition::markBasesLostForKill(int iPlotIndex, bool bCityCaptured
 		markAircraftBasesLost(NULL, pKilledUnit);
 }
 
-// two damage records are the same if they hold the same value for every unit
+// the number of nonzero rows in a damage record, counted up to two, and the first of them
+static int CountNonzeroDamageRows(const SUnitIDValueContainer& record, SUnitIDValueContainer::value_type& first)
+{
+	int iCount = 0;
+	for (SUnitIDValueContainer::const_iterator it = record.begin(); it != record.end() && iCount < 2; ++it)
+	{
+		if ((*it).second == 0)
+			continue;
+		if (iCount == 0)
+			first = *it;
+		++iCount;
+	}
+	return iCount;
+}
+
+// the nonzero rows of a damage record, sorted
+static void GetSortedNonzeroDamageRows(const SUnitIDValueContainer& record, vector<pair<int, int> >& rows)
+{
+	for (SUnitIDValueContainer::const_iterator it = record.begin(); it != record.end(); ++it)
+		if ((*it).second != 0)
+			rows.push_back(*it);
+	std::sort(rows.begin(), rows.end());
+}
+
+// true if two damage records hold the same nonzero rows: empty and single-row records compare directly, and
+// records with two or more rows compare as a sorted multiset
 static bool DamageRecordsEqual(const SUnitIDValueContainer& lhs, const SUnitIDValueContainer& rhs)
 {
-	vector<pair<int, int> > lhsValues;
-	vector<pair<int, int> > rhsValues;
-	for (SUnitIDValueContainer::const_iterator it = lhs.begin(); it != lhs.end(); ++it)
-		if ((*it).second != 0)
-			lhsValues.push_back(*it);
-	for (SUnitIDValueContainer::const_iterator it = rhs.begin(); it != rhs.end(); ++it)
-		if ((*it).second != 0)
-			rhsValues.push_back(*it);
+	SUnitIDValueContainer::value_type lhsFirst(0, 0);
+	SUnitIDValueContainer::value_type rhsFirst(0, 0);
+	int iCount = CountNonzeroDamageRows(lhs, lhsFirst);
+	if (iCount != CountNonzeroDamageRows(rhs, rhsFirst))
+		return false;
+	if (iCount == 0)
+		return true;
+	if (iCount == 1)
+		return lhsFirst == rhsFirst;
 
-	std::sort(lhsValues.begin(), lhsValues.end());
-	std::sort(rhsValues.begin(), rhsValues.end());
-	return lhsValues == rhsValues;
+	vector<pair<int, int> > lhsRows;
+	vector<pair<int, int> > rhsRows;
+	GetSortedNonzeroDamageRows(lhs, lhsRows);
+	GetSortedNonzeroDamageRows(rhs, rhsRows);
+	return lhsRows == rhsRows;
 }
 
 // two positions with matching assignments are only equivalent if the sweeps left the same interceptors, and the same damage, behind
