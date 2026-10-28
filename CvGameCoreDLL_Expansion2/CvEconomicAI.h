@@ -217,6 +217,8 @@ public:
 
 	const CvExplorationPlotSet& GetExplorationPlots(ExplorationDomainTypes ePlotType);
 	const CvExplorationPlotSet GetExplorationPlots(const CvUnit* pUnit);
+	// Checks eligible domain sets without constructing a merged set.
+	bool HasExplorationPlots(const CvUnit* pUnit);
 
 	void StartSaveForPurchase(PurchaseType ePurchase, int iAmount, int iPriority);
 	// Vox Deorum: Expose the complete native savings ledger to capture without changing it.
@@ -344,6 +346,8 @@ FDataStream& operator>>(FDataStream&, CvExplorationPlotSet&);
 namespace EconomicAIHelpers
 {
 
+// Reports whether the unit includes this domain in its exploration set.
+bool CanExploreDomain(const CvUnit* pUnit, ExplorationDomainTypes ePlotType);
 bool IsPotentialLandExplorer(CvUnitEntry& kUnitInfo);
 bool IsPotentialNavalExplorer(UnitAITypes eType);
 bool ShouldExplorerAvoid(const CvPlot* pPlot, const CvPlayer* pPlayer);
