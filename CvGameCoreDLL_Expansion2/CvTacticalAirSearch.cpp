@@ -703,17 +703,46 @@ void CvTacticalPosition::removeCargoOfCarrier(int iCarrierID)
 	}
 }
 
-// the aircraft aboard a ship in this position: the ones the search tracks, which drop out when the plan spends them. Unless
-// bTrackedOnly, also the ones it never tracked (already acted, dropped by the cap, or not recruited), which
-// recordCarrierCargo counts once at the root.
-int CvTacticalPosition::countCargoAircraft(int iCarrierID, bool bTrackedOnly) const
+// Vox Deorum: counts the tracked aircraft aboard each carrier in one pass over the unit lists
+void CvTacticalPosition::getTrackedCargoCounts(map<int, int>& out) const
 {
-	int iCount = 0;
-	const vector<SUnitStats>* lists[3] = { &availableUnits.read(), &notQuiteFinishedUnits.read(), &finishedUnits.read() };
+	out.clear();
+	const vector<SUnitStats>* lists[3];
+	getTrackedUnitLists(lists);
 	for (int iList = 0; iList < 3; iList++)
 		for (size_t i = 0; i < lists[iList]->size(); i++)
-			if ((*lists[iList])[i].eMoveStrategy == MS_AIR && (*lists[iList])[i].iCarrierID == iCarrierID)
-				iCount++;
+			if ((*lists[iList])[i].eMoveStrategy == MS_AIR)
+				out[(*lists[iList])[i].iCarrierID]++;
+}
+
+// Vox Deorum: the aircraft aboard a ship in this position: the ones the search tracks, which drop out when the plan spends them. Unless
+// bTrackedOnly, also the ones it never tracked (already acted, dropped by the cap, or not recruited), which
+// recordCarrierCargo counts once at the root. A snapshot keeps the tracked counts across carriers.
+int CvTacticalPosition::countCargoAircraft(int iCarrierID, bool bTrackedOnly, SCargoCountSnapshot* pSnapshot) const
+{
+	int iCount = 0;
+	// Vox Deorum: a provided snapshot scans the unit lists once, then every carrier lookup reads the counts
+	if (pSnapshot)
+	{
+		if (!pSnapshot->bBuilt)
+		{
+			getTrackedCargoCounts(pSnapshot->trackedCounts);
+			pSnapshot->bBuilt = true;
+		}
+
+		map<int, int>::const_iterator itTracked = pSnapshot->trackedCounts.find(iCarrierID);
+		if (itTracked != pSnapshot->trackedCounts.end())
+			iCount = itTracked->second;
+	}
+	else
+	{
+		const vector<SUnitStats>* lists[3];
+		getTrackedUnitLists(lists);
+		for (int iList = 0; iList < 3; iList++)
+			for (size_t i = 0; i < lists[iList]->size(); i++)
+				if ((*lists[iList])[i].eMoveStrategy == MS_AIR && (*lists[iList])[i].iCarrierID == iCarrierID)
+					iCount++;
+	}
 
 	if (!bTrackedOnly)
 	{
@@ -730,7 +759,8 @@ void CvTacticalPosition::recordCarrierCargo() const
 {
 	gUntrackedCargo.clear();
 	TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
-	const vector<SUnitStats>* lists[3] = { &availableUnits.read(), &notQuiteFinishedUnits.read(), &finishedUnits.read() };
+	const vector<SUnitStats>* lists[3];
+	getTrackedUnitLists(lists);
 	for (int iList = 0; iList < 3; iList++)
 	{
 		for (size_t i = 0; i < lists[iList]->size(); i++)

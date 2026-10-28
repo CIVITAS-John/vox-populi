@@ -8384,9 +8384,11 @@ static bool IsCityFallingInSearch(const CvUnit* pUnit, const CvPlot* pPlot, int 
 		TacticalAIHelpers::CanEnemyCaptureCity(pUnit->getOwner(), pPlot, assumedPosition.GetUnitDamageDealt());
 }
 
+// Vox Deorum: the turn-end score, with an optional per-pass cargo snapshot for the danger a sinking carrier adds
 int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignment, const CvTacticalPlot* testPlot, int iDanger,
 							CvTacticalPlot::eTactPlotDomain eRelevantDomain, int iSelfDamage,
-							const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, bool bRelaxedCheck, bool bOnlyCheckImpossible)
+							const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, bool bRelaxedCheck, bool bOnlyCheckImpossible,
+							SCargoCountSnapshot* pCargoSnapshot)
 {
 	int iResult = 0;
 	const CvPlot* pTestPlot = testPlot->getPlot();
@@ -8462,7 +8464,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 
 			// Vox Deorum: a ship counts the aircraft it carries as lost with it
 			if (MOD_VOX_TACTICAL_AIR_SEARCH && pUnit->getDomainType() == DOMAIN_SEA)
-				iScaledDanger *= 1 + assumedPosition.countCargoAircraft(pUnit->GetID());
+				iScaledDanger *= 1 + assumedPosition.countCargoAircraft(pUnit->GetID(), false, pCargoSnapshot);
 
 			//penalty for high danger plots (should this be personality dependent?)
 			// Vox Deorum: a set RISK divides the danger penalty, so a higher flavor tolerates more danger
@@ -8539,7 +8541,8 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	return iResult;
 }
 
-static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode) 
+// Vox Deorum: scores a combat unit's move, passing the optional cargo snapshot to the turn-end check
+static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, SCargoCountSnapshot* pCargoSnapshot = NULL)
 {
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
@@ -8757,7 +8760,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 		result->eAssignmentType = evalMode == EM_FINAL ? A_FINISH : A_INITIAL;
 
 		iDangerScore = ScoreCombatUnitTurnEnd(pUnit, unit.eLastAssignment, testPlot, iDanger,
-			eRelevantDomain, unit.iSelfDamage + iSelfDamage, assumedPosition, evalMode, false, false);
+			eRelevantDomain, unit.iSelfDamage + iSelfDamage, assumedPosition, evalMode, false, false, pCargoSnapshot);
 
 		if (iDangerScore == INT_MAX)
 		{
@@ -9545,13 +9548,14 @@ bool IsCombatUnit(const SUnitStats& unit)
 	}
 }
 
-static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode)
+// Vox Deorum: dispatches a unit's move score, passing the optional cargo snapshot to the combat scorer
+static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, SCargoCountSnapshot* pCargoSnapshot = NULL)
 {
 	if (unit.eMoveStrategy == MS_AIR)
 		return ScorePlotForAirUnitMove(unit, testPlot, assumedPosition, evalMode);
 
 	if (IsCombatUnit(unit))
-		return ScorePlotForCombatUnitMove(unit, testPlot, assumedPosition, evalMode);
+		return ScorePlotForCombatUnitMove(unit, testPlot, assumedPosition, evalMode, pCargoSnapshot);
 	else
 		return ScorePlotForNonFightingUnitMove(unit, testPlot, assumedPosition, evalMode);
 }
@@ -10246,11 +10250,15 @@ bool CvTacticalPosition::isEarlyFinish(bool bExtraKill) const
 
 //see if all the plots where our units would end their turn are acceptable
 //this is a deferred check because in the beginning it's not clear how many enemy units we can eliminate
+// Vox Deorum: shares one tracked-cargo snapshot across the final scoring pass
 bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBadUnitID)
 { 
 	//we allow some "bad" units depending on context
 	int iUnitLossThreshold = gDefaultUnitLossThreshold + nKilledEnemies;
 	int iPotentialUnitLossCounter = 0;
+
+	// Vox Deorum: one tracked-cargo scan serves every carrier whose loss this pass scores
+	SCargoCountSnapshot cargoSnapshot;
 
 	const vector<SUnitStats>& notQuiteFinishedUnits_r = notQuiteFinishedUnits.read();
 	const vector<SUnitStats>& availableUnits_r = availableUnits.read();
@@ -10271,7 +10279,7 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		const CvTacticalPlot* tactPlot = getTactPlot(unit.iPlotIndex);
 		SUnitStats tmp = unit;
 		tmp.iMovesLeft = 0;
-		STacticalAssignment* nextAssignment = ScorePlotForMove(unit, tactPlot, *this, EM_FINAL);
+		STacticalAssignment* nextAssignment = ScorePlotForMove(unit, tactPlot, *this, EM_FINAL, &cargoSnapshot);
 
 		// Vox Deorum: aircraft act from their base and may sail along with their carrier, so neither rule applies to them
 		if (unit.eMoveStrategy != MS_AIR && bReturnToStartPositions && unit.pUnit->plot()->GetPlotIndex() != tactPlot->getPlotIndex())
@@ -12886,8 +12894,9 @@ bool CvTacticalPosition::canProbablyEndTurnAfterAssignment(const SUnitStats& uni
 
 		iDanger /= max(1, (int)getAggressionLevel());
 
+		// Vox Deorum: this filter counts carrier cargo directly, without a scoring-pass snapshot
 		return ScoreCombatUnitTurnEnd(pUnit, eAssignmentType, assumedUnitPlot, iDanger, CvTacticalPlot::TD_BOTH,
-			unit.iSelfDamage, *this, EM_FINAL, availableUnits.read().size() > 1, true) != INT_MAX;
+			unit.iSelfDamage, *this, EM_FINAL, availableUnits.read().size() > 1, true, NULL) != INT_MAX;
 	}
 	else
 		//civilians need cover. full scoring logic in ScorePlotForNonFightingUnitMove is more complex; here we just need a rule of thumb

@@ -1419,6 +1419,17 @@ extern const int TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT;
 // Vox Deorum: the flavor type name behind each slot, in slot order
 extern const char* const TACTICAL_FLAVOR_TYPES[STacticalFlavors::NUM_SLOTS];
 
+// Vox Deorum: counts the aircraft the search tracks for each carrier, built on first use so a
+// final-move scoring pass scans the unit lists once instead of once per carrier.
+struct SCargoCountSnapshot
+{
+	bool bBuilt;
+	map<int, int> trackedCounts;
+
+	// Vox Deorum: starts an unbuilt snapshot for one pass with stable unit lists.
+	SCargoCountSnapshot() : bBuilt(false) {}
+};
+
 class CvTacticalPosition : public CvBasePosition
 {
 protected:
@@ -1471,6 +1482,13 @@ protected:
 	void updateMoveAndAttackPlotsForUnit(SUnitStats unit);
 	CvTacticalPlot* findTactPlotMutable(int iPlotIndex);
 	const CvTacticalPlot* findTactPlot(int iPlotIndex) const;
+	// Vox Deorum: the unit lists that hold the aircraft the search tracks, in lifecycle order
+	void getTrackedUnitLists(const vector<SUnitStats>* lists[3]) const
+	{
+		lists[0] = &availableUnits.read();
+		lists[1] = &notQuiteFinishedUnits.read();
+		lists[2] = &finishedUnits.read();
+	}
 
 	virtual void wipeDerived()
 	{
@@ -1612,9 +1630,11 @@ public:
 	bool airStateEquals(const CvTacticalPosition& other) const;
 	// removes the aircraft carried by a ship that is predicted to die from the available units
 	void removeCargoOfCarrier(int iCarrierID);
-	// the aircraft aboard this ship in the position: its actual cargo minus the aircraft the plan has spent.
-	// bTrackedOnly counts only the cargo the search tracks.
-	int countCargoAircraft(int iCarrierID, bool bTrackedOnly = false) const;
+	// Vox Deorum: counts aircraft aboard this ship; bTrackedOnly excludes untracked root cargo.
+	// An optional snapshot is valid only while the position's unit lists stay fixed.
+	int countCargoAircraft(int iCarrierID, bool bTrackedOnly = false, SCargoCountSnapshot* pSnapshot = NULL) const;
+	// Vox Deorum: counts the tracked aircraft aboard each carrier, clearing the output first.
+	void getTrackedCargoCounts(map<int, int>& out) const;
 	// records, for every ship of the root position, the aircraft aboard that the search does not track
 	void recordCarrierCargo() const;
 	// adds the stand-down rows for the remaining members of an aircraft group, in unit ID order
