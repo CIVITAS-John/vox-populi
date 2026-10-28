@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -3215,7 +3215,40 @@ static bool IsBestDirectiveForPlot(BuilderDirective eDirective, vector<BuilderDi
 	return true;
 }
 
-int CvHomelandAI::GetBuilderNumTurnsAway(CvUnit* pUnit, BuilderDirective eDirective, const std::map<CvUnit*, ReachablePlots>& allWorkersReachablePlots) const
+// Returns the worker's reachable plots for this invocation, rebuilding the entry when its movement state changed.
+const ReachablePlots& CvHomelandAI::GetWorkerReachablePlots(CvUnit* pUnit, WorkerReachabilityCache& cache) const
+{
+	const int iUnitId = pUnit->GetID();
+	const CvPlot* pStartPlot = pUnit->plot();
+	const int iStartPlotIndex = pStartPlot->GetPlotIndex();
+	const int iMovesLeft = pUnit->getMoves();
+	const bool bEmbarked = pUnit->isEmbarked();
+
+	WorkerReachabilityCache::iterator itEntry = cache.find(iUnitId);
+	if (itEntry != cache.end()
+		&& itEntry->second.startPlotIndex == iStartPlotIndex
+		&& itEntry->second.movesLeft == iMovesLeft
+		&& itEntry->second.embarked == bEmbarked)
+	{
+		return itEntry->second.plots;
+	}
+
+	// Mission execution can change visibility, stacking, routes and features observed by later queries.
+	// Retaining those estimates until the next invocation is an accepted approximation; only this
+	// worker's own movement state forces a rebuild here.
+	WorkerReachabilityEntry& entry = cache[iUnitId];
+	entry.startPlotIndex = iStartPlotIndex;
+	entry.movesLeft = iMovesLeft;
+	entry.embarked = bEmbarked;
+
+	const int BUILDER_MAX_TURNS = 7;
+	SPathFinderUserData data(pUnit, CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER | CvUnit::MOVEFLAG_VISIBLE_ONLY, BUILDER_MAX_TURNS);
+	entry.plots = GC.GetPathFinder().GetPlotsInReach(pStartPlot, data);
+
+	return entry.plots;
+}
+
+int CvHomelandAI::GetBuilderNumTurnsAway(CvUnit* pUnit, BuilderDirective eDirective, WorkerReachabilityCache& workerReachCache) const
 {
 	int iMoveTurns = INT_MAX;
 	CvPlot* pTarget = GC.getMap().plot(eDirective.m_sX, eDirective.m_sY);
@@ -3223,12 +3256,9 @@ int CvHomelandAI::GetBuilderNumTurnsAway(CvUnit* pUnit, BuilderDirective eDirect
 		iMoveTurns = 0;
 	else
 	{
-		std::map<CvUnit*, ReachablePlots>::const_iterator itPlots = allWorkersReachablePlots.find(pUnit);
-		if (itPlots == allWorkersReachablePlots.end())
-			return INT_MAX;
-
-		ReachablePlots::const_iterator itPlot = itPlots->second.find(pTarget->GetPlotIndex());
-		if (itPlot == itPlots->second.end())
+		const ReachablePlots& workerReachablePlots = GetWorkerReachablePlots(pUnit, workerReachCache);
+		ReachablePlots::const_iterator itPlot = workerReachablePlots.find(pTarget->GetPlotIndex());
+		if (itPlot == workerReachablePlots.end())
 			return INT_MAX;
 
 		iMoveTurns = itPlot->iPathLength + (itPlot->iMovesLeft == 0 ? 1 : 0);
@@ -3243,7 +3273,7 @@ vector<OptionWithScore<pair<CvUnit*, BuilderDirective>>> CvHomelandAI::GetWeight
 	const set<BuilderDirective> ignoredDirectives, 
 	const list<int> allWorkers, 
 	const set<int> ignoredWorkers, 
-	const std::map<CvUnit*, ReachablePlots>& allWorkersReachablePlots,
+	WorkerReachabilityCache& workerReachCache,
 	bool bConsiderRegions) const
 {
 	vector<OptionWithScore<pair<CvUnit*, BuilderDirective>>> aWeightedDirectives;
@@ -3321,7 +3351,7 @@ vector<OptionWithScore<pair<CvUnit*, BuilderDirective>>> CvHomelandAI::GetWeight
 			if (GetDirectiveWeight(eDirective, iBuilderImprovementTime, 0) <= max(iBestBuilderWeightedScore, iBestWeightedScore))
 				continue;
 
-			int iBuilderMoveTime = GetBuilderNumTurnsAway(pUnit, eDirective, allWorkersReachablePlots);
+			int iBuilderMoveTime = GetBuilderNumTurnsAway(pUnit, eDirective, workerReachCache);
 			if (iBuilderMoveTime == INT_MAX)
 				continue;
 
@@ -3406,11 +3436,6 @@ void CvHomelandAI::ExecuteWorkerMoves()
 	list<int> allWorkers;
 	set<int> processedWorkers;
 
-	// For performance only do pathfinding once per worker
-	// Alternatively we could postpone this and use GetMultiplePaths() instead of GetPlotsInReach()
-	std::map<CvUnit*, ReachablePlots> allWorkersReachablePlots;
-	const int BUILDER_MAX_TURNS = 7;
-
 	// Automated and AI controlled workers
 	for (CHomelandUnitArray::iterator it = m_CurrentMoveUnits.begin(); it != m_CurrentMoveUnits.end(); ++it)
 	{
@@ -3419,8 +3444,6 @@ void CvHomelandAI::ExecuteWorkerMoves()
 			continue;
 
 		allWorkers.push_back(pUnit->GetID());
-		SPathFinderUserData data(pUnit, CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER | CvUnit::MOVEFLAG_VISIBLE_ONLY, BUILDER_MAX_TURNS);
-		allWorkersReachablePlots[pUnit] = GC.GetPathFinder().GetPlotsInReach(pUnit->plot(), data);
 	}
 
 	// Humans also have non-automated workers. Pretend they are automated as well to avoid going where they are.
@@ -3437,8 +3460,6 @@ void CvHomelandAI::ExecuteWorkerMoves()
 			if (!pLoopUnit->TurnProcessed() && bIsBuilder && find(allWorkers.begin(), allWorkers.end(), pLoopUnit->GetID()) == allWorkers.end())
 			{
 				allWorkers.push_back(pLoopUnit->GetID());
-				SPathFinderUserData data(pLoopUnit, CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER | CvUnit::MOVEFLAG_VISIBLE_ONLY, BUILDER_MAX_TURNS);
-				allWorkersReachablePlots[pLoopUnit] = GC.GetPathFinder().GetPlotsInReach(pLoopUnit->plot(), data);
 			}
 		}
 	}
@@ -3509,9 +3530,12 @@ void CvHomelandAI::ExecuteWorkerMoves()
 		}
 	}
 
+	// Reachability maps are built lazily for workers whose movement estimates survive the scoring filters.
+	WorkerReachabilityCache workerReachCache;
+
 	// This is the important part
 	vector<OptionWithScore<pair<CvUnit*, BuilderDirective>>> aDistanceWeightedDirectives = 
-		GetWeightedDirectives(topDirectives, ignoredDirectives, allWorkers, processedWorkers, allWorkersReachablePlots, bConsiderRegions);
+		GetWeightedDirectives(topDirectives, ignoredDirectives, allWorkers, processedWorkers, workerReachCache, bConsiderRegions);
 
 	// Loop through all the directives sorted by weighted score and distance (see GetDirectiveWeight)
 	while (!aDistanceWeightedDirectives.empty() && aDistanceWeightedDirectives.front().score != INT_MIN && allWorkers.size() > processedWorkers.size())
@@ -4025,7 +4049,7 @@ void CvHomelandAI::ExecuteWorkerMoves()
 			for (vector<OptionWithScore<BuilderDirective>>::const_iterator it = aNewBuilderDirectives.begin(); it != aNewBuilderDirectives.end(); ++it)
 				aNewDirectives.push_back(it->option);
 
-			aDistanceWeightedDirectives = GetWeightedDirectives(aNewDirectives, ignoredDirectives, allWorkers, processedWorkers, allWorkersReachablePlots, bConsiderRegions);
+			aDistanceWeightedDirectives = GetWeightedDirectives(aNewDirectives, ignoredDirectives, allWorkers, processedWorkers, workerReachCache, bConsiderRegions);
 		}
 	}
 
@@ -6440,7 +6464,26 @@ CvUnit* CvHomelandAI::GetBestUnitToReachTarget(CvPlot* pTarget, int iMaxTurns, i
 				// The path finder will do a similar check near the beginning, but it is best to get this out of the way before then
 				if (pLoopUnit->canMoveInto(*pTarget, CvUnit::MOVEFLAG_DESTINATION))
 				{
-					int iTurns = pLoopUnit->TurnsToReachTarget(pTarget, CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY, iMaxTurns);
+					int iTurns = INT_MAX;
+
+					if (iBestTurns == INT_MAX)
+						iTurns = pLoopUnit->TurnsToReachTarget(pTarget, CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY, iMaxTurns);
+					else if (iBestTurns > 0)
+					{
+						// The finder limit is exclusive. Query it directly so a tighter distance estimate
+						// cannot reject fast routes, then confirm possible winners with the original query.
+						iTurns = pLoopUnit->GetTurnsToReachTargetEstimate(pTarget, CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY, iMaxTurns);
+						if (iTurns < 0)
+						{
+							iTurns = INT_MAX;
+							SPathFinderUserData data(pLoopUnit, CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY, min(iMaxTurns, iBestTurns));
+							SPath path = GC.GetPathFinder().GetPath(pLoopUnit->plot(), pTarget, data);
+							if (!!path && path.vPlots.back().turns < iBestTurns)
+								iTurns = pLoopUnit->TurnsToReachTarget(pTarget, CvUnit::MOVEFLAG_NO_ENEMY_TERRITORY, iMaxTurns);
+						}
+					}
+
+					// Candidates rejected by the bounded probe record INT_MAX rather than their own turn count.
 					it->SetMovesToTarget(iTurns);
 
 					if (iTurns < iBestTurns)

@@ -1048,7 +1048,7 @@ void UpdateNodeCacheData(CvAStarNode* node, const CvUnit* pUnit, const CvAStar* 
 
 
 	//small hack to prevent civilians from stacking although they could
-	if (finder->HaveFlag(CvUnit::MOVEFLAG_DONT_STACK_WITH_NEUTRAL) && pPlot->isNeutralUnit(pUnit->getOwner(),true,true))
+	if (finder->HaveFlag(CvUnit::MOVEFLAG_DONT_STACK_WITH_NEUTRAL) && kToNodeCacheData.bIsVisibleNeutralCombatUnit)
 		kToNodeCacheData.bUnitStackingLimitReached = true;
 
 	//do not use DestinationReached() here, approximate destination won't do
@@ -2278,6 +2278,12 @@ int CityConnectionLandGetExtraChildren(const CvAStarNode* node, const CvAStar* f
 int UnitPathGetExtraChildren(const CvAStarNode* node, const CvAStar* finder, vector<pair<int, int>>& out)
 {
 	out.clear();
+
+	// Ordinary nodes have no nonlocal children, so avoid resolving their plot and unit.
+	if (!node->m_kCostCacheData.bCanAirliftFromPlotCity &&
+		!node->m_kCostCacheData.bCanAirliftFromPlotImprovement &&
+		!node->m_kCostCacheData.bCanChangePortFromPlot)
+		return 0;
 
 	CvPlot* pPlot = GC.getMap().plotCheckInvalid(node->m_iX, node->m_iY);
 	if (!pPlot)

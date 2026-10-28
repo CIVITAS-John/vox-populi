@@ -91,6 +91,9 @@ void CvBuilderTaskingAI::Uninit(void)
 	m_eFalloutRemove = NO_BUILD;
 
 	m_uniqueImprovements.clear();
+
+	//a plan from a previous game would otherwise survive the longer refresh cadence
+	m_canalWantedPlots.clear();
 }
 
 template<typename BuilderTaskingAI, typename Visitor>
@@ -1186,8 +1189,12 @@ ImprovementTypes CvBuilderTaskingAI::SavePlotForUniqueImprovement(const CvPlot* 
 
 void CvBuilderTaskingAI::UpdateCanalPlots()
 {
-	//not needed every turn ... simple performance optimization
-	if ((GC.getGame().getGameTurn() + m_pPlayer->GetID()) % 7 == 0)
+	//nothing reads the plan without passable forts, so skip the searches entirely
+	if (!MOD_GLOBAL_PASSABLE_FORTS)
+		return;
+
+	//refresh only on each player's phase turn, once every seven turns
+	if ((GC.getGame().getGameTurn() + m_pPlayer->GetID()) % 7 != 0)
 		return;
 
 	//only majors build canals

@@ -359,7 +359,7 @@ int StepCost(const CvAStarNode* parent, const CvAStarNode* node, const SPathFind
 int CityConnectionLandValid(const CvAStarNode* parent, const CvAStarNode* node, const SPathFinderUserData& data, const CvAStar* finder);
 int CityConnectionGetExtraChildren(const CvAStarNode* node, const CvAStar* finder, vector<pair<int,int>>& out);
 int CityConnectionLandGetExtraChildren(const CvAStarNode* node, const CvAStar* finder, vector<pair<int, int>>& out);
-int UnitPathGetExtraChildren(const CvAStarNode* node, CvAStar* finder, vector<pair<int, int>>& out);
+int UnitPathGetExtraChildren(const CvAStarNode* node, const CvAStar* finder, vector<pair<int, int>>& out);
 int CityConnectionWaterValid(const CvAStarNode* parent, const CvAStarNode* node, const SPathFinderUserData& data, const CvAStar* finder);
 
 int AreaValid(const CvAStarNode* parent, const CvAStarNode* node, const SPathFinderUserData& data, const CvAStar* finder);

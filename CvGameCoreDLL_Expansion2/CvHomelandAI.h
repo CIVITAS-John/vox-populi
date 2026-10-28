@@ -209,6 +209,18 @@ private:
 	static int iIDCounter;
 };
 
+// Stores one worker's reachable plots and the movement state used to build them.
+struct WorkerReachabilityEntry
+{
+	int startPlotIndex;
+	int movesLeft;
+	bool embarked;
+	ReachablePlots plots;
+};
+
+// Maps one invocation's worker IDs to their computed reachability entries.
+typedef std::map<int, WorkerReachabilityEntry> WorkerReachabilityCache;
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //  CLASS:      CvHomelandAI
 //!  \brief		A player's AI to control units that are in reserve protecting their lands
@@ -347,17 +359,21 @@ private:
 	bool MoveToTargetButDontEndTurn(CvUnit* pUnit, CvPlot* pTargetPlot, int iFlags);
 
 	CvPlot* FindArchaeologistTarget(CvUnit *pUnit);
+
+	// Returns the worker's reachable plots, rebuilding them when the worker's movement state changed.
+	const ReachablePlots& GetWorkerReachablePlots(CvUnit* pUnit, WorkerReachabilityCache& cache) const;
+
 	vector<OptionWithScore<pair<CvUnit*, BuilderDirective>>> GetWeightedDirectives(
 		const vector<BuilderDirective> aDirectives, 
 		const set<BuilderDirective> ignoredDirectives, 
 		const list<int> allWorkers, 
 		const set<int> ignoredWorkers, 
-		const std::map<CvUnit*, ReachablePlots>& allWorkersReachablePlots,
+		WorkerReachabilityCache& workerReachCache,
 		bool bConsiderRegions) const;
 	int GetBuilderNumTurnsAway(
 		CvUnit* pUnit, 
 		BuilderDirective eDirective, 
-		const std::map<CvUnit*, ReachablePlots>& allWorkersReachablePlots) const;
+		WorkerReachabilityCache& workerReachCache) const;
 
 	void UnitProcessed(int iID);
 	bool ExecuteCultureBlast(CvUnit* pUnit);
