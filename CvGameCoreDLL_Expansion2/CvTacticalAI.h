@@ -411,7 +411,7 @@ private:
 //	unify these?
 ///------------------------------
 	void PlotGarrisonMoves(int iNumTurnsAway);
-	// Vox Deorum: finishes the garrisons that PlotGarrisonMoves left to the zone searches and the searches did not use
+	// Vox Deorum: holds the garrisons that PlotGarrisonMoves left to the zone searches and the searches did not finish
 	void PlotDeferredGarrisonMoves();
 	void PlotBastionMoves(int iNumTurnsAway);
 	void PlotGuardImprovementMoves(int iNumTurnsAway);

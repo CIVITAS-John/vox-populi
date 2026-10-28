@@ -1772,8 +1772,8 @@ void CvTacticalAI::PlotGarrisonMoves(int iNumTurnsAway)
 	}
 }
 
-/// Vox Deorum: finishes the land garrisons that PlotGarrisonMoves left to the zone searches and the searches did not use.
-/// A garrison whose city falls even with it inside evacuates; any other one takes a stationary shot and holds its city.
+/// Vox Deorum: holds the land garrisons that PlotGarrisonMoves left to the zone searches and the searches did not finish.
+/// A search that leaves a garrison without a shot has its reasons (healing, for example), so the garrison only skips its turn.
 void CvTacticalAI::PlotDeferredGarrisonMoves()
 {
 	ClearCurrentMoveUnits(AI_TACTICAL_GARRISON);
@@ -1787,29 +1787,24 @@ void CvTacticalAI::PlotDeferredGarrisonMoves()
 		if (pGarrison->AI_getUnitAIType() == UNITAI_EXPLORE || pGarrison->isDelayedDeath() || pGarrison->TurnProcessed() || pGarrison->getArmyID() != -1)
 			continue;
 
-		// the same cities as in PlotGarrisonMoves, checked last because it is the costly part
+		// the same cities as in PlotGarrisonMoves: friendly city targets need a border score (see FindTacticalTargets)
+		CvTacticalDominanceZone* pLandZone = GetTacticalAnalysisMap()->GetZoneByCity(pCity, false);
+		CvTacticalDominanceZone* pWaterZone = GetTacticalAnalysisMap()->GetZoneByCity(pCity, true);
+		if ((pLandZone ? pLandZone->GetBorderScore(DOMAIN_LAND) : 0) + (pWaterZone ? pWaterZone->GetBorderScore(DOMAIN_SEA) : 0) <= 0)
+			continue;
+
+		// and the same frontline filter, checked last because it is the costly part
 		if (!pCity->isBorderCity() && !pCity->GetCityCitizens()->AnyPlotBlockaded() && !m_pPlayer->GetMilitaryAI()->IsExposedToEnemy(pCity,NO_PLAYER))
 			continue;
 
-		bool bEvacuate = TacticalAIHelpers::IsCityFallingWithGarrison(pGarrison);
-		if (bEvacuate)
-			ExecuteMovesToSafestPlot(pGarrison);
-
-		// a garrison with nowhere safer to go stays and fights
-		bool bHolds = !pGarrison->TurnProcessed();
-		if (bHolds)
-		{
-			TacticalAIHelpers::PerformOpportunityAttack(pGarrison, false);
-			//do not call finishMoves() else the garrison will not heal!
-			pGarrison->PushMission(CvTypes::getMISSION_SKIP());
-			UnitProcessed(pGarrison->GetID());
-		}
+		//do not call finishMoves() else the garrison will not heal!
+		pGarrison->PushMission(CvTypes::getMISSION_SKIP());
+		UnitProcessed(pGarrison->GetID());
 
 		if (GC.getLogging() && GC.getAILogging())
 		{
 			CvString strLogString;
-			strLogString.Format("Garrison %d in %s unused by zone work, %s", pGarrison->GetID(), pCity->getNameNoSpace().c_str(),
-				bHolds ? (bEvacuate ? "found no way out, holds" : "holds") : "evacuated");
+			strLogString.Format("Garrison %d in %s unused by zone work, holds", pGarrison->GetID(), pCity->getNameNoSpace().c_str());
 			LogTacticalMessage(strLogString);
 		}
 	}
