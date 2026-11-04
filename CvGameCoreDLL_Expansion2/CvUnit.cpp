@@ -22228,6 +22228,9 @@ int CvUnit::DoAdjacentPlotDamage(CvPlot* pWhere, int iValue, const char* chTextK
 		for (int iJ = 0; iJ < pSplashPlot->getNumUnits(); iJ++)
 		{
 			CvUnit* pEnemyUnit = pSplashPlot->getUnitByIndex(iJ);
+			// Vox Deorum: delayed casualties can remain on the plot until combat cleanup; they cannot pay another kill yield.
+			if (pEnemyUnit != NULL && pEnemyUnit->isDelayedDeath())
+				continue;
 			//logically we should damage non-enemy units as well? but that is too complex to consider ... 
 			if (pEnemyUnit != NULL && pEnemyUnit->isEnemy(getTeam()) && !pEnemyUnit->isTrade())
 			{
