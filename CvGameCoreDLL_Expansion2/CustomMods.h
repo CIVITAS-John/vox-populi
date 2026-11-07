@@ -1072,6 +1072,8 @@
 #define MOD_VOX_TACTICAL_INTENT_FLAVORS	gCustomMods.isVOX_TACTICAL_INTENT_FLAVORS()
 // Vox Deorum: tactical search plans air strikes, air sweeps and carrier launches together with ground and naval moves
 #define MOD_VOX_TACTICAL_AIR_SEARCH	gCustomMods.isVOX_TACTICAL_AIR_SEARCH()
+// Vox Deorum: tactical search scores ending on the next steps of enemy trade units to plunder them, and on the endangered next steps of our own
+#define MOD_VOX_TACTICAL_TRADE_SEARCH	gCustomMods.isVOX_TACTICAL_TRADE_SEARCH()
 
 //
 // NOTHING BELOW HERE SHOULD NEED CHANGING
@@ -1821,6 +1823,7 @@ public:
 	MOD_OPT_DECL(IPC_CHANNEL);
 	MOD_OPT_DECL(VOX_TACTICAL_INTENT_FLAVORS);
 	MOD_OPT_DECL(VOX_TACTICAL_AIR_SEARCH);
+	MOD_OPT_DECL(VOX_TACTICAL_TRADE_SEARCH);
 
 protected:
 	bool m_bInit;

@@ -93,6 +93,8 @@ public:
 	int GetDanger(const CvPlot& pPlot, bool bFixedDamageOnly);
 
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck) const;
+	// Vox Deorum: the known enemy units that can move onto the plot this turn, melee or ranged (the capture list)
+	std::vector<CvUnit*> GetPossibleCapturers(const CvPlot& Plot) const;
 	bool IsKnownAttacker(const CvUnit* pUnit) const;
 	bool AddKnownAttacker(const CvUnit* pUnit);
 	const UnitSet& GetVanishedUnits() const { return m_vanishedUnits; }

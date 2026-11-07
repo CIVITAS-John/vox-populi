@@ -249,6 +249,7 @@ CPP = [
     'CvGameCoreDLL_Expansion2\\cvStopWatch.cpp',
     'CvGameCoreDLL_Expansion2\\CvTacticalAI.cpp',
     'CvGameCoreDLL_Expansion2\\CvTacticalAirSearch.cpp',
+    'CvGameCoreDLL_Expansion2\\CvTacticalTradeSearch.cpp',
     'CvGameCoreDLL_Expansion2\\CvTacticalAnalysisMap.cpp',
     'CvGameCoreDLL_Expansion2\\CvTargeting.cpp',
     'CvGameCoreDLL_Expansion2\\CvTeam.cpp',

@@ -410,6 +410,24 @@ std::vector<CvUnit*> CvDangerPlots::GetPossibleAttackers(const CvPlot& Plot, Tea
 	return m_DangerPlots[Plot.GetPlotIndex()].GetPossibleAttackers(eTeamForVisibilityCheck);
 }
 
+// Vox Deorum: the known enemy units that can move onto the plot this turn, in its native domain, melee or ranged. Unlike the
+// attackers, a ranged unit counts only where it can move, not where it can shoot. Dead units are left out.
+std::vector<CvUnit*> CvDangerPlots::GetPossibleCapturers(const CvPlot& Plot) const
+{
+	std::vector<CvUnit*> vResult;
+	if (m_DangerPlots.empty())
+		return vResult;
+
+	const DangerUnitVector& vCaptureUnits = m_DangerPlots[Plot.GetPlotIndex()].m_apCaptureUnits;
+	for (DangerUnitVector::const_iterator it = vCaptureUnits.begin(); it != vCaptureUnits.end(); ++it)
+	{
+		CvUnit* pUnit = GET_PLAYER(it->first).getUnit(it->second);
+		if (pUnit && !pUnit->isDelayedDeath() && !pUnit->IsDead())
+			vResult.push_back(pUnit);
+	}
+	return vResult;
+}
+
 bool CvDangerPlots::IsKnownAttacker(const CvUnit* pUnit) const
 {
 	if (m_DangerPlots.empty()  || !pUnit || !pUnit->IsCanAttack())

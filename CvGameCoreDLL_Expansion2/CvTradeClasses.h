@@ -79,7 +79,8 @@ struct TradeConnection
 		m_eDestOwner = pDestCity->getOwner();
 	}
 
-	int GetMovementSpeed();
+	// Vox Deorum: const, so the tactical AI can read the speed of a route it does not move
+	int GetMovementSpeed() const;
 
 	int m_iID;
 	int m_iOriginID;
@@ -193,6 +194,8 @@ public:
 	// trade unit movement
 	bool MoveUnit (int iIndex); // move a trade unit along its path for all its movement points
 	bool StepUnit (int iIndex); // move a trade unit a single step along its path (called by MoveUnit)
+	// Vox Deorum: the path arithmetic of StepUnit, shared with the tactical AI's forecast of the next trade movement
+	static bool StepTradeUnitLocation(int& iLocationIndex, bool& bMovingForward, int iNumPlots);
 
 	void DisplayTemporaryPopupTradeRoute(int iDestX, int iDestY, TradeConnectionType type, DomainTypes eDomain);
 	void HideTemporaryPopupTradeRoute(int iPlotX, int iPlotY, TradeConnectionType type) const;

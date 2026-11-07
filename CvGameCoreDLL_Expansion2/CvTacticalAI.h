@@ -1219,6 +1219,8 @@ protected:
 	int iScoreOverParent;
 	// Vox Deorum: the air sweep ranking values of the last generation's moves. Orders the heap, never scores a plan.
 	int iRankBonusOverParent;
+	// Vox Deorum: the trade score the plan gained over the root (VOX_TACTICAL_TRADE_SEARCH), part of iTotalScore
+	int iTradeGain;
 
 	//moves already assigned to get into this position (complete, mostly redundant with parent)
 	SCoWField<vector<STacticalAssignment>> assignedMoves;
@@ -1468,6 +1470,8 @@ protected:
 	unsigned short nCityHoldWeight;
 	// Vox Deorum: the ATTRITION weight for hits on enemy land units on our land, at max(ATTRITION, 50 + (HOLD_GROUND - 50) / 2)
 	unsigned short nGroundAttritionWeight;
+	// Vox Deorum: the position's trade score (computeTradeScore), kept so each assignment adds only its change to iTradeGain
+	int iTradeScore;
 
 	//------------
 	const vector<int>& getRangeAttackPlotsForUnit(const SUnitStats& unit) const;
@@ -1572,6 +1576,9 @@ public:
 	pair<int,int> doVisibilityUpdate(const STacticalAssignment& newAssignment);
 	bool isAttackablePlot(int iPlotIndex) const;
 	AddAssignmentResult addAssignment(const STacticalAssignment& newAssignment);
+	// Vox Deorum: the position's trade score from scratch, and the root's starting value (VOX_TACTICAL_TRADE_SEARCH)
+	int computeTradeScore() const;
+	void initTradeScore();
 	bool isUnique(int levelsToCheck=2) const;
 	// Return the last attack added by this position, including before trailing bookkeeping rows.
 	const STacticalAssignment* getSupportCheckpointAttack() const;
@@ -1884,6 +1891,29 @@ private:
 	const CvTactAssignmentStorage& operator=(const CvTactAssignmentStorage& rhs);
 };
 
+// Vox Deorum: one trade route's next trade movement, for the turn-end trade step score
+struct STradeStepRoute
+{
+	PlayerTypes eOwner; //the route's owner
+	TeamTypes eTeam; //the team of the route's owner
+	DomainTypes eDomain;
+	int iTradeUnitID; //the owner's trade unit on the route
+	vector<int> vCutPlots; //the plot index of each city whose capture cancels the route: its origin and destination, and for a sea route every city on its path
+	vector<int> vStepPlots; //the plot index of each step the route's trade unit takes, in step order
+};
+
+// Vox Deorum: the next steps of every route no corporation protects, filled by TacticalAIHelpers::UpdateTradeSteps. Each
+// plot maps to (route slot, step slot) pairs, with only the first step of a route that lands on the plot. The steps do not
+// depend on the searching player, so they are rebuilt only when the trade connections change (vSignature).
+struct STradeSteps
+{
+	vector<STradeStepRoute> vRoutes;
+	tr1::unordered_map<int, vector<pair<int, int> > > stepsByPlot;
+	vector<int> vSignature; //the state of the trade connections the steps were built from
+
+	// Vox Deorum: drops every route, so the next update rebuilds
+	void clear() { vRoutes.clear(); stepsByPlot.clear(); vSignature.clear(); }
+};
 
 namespace TacticalAIHelpers
 {
@@ -1945,6 +1975,10 @@ namespace TacticalAIHelpers
 	void SetSearchRiskThresholds(int iRisk, size_t nUnits);
 	// Vox Deorum: resets and prepares HOLD_CITY city-threat credit after the root's tactical plots are populated
 	void SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot, PlayerTypes ePlayer);
+	// Vox Deorum: sets the trade routes and gold flavor weight of the search's trade score, and the root's trade score
+	void SetSearchTradeRoutes(CvTacticalPosition* pRoot, PlayerTypes ePlayer);
+	// Vox Deorum: refreshes the next trade steps the search's turn-end score reads when the trade connections changed
+	void UpdateTradeSteps();
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);
 	bool LaterRowsDependOnPlot(const vector<STacticalAssignment>& vAssignments, size_t iIndex, int iPlotIndex);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);

@@ -1925,6 +1925,31 @@ bool CvGameTrade::MoveUnit (int iIndex)
 }
 
 //	--------------------------------------------------------------------------------
+// Vox Deorum: moves a trade unit's position on a path of iNumPlots plots one step, turning around at either end.
+// Returns true when the step brings the unit back to its origin, which completes a circuit.
+bool CvGameTrade::StepTradeUnitLocation(int& iLocationIndex, bool& bMovingForward, int iNumPlots)
+{
+	// if the unit needs to turn around
+	bool bAtEndGoingForward = (bMovingForward && iLocationIndex >= (iNumPlots - 1));
+	bool bAtEndGoingBackward = (!bMovingForward && iLocationIndex <= 0);
+	if (bAtEndGoingForward || bAtEndGoingBackward)
+	{
+		bMovingForward = !bMovingForward;
+	}
+
+	// if moving forward
+	if (bMovingForward)
+	{
+		iLocationIndex += 1;
+		return false;
+	}
+
+	// if moving back
+	iLocationIndex -= 1;
+	return iLocationIndex == 0;
+}
+
+//	--------------------------------------------------------------------------------
 /// move a trade unit a single step along its path (called by MoveUnit)
 bool CvGameTrade::StepUnit (int iIndex)
 {
@@ -1934,27 +1959,11 @@ bool CvGameTrade::StepUnit (int iIndex)
 		return false;
 	}
 
-	// if the unit needs to turn around
 	TradeConnection &kTradeConnection = m_aTradeConnections[iIndex];
-	bool bAtEndGoingForward = (kTradeConnection.m_bTradeUnitMovingForward && kTradeConnection.m_iTradeUnitLocationIndex >= ((int)kTradeConnection.m_aPlotList.size() - 1));
-	bool bAtEndGoingBackward = (!kTradeConnection.m_bTradeUnitMovingForward && kTradeConnection.m_iTradeUnitLocationIndex <= 0);
-	if (bAtEndGoingForward || bAtEndGoingBackward)
+	// Vox Deorum: the path arithmetic moved to StepTradeUnitLocation
+	if (StepTradeUnitLocation(kTradeConnection.m_iTradeUnitLocationIndex, kTradeConnection.m_bTradeUnitMovingForward, (int)kTradeConnection.m_aPlotList.size()))
 	{
-		kTradeConnection.m_bTradeUnitMovingForward = !kTradeConnection.m_bTradeUnitMovingForward;
-	}
-
-	// if moving forward
-	if (kTradeConnection.m_bTradeUnitMovingForward)
-	{
-		kTradeConnection.m_iTradeUnitLocationIndex += 1;
-	}
-	else // if moving back
-	{
-		kTradeConnection.m_iTradeUnitLocationIndex -= 1;
-		if (kTradeConnection.m_iTradeUnitLocationIndex == 0)
-		{
-			kTradeConnection.m_iCircuitsCompleted += 1;
-		}
+		kTradeConnection.m_iCircuitsCompleted += 1;
 	}
 
 	// Move the visualization
@@ -7400,7 +7409,7 @@ FDataStream& operator<<(FDataStream& saveTo, const CvTradeAI& readFrom)
 	return saveTo;
 }
 
-int TradeConnection::GetMovementSpeed()
+int TradeConnection::GetMovementSpeed() const
 {
 	if (m_eOriginOwner == NO_PLAYER)
 		return 0;

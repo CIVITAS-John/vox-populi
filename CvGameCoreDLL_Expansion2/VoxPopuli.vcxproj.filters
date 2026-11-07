@@ -107,6 +107,7 @@
     <ClCompile Include="cvStopWatch.cpp" />
     <ClCompile Include="CvTacticalAI.cpp" />
     <ClCompile Include="CvTacticalAirSearch.cpp" />
+    <ClCompile Include="CvTacticalTradeSearch.cpp" />
     <ClCompile Include="CvTacticalAnalysisMap.cpp" />
     <ClCompile Include="CvTargeting.cpp" />
     <ClCompile Include="CvTeam.cpp" />

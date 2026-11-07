@@ -10,6 +10,7 @@
 // Vox Deorum: the search internals the air search scorers in CvTacticalAirSearch.cpp share
 #include "CvTacticalSearchShared.h"
 #include "CvTacticalAnalysisMap.h"
+// Vox Deorum: the trade guard reads which enemy units can move onto a step (CvDangerPlots::GetPossibleCapturers)
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
 #include "CvEconomicAI.h"
@@ -7498,7 +7499,8 @@ void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore,
 	//update total score and check for old plot score
 	//total score is (iDamageDelta + iBonusScore) * 10 + sum(plotScores)
 	//score over parent is (iBonusScore + iDamageDelta + iPlotScore - sPreviousPlotScore)
-	iTotalScore = (iDamageDelta + iBonusScore) * 10;
+	// Vox Deorum: plus the plan's trade gain, which addAssignment keeps up to date
+	iTotalScore = (iDamageDelta + iBonusScore) * 10 + iTradeGain;
 	bool bFoundScore = false;
 	for (map<int, short>::const_iterator it = plotScores_r.begin(); it != plotScores_r.end(); ++it)
 	{
@@ -8810,6 +8812,10 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 			else
 				iDangerScore += TACTICAL_COMBAT_CITADEL_BONUS;
 		}
+
+		// Vox Deorum: plans keep the position's trade score (CvTacticalPosition::computeTradeScore), which addAssignment updates.
+		// The trade score this unit gains by the move only picks and orders the search's moves, through the rank bonus.
+		result->SetRankBonus(GetTradeRankBonus(pUnit, testPlot, assumedPosition, assumedPosition.getTactPlot(unit.iPlotIndex), assumedPosition));
 	}
 
 	// Check if we are moving into an improvement that restores our moves
@@ -9633,8 +9639,11 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 			//also consider which plot we end up in
 			STacticalAssignment* moveToPlot = ScorePlotForMove(tempUnit, newPlot, tempPosition, EM_INTERMEDIATE);
 			attack->AddScore(moveToPlot);
+			// Vox Deorum: the trade gain of the plot the attack leaves the unit on, for the candidate cuts (moveToPlot starts there).
+			// Both plots are judged after the attack, so a kill that removes a threat is not counted as a lost guard.
+			attack->SetRankBonus(GetTradeRankBonus(unit.pUnit, newPlot, tempPosition, getTactPlot(unit.iPlotIndex), tempPosition));
 
-			gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(attack, attack->Score()));
+			gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(attack, attack->RankScore()));
 			//done with this plot
 			continue;
 		}
@@ -9724,7 +9733,7 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 				//doesn't matter if we have movement left in this case
 				if (tempPosition.canProbablyEndTurnAfterAssignment(tempUnit, testPlot, moveToPlot->eAssignmentType))
 				{
-					gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(moveToPlot, moveToPlot->Score()));
+					gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(moveToPlot, moveToPlot->RankScore())); // Vox Deorum: RankScore adds the trade gain (ScorePlotForCombatUnitMove)
 					gAssignmentStorage.consumeOne();
 				}
 			}
@@ -9782,7 +9791,7 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 			{
 				moveToPlot->AddScore(iMoveTowardsTargetScore, 0, 0);
 
-				gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(moveToPlot, moveToPlot->Score()));
+				gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(moveToPlot, moveToPlot->RankScore())); // Vox Deorum: RankScore adds the trade gain (ScorePlotForCombatUnitMove)
 				gAssignmentStorage.consumeOne();
 			}
 		}
@@ -10457,6 +10466,10 @@ bool CvTacticalPosition::isKillOrImprovedPosition() const
 	}
 
 	bool bMovingTowardsTarget = (bTargetDistanceRelevant && iAfter < iBefore);
+	// Vox Deorum: a plan that raises the trade score (an interception or a guard) makes progress too
+	bool bTradeGain = iTradeScore > root->iTradeScore;
+	if (bTradeGain)
+		iPositive++;
 	if (haveEnemies())
 	{
 		//staying in place and bombarding is fine!
@@ -10467,7 +10480,7 @@ bool CvTacticalPosition::isKillOrImprovedPosition() const
 	else
 	{
 		//did we get closer to the target plot?
-		return bMovingTowardsTarget || iHealingUnits > 0;
+		return bMovingTowardsTarget || iHealingUnits > 0 || bTradeGain;
 	}
 }
 
@@ -10795,6 +10808,8 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	interceptorStates.clear();
 	plotScores.clear();
 	iRankBonusOverParent = 0;
+	iTradeGain = 0;
+	iTradeScore = 0;
 }
 
 void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
@@ -10822,6 +10837,8 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	iTotalScore = parent.iTotalScore;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
+	iTradeGain = parent.iTradeGain;
+	iTradeScore = parent.iTradeScore;
 	parentPosition = &parent;
 	movePlotUpdateFlagA = parent.movePlotUpdateFlagA;
 	movePlotUpdateFlagB = parent.movePlotUpdateFlagB;
@@ -11412,6 +11429,23 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 		}
 	}
 
+	// Vox Deorum: any assignment can move the position's trade score: a unit takes or leaves a step, takes a route from a unit
+	// on a later step, kills a threat or captures a city on a route. A row that affects the score adds the change to the plan's
+	// trade gain, which UpdateScore puts in the total.
+	// Only a row that touches a trade step, kills, heals, or damages a unit whose death matters to the trade score (splash and
+	// area damage included) can move it; our own units' health only counts on a step. Rows that leave the score alone (initial
+	// and blocked units) change none of these, so the plan's trade gain stays its trade score less the root's.
+	int iTradeChange = 0;
+	bool bTradeRow = bAffectsScore && !gSearchTradeRoutes.empty() && (isKillAssignment(newAssignment.eAssignmentType) ||
+		DamagesTradeScoreUnit(newAssignment.unitDamage) || newAssignment.unitHealing.begin() != newAssignment.unitHealing.end() ||
+		gTradeSteps.stepsByPlot.count(newAssignment.iFromPlotIndex) > 0 || gTradeSteps.stepsByPlot.count(newAssignment.iToPlotIndex) > 0);
+	if (bTradeRow)
+	{
+		int iNewTradeScore = computeTradeScore();
+		iTradeChange = iNewTradeScore - iTradeScore;
+		iTradeScore = iNewTradeScore;
+	}
+
 	//forced moves don't even affect the score
 	if (bAffectsScore)
 	{
@@ -11423,11 +11457,15 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 			modifiedAssignment.AddScore(0, visibilityResult.first, 0);
 		}
 
+		iTradeGain += iTradeChange;
+		iScoreOverParent += iTradeChange;
 		UpdateScore(modifiedAssignment);
 
 		// Vox Deorum: the ranking value of an air sweep orders the heap but never enters the plan score. It is in damage
-		// points, the same unit as the damage delta in iScoreOverParent.
-		addRankBonusLastRound(newAssignment.GetRankBonus());
+		// points, the same unit as the damage delta in iScoreOverParent. Any other row's rank bonus is its trade gain, which
+		// the measured trade change above replaces.
+		if (itUnit->eMoveStrategy == MS_AIR)
+			addRankBonusLastRound(newAssignment.GetRankBonus());
 	}
 
 	// Vox Deorum: an aircraft that has acted leaves its group of interchangeable aircraft. A fired missile, or an aircraft whose
@@ -12431,6 +12469,7 @@ CvSupportPosition::CvSupportPosition()
 	iDamageDelta = 0;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
+	iTradeGain = 0;
 	parentPosition = NULL;
 	tacticalPosition = NULL;
 	finalTacticalPosition = NULL;
@@ -12529,6 +12568,7 @@ void CvSupportPosition::initFromTacticalPosition(const CvTacticalPosition& tactP
 	iDamageDelta = 0;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
+	iTradeGain = 0;
 	parentPosition = NULL;
 	UpdateTacticalPosition(tactPos);
 	finalTacticalPosition = &finalTactPos;
@@ -12587,6 +12627,7 @@ void CvSupportPosition::initFromParent(const CvSupportPosition& parent)
 	iDamageDelta = parent.iDamageDelta;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
+	iTradeGain = 0;
 	parentPosition = &parent;
 	tacticalPosition = parent.tacticalPosition;
 	finalTacticalPosition = parent.finalTacticalPosition;
@@ -13145,6 +13186,20 @@ bool TacticalAIHelpers::ApplyFlavorModifiers(int (&aiFlavor)[STacticalFlavors::N
 	return bRiskModified;
 }
 
+// Vox Deorum: the start value and the game-scale strategy change of one general flavor: iDefault, or the custom value while Vox
+// Deorum custom flavors are active, and the active flavor less the base personality, less the custom value's own change so it
+// is not counted twice. CvFlavorManager::ShiftFlavor(iBase, iDelta) gives the 0 to 100 value.
+void GetGeneralFlavorTerms(const CvFlavorManager* pFlavorManager, FlavorTypes eFlavor, int iDefault, int& iBase, int& iDelta)
+{
+	iBase = iDefault;
+	iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor);
+	if (pFlavorManager->HasCustomFlavors())
+	{
+		iBase = pFlavorManager->GetCustomFlavor(eFlavor);
+		iDelta -= CvFlavorManager::FlavorToGameScale(iBase);
+	}
+}
+
 // Vox Deorum: fills the player's general tactical flavors. Each slot starts from its default, then moves by
 // the strategy delta (active flavor minus base personality) in game scale. Defaults: RISK is 10 x the leader's
 // FLAVOR_RISK; the others are 50. A leader without FLAVOR_RISK (or a database without it) takes RISK from its
@@ -13166,32 +13221,21 @@ void TacticalAIHelpers::GetGeneralTacticalFlavors(PlayerTypes ePlayer, STactical
 		int iDelta = 0;
 		if (i == STacticalFlavors::RISK && (eFlavor == NO_FLAVOR || pFlavorManager->GetBasePersonalityFlavor(eFlavor) == 0))
 		{
-			// the game never randomizes a zero flavor, so a zero base personality means the leader has no FLAVOR_RISK
-			iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
+			// the game never randomizes a zero flavor, so a zero base personality means the leader has no FLAVOR_RISK; it starts
+			// from its offense even under custom flavors, and only the strategy change moves it
 			if (eFlavor != NO_FLAVOR)
-			{
-				iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor);
-				if (bCustom)
-					iDelta -= CvFlavorManager::FlavorToGameScale(pFlavorManager->GetCustomFlavor(eFlavor));
-			}
+				GetGeneralFlavorTerms(pFlavorManager, eFlavor, 50, iBase, iDelta);
+			iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy((FlavorTypes)GC.getInfoTypeForString("FLAVOR_OFFENSE")), 0, 10);
 		}
-		else if (eFlavor == NO_FLAVOR)
+		else if (eFlavor != NO_FLAVOR)
 		{
-			// a missing tactical flavor stays neutral
-		}
-		else if (bCustom)
-		{
-			iBase = pFlavorManager->GetCustomFlavor(eFlavor);
-			iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor) - CvFlavorManager::FlavorToGameScale(iBase);
-			if (i == STacticalFlavors::RISK)
+			// a leader's own RISK starts from its personality with the grand strategy; a custom value replaces it and sets RISK
+			int iDefault = (i == STacticalFlavors::RISK && !bCustom) ? 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(eFlavor), 0, 10) : 50;
+			GetGeneralFlavorTerms(pFlavorManager, eFlavor, iDefault, iBase, iDelta);
+			if (i == STacticalFlavors::RISK && bCustom)
 				flavors.bRiskSet = true;
 		}
-		else
-		{
-			if (i == STacticalFlavors::RISK)
-				iBase = 10 * range(kPlayer.GetGrandStrategyAI()->GetPersonalityAndGrandStrategy(eFlavor), 0, 10);
-			iDelta = pFlavorManager->GetActiveFlavor(eFlavor) - pFlavorManager->GetBasePersonalityFlavor(eFlavor);
-		}
+		//a missing tactical flavor stays neutral
 
 		flavors.iFlavor[i] = CvFlavorManager::ShiftFlavor(iBase, iDelta);
 		if (i == STacticalFlavors::RISK && iDelta != 0)
@@ -13397,6 +13441,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	gRangeAttackPlotsLookup.clear();
 	gSafePlotCount.clear();
 	gOpenPlotDanger.clear();
+	// Vox Deorum: rebuilds the trade steps only when a route changed since the last search. The search's own routes are set
+	// once the root is built.
+	TacticalAIHelpers::UpdateTradeSteps();
+	gSearchTradeRoutes.clear();
+	gTradeScoreUnits.clear();
+	gTradeStepThreats.clear();
 	TacticalAIHelpers::ResetAirSearchCaches();
 	gBadUnitsCount.clear();
 	unuseableUnits.clear();
@@ -13545,6 +13595,10 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 	//small performance optimization
 	initialPosition->setFirstInterestingAssignment(initialPosition->getAssignments().size());
+
+	// Vox Deorum: the routes this search can intercept or guard, and the root's trade score, before the unit cap ranks units by
+	// their best move. A dropped unit stays on its plot, so the drop leaves the root's trade score as it is.
+	TacticalAIHelpers::SetSearchTradeRoutes(initialPosition, ePlayer);
 
 	//around 15 units everything becomes slow so don't use too many
 	// Vox Deorum: the cap is 19 with the air search, where each group of interchangeable aircraft counts once

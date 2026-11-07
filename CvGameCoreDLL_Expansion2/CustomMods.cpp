@@ -589,6 +589,7 @@ int CustomMods::getOption(const string& sOption, int defValue)
 		MOD_OPT_CACHE(IPC_CHANNEL);
 		MOD_OPT_CACHE(VOX_TACTICAL_INTENT_FLAVORS);
 		MOD_OPT_CACHE(VOX_TACTICAL_AIR_SEARCH);
+		MOD_OPT_CACHE(VOX_TACTICAL_TRADE_SEARCH);
 
 		m_bInit = true;
 	}
