@@ -19,6 +19,14 @@ class CvPlot;
 const double unitKillShare = 0.6;
 // The level premium per level above the first, as a share of the unit's base worth.
 const double gradeSeniorityPerLevel = 0.1;
+// The ground weight parts GroundWeight adds to 1 and the plot defense share. Changing one changes the grade and the
+// local token's ground_weight.
+const double groundResourceWeight = 1.0;
+const double groundOceanWeight = -0.25;
+const double groundShallowWaterWeight = -0.2;
+const double groundImprovementWeight = 0.1;
+const double groundGreatPersonImprovementWeight = 0.25;
+const double groundBonusResourceWeight = 0.15;
 
 // Returns a unit type's base worth B: its power times its production cost, each floored at 0.
 double UnitBaseWorth(int iPower, int iProductionCost);
@@ -40,9 +48,13 @@ double CityValue(CvCity& kCity, PlayerTypes ePlayer);
 // Returns a plot's defense in percent for whoever stands on it: 100 on a city plot, otherwise the terrain and
 // feature modifier plus the defense of an improvement that is not pillaged. The value is not clamped.
 int PlotDefense(const CvPlot& kPlot, int iImprovement, bool bPillaged, bool bCity);
-// Returns a plot's ground weight 1 + d + s: d is the defense in percent clamped to 0..100 over 100, and s is 1 for
-// a revealed strategic or luxury resource.
-double GroundWeight(int iDefensePercent, bool bResource);
+// Returns a plot's ground weight 1 + d + r + water, plus its improvement and bonus resource when the plot is
+// workable. d is PlotDefense over 100, not clamped. r is groundResourceWeight for a revealed strategic or luxury
+// resource (bResource). water is groundOceanWeight on ocean and groundShallowWaterWeight on coast and lakes. A
+// workable plot is a city plot or one within its effective owning city's work range; it adds
+// groundImprovementWeight for any improvement, pillaged or not (groundGreatPersonImprovementWeight instead for a
+// great person improvement), and groundBonusResourceWeight for a revealed bonus resource (bBonus).
+double GroundWeight(const CvPlot& kPlot, int iImprovement, bool bPillaged, bool bCity, bool bResource, bool bBonus);
 // Returns the flavor weight curve base x 2^(slope x (flavor - 50) / 50). Reversed, it uses 50 - flavor, so a bold
 // player weighs its own losses less. Flavor 50 returns the base exactly.
 double FlavorWeight(double fBase, double fSlope, int iFlavor, bool bReversed);

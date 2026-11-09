@@ -78,10 +78,32 @@ int PlotDefense(const CvPlot& kPlot, int iImprovement, bool bPillaged, bool bCit
 	return iModifier;
 }
 
-// Adds the clamped defense share and the resource bonus to 1.
-double GroundWeight(int iDefensePercent, bool bResource)
+// Adds the defense share, the resource bonus and the water penalty to 1. A workable plot also adds its improvement,
+// pillaged or not, and its bonus resource. Workable means a city plot, or a plot within the work range of its
+// effective owning city.
+double GroundWeight(const CvPlot& kPlot, int iImprovement, bool bPillaged, bool bCity, bool bResource, bool bBonus)
 {
-	return 1.0 + std::min(100, std::max(0, iDefensePercent)) / 100.0 + (bResource ? 1.0 : 0.0);
+	double fWeight = 1.0 + PlotDefense(kPlot, iImprovement, bPillaged, bCity) / 100.0;
+	if (bResource)
+		fWeight += groundResourceWeight;
+	if (kPlot.isWater())
+		fWeight += kPlot.isShallowWater() ? groundShallowWaterWeight : groundOceanWeight;
+	bool bWorkable = bCity;
+	if (!bWorkable)
+	{
+		const CvCity* pCity = kPlot.getEffectiveOwningCity();
+		bWorkable = pCity && plotDistance(kPlot.getX(), kPlot.getY(), pCity->getX(), pCity->getY()) <= pCity->getWorkPlotDistance();
+	}
+	if (!bWorkable)
+		return fWeight;
+	if (iImprovement != NO_IMPROVEMENT)
+	{
+		const CvImprovementEntry* pInfo = GC.getImprovementInfo(static_cast<ImprovementTypes>(iImprovement));
+		fWeight += pInfo && pInfo->IsCreatedByGreatPerson() ? groundGreatPersonImprovementWeight : groundImprovementWeight;
+	}
+	if (bBonus)
+		fWeight += groundBonusResourceWeight;
+	return fWeight;
 }
 
 // Applies the exponential curve around neutral 50.
