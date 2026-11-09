@@ -1074,6 +1074,8 @@
 #define MOD_VOX_TACTICAL_AIR_SEARCH	gCustomMods.isVOX_TACTICAL_AIR_SEARCH()
 // Vox Deorum: tactical search scores ending on the next steps of enemy trade units to plunder them, and on the endangered next steps of our own
 #define MOD_VOX_TACTICAL_TRADE_SEARCH	gCustomMods.isVOX_TACTICAL_TRADE_SEARCH()
+// Vox Deorum: a global command loop of battlefields replaces the zone posture routines and the reinforcement sweep
+#define MOD_VOX_TACTICAL_OPERATIONAL_LOOP	gCustomMods.isVOX_TACTICAL_OPERATIONAL_LOOP()
 
 //
 // NOTHING BELOW HERE SHOULD NEED CHANGING
@@ -1824,6 +1826,7 @@ public:
 	MOD_OPT_DECL(VOX_TACTICAL_INTENT_FLAVORS);
 	MOD_OPT_DECL(VOX_TACTICAL_AIR_SEARCH);
 	MOD_OPT_DECL(VOX_TACTICAL_TRADE_SEARCH);
+	MOD_OPT_DECL(VOX_TACTICAL_OPERATIONAL_LOOP);
 
 protected:
 	bool m_bInit;

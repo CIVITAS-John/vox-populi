@@ -1186,6 +1186,8 @@
 		<Row Class="3" Name="VOX_TACTICAL_AIR_SEARCH" Value="0"/>
 		<!-- Vox Deorum: tactical search scores ending on the next steps of enemy trade units to plunder them, and on the endangered next steps of our own -->
 		<Row Class="3" Name="VOX_TACTICAL_TRADE_SEARCH" Value="0"/>
+		<!-- Vox Deorum: a global command loop of battlefields replaces the zone posture routines and the reinforcement sweep -->
+		<Row Class="3" Name="VOX_TACTICAL_OPERATIONAL_LOOP" Value="0"/>
 		<!-- Events for JFD Piety -->
 		<!--   GameEvents.PietyChange.Add(function(iPlayer, iCurrentPiety, iPietyChange) end) -->
 		<!--   GameEvents.PietyRateChange.Add(function(iPlayer, iCurrentPietyRate, iPietyRateChange) end) -->

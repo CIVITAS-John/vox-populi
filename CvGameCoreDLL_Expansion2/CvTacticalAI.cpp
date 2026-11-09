@@ -9,6 +9,8 @@
 #include "CvTacticalAI.h"
 // Vox Deorum: the search internals the air search scorers in CvTacticalAirSearch.cpp share
 #include "CvTacticalSearchShared.h"
+// Vox Deorum: the operational loop, which takes over ProcessDominanceZones when its flag is on
+#include "CvTacticalOperationalLoop.h"
 #include "CvTacticalAnalysisMap.h"
 // Vox Deorum: the trade guard reads which enemy units can move onto a step (CvDangerPlots::GetPossibleCapturers)
 #include "CvGameCoreUtils.h"
@@ -782,6 +784,13 @@ void CvTacticalAI::PrioritizeNavalTargetsAndAddToMainList()
 
 void CvTacticalAI::ProcessDominanceZones()
 {
+	// Vox Deorum: with the operational loop, a non-barbarian turn runs the loop's copy instead
+	if (MOD_VOX_TACTICAL_OPERATIONAL_LOOP && !m_pPlayer->isBarbarian())
+	{
+		CvTacticalOperationalLoop::ProcessDominanceZones(*this);
+		return;
+	}
+
 	// Barbarian processing is straightforward -- just one big list of priorites and everything is considered at once
 	if(m_pPlayer->isBarbarian())
 	{
@@ -13749,7 +13758,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	return result;
 }
 
-bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::vector<STacticalAssignment>& vAssignments)
+bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun)
 {
 	static const BuildTypes eCitadel = (BuildTypes)GC.getInfoTypeForString("BUILD_CITADEL");
 	static const BuildTypes eOrdo = MOD_BALANCE_VP ? (BuildTypes)GC.getInfoTypeForString("BUILD_ORDO") : NO_BUILD;
@@ -13759,9 +13768,14 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 	//may fail if a melee kill unexpectedly happens or does not happen
 
 	vector<CvUnit*> finishedUnits;
+	// Vox Deorum: a skipped row counts as run, a row whose precondition held counts even if its outcome failed
+	if (pnRowsRun)
+		*pnRowsRun = 0;
 
 	for (size_t i = 0; i < vAssignments.size(); i++)
 	{
+		if (pnRowsRun)
+			*pnRowsRun = i;
 		CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(vAssignments[i].iUnitID);
 		//be extra careful with the unit here, if we capture cities and liberate them strange instakills can happen
 		//so we need to guess whether the pointer is still valid
@@ -13961,6 +13975,10 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		if (vAssignments[i].eAssignmentType == A_RANGEATTACK && bPrecondition && !bPostcondition && !LaterRowsDependOnPlot(vAssignments, i, vAssignments[i].iToPlotIndex))
 			bPostcondition = true;
 
+		// Vox Deorum: count the row for the operational loop once its precondition held
+		if (pnRowsRun && bPrecondition)
+			*pnRowsRun = i + 1;
+
 #ifdef TACTDEBUG
 		//this can happen sometimes because of randomness or splash damage etc
 		if (!bPrecondition || !bPostcondition)
@@ -13989,6 +14007,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			return false;
 #endif
 	}
+	// Vox Deorum: every row ran
+	if (pnRowsRun)
+		*pnRowsRun = vAssignments.size();
 
 	// Only do this once we know were successful
 	for (vector<CvUnit*>::const_iterator it = finishedUnits.begin(); it != finishedUnits.end(); ++it)

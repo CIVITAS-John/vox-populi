@@ -333,6 +333,8 @@ FDataStream& operator>>(FDataStream&, CvFocusArea&);
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 class CvTacticalAI
 {
+	// Vox Deorum: the operational loop runs the turn through its own copies of the native routines
+	friend class CvTacticalOperationalLoop;
 public:
 	CvTacticalAI(void);
 	~CvTacticalAI(void);
@@ -1979,7 +1981,8 @@ namespace TacticalAIHelpers
 	void SetSearchTradeRoutes(CvTacticalPosition* pRoot, PlayerTypes ePlayer);
 	// Vox Deorum: refreshes the next trade steps the search's turn-end score reads when the trade connections changed
 	void UpdateTradeSteps();
-	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments);
+	// Vox Deorum: pnRowsRun, when given, receives how many leading rows ran before the stream stopped (the operational loop)
+	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun = NULL);
 	bool LaterRowsDependOnPlot(const vector<STacticalAssignment>& vAssignments, size_t iIndex, int iPlotIndex);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }

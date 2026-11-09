@@ -1,8 +1,9 @@
 /*	-------------------------------------------------------------------------------------------------------
 	Vox Deorum: tactical search internals that CvTacticalAI.cpp shares with the air search scorers in
-	CvTacticalAirSearch.cpp (VOX_TACTICAL_AIR_SEARCH) and the trade search in CvTacticalTradeSearch.cpp
-	(VOX_TACTICAL_TRADE_SEARCH). Native keeps these file-local in CvTacticalAI.cpp. Only those three files include
-	this header, after CvTacticalAI.h.
+	CvTacticalAirSearch.cpp (VOX_TACTICAL_AIR_SEARCH), the trade search in CvTacticalTradeSearch.cpp
+	(VOX_TACTICAL_TRADE_SEARCH) and the operational loop's search copies in CvTacticalOperationalLoop.cpp
+	(VOX_TACTICAL_OPERATIONAL_LOOP). Native keeps these file-local in CvTacticalAI.cpp. Only those four files
+	include this header, after CvTacticalAI.h.
 	------------------------------------------------------------------------------------------------------- */
 #pragma once
 
@@ -13,6 +14,21 @@
 extern CvTactPosStorage gTactPosStorage;
 extern CvTactAssignmentStorage gAssignmentStorage;
 extern vector<OptionWithScore<STacticalAssignment*> > gPossibleMoves;
+
+// the state the operational loop's copies of the search setup reset or read: the support pool, the reach and attack
+// caches, the flooded distances to the search target, the safe plot counts, open-plot danger, the units the search could
+// not use, the RISK thresholds and the player the pools were last sized for
+extern CvSupportPosStorage gSupportPosStorage;
+extern TCachedMovePlots gReachablePlotsLookup;
+extern TCachedRangeAttackPlots gRangeAttackPlotsLookup;
+extern TCachedDistanceToTargetPlots gDistanceToTargetPlots;
+extern CvPlot* gTargetPlot;
+extern TUnitFlagLookup gSafePlotCount;
+extern tr1::unordered_map<int, int> gOpenPlotDanger;
+extern map<int, int> gBadUnitsCount;
+extern int gDefaultUnitLossThreshold;
+extern int gMinHpForTactsim;
+extern PlayerTypes eLastTactSimPlayer;
 
 // true if this attack ends the unit's turn
 bool AttackEndsTurn(const CvUnit* pUnit, int iNumAttacksLeft);

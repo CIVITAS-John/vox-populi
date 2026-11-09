@@ -661,6 +661,18 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Use</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">CvGameCoreDLLPCH.h</PrecompiledHeaderFile>
     </ClCompile>
+    <ClCompile Include="CvTacticalOperationalLoop.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">CvGameCoreDLLPCH.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="CvTacticalOperationalValue.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">CvGameCoreDLLPCH.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="CvTacticalOperationalWeights.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">CvGameCoreDLLPCH.h</PrecompiledHeaderFile>
+    </ClCompile>
     <ClCompile Include="CvTacticalAnalysisMap.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Use</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">CvGameCoreDLLPCH.h</PrecompiledHeaderFile>
@@ -964,6 +976,9 @@
     <ClInclude Include="CvTacticalAI.h" />
     <ClInclude Include="CvTacticalAirSearch.h" />
     <ClInclude Include="CvTacticalSearchShared.h" />
+    <ClInclude Include="CvTacticalOperationalLoop.h" />
+    <ClInclude Include="CvTacticalOperationalValue.h" />
+    <ClInclude Include="CvTacticalOperationalWeights.h" />
     <ClInclude Include="CvTacticalAnalysisMap.h" />
     <ClInclude Include="CvTargeting.h" />
     <ClInclude Include="CvTeam.h" />

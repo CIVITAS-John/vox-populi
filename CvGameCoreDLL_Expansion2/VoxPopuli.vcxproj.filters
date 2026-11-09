@@ -108,6 +108,9 @@
     <ClCompile Include="CvTacticalAI.cpp" />
     <ClCompile Include="CvTacticalAirSearch.cpp" />
     <ClCompile Include="CvTacticalTradeSearch.cpp" />
+    <ClCompile Include="CvTacticalOperationalLoop.cpp" />
+    <ClCompile Include="CvTacticalOperationalValue.cpp" />
+    <ClCompile Include="CvTacticalOperationalWeights.cpp" />
     <ClCompile Include="CvTacticalAnalysisMap.cpp" />
     <ClCompile Include="CvTargeting.cpp" />
     <ClCompile Include="CvTeam.cpp" />
@@ -469,6 +472,9 @@
     <ClInclude Include="CvTacticalAI.h" />
     <ClInclude Include="CvTacticalAirSearch.h" />
     <ClInclude Include="CvTacticalSearchShared.h" />
+    <ClInclude Include="CvTacticalOperationalLoop.h" />
+    <ClInclude Include="CvTacticalOperationalValue.h" />
+    <ClInclude Include="CvTacticalOperationalWeights.h" />
     <ClInclude Include="CvTacticalAnalysisMap.h" />
     <ClInclude Include="CvTargeting.h" />
     <ClInclude Include="CvTeam.h" />
