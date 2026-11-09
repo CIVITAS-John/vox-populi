@@ -7,29 +7,6 @@
 
 #include <vector>
 
-// Keeps borrowed read-only bytes alive only while an external owner remains valid.
-class VoxRlBorrowedBlockStorage {
-public:
-    // Creates an empty borrowed storage view.
-    VoxRlBorrowedBlockStorage();
-
-    // Borrows one aligned read-only block without copying it.
-    bool Reset(const void* bytes, u32 byteLength);
-
-    // Clears the borrowed byte range before the external owner is released.
-    void Clear();
-
-    // Returns the borrowed bytes.
-    const u8* Bytes() const;
-
-    // Returns the borrowed byte count.
-    u32 ByteLength() const;
-
-private:
-    const u8* bytes_;
-    u32 byteLength_;
-};
-
 // Owns a mutable byte allocation used for copied fixture and pipe blocks.
 class VoxRlOwnedBlockStorage {
 public:
@@ -67,42 +44,6 @@ private:
 #ifdef VOX_RL_TESTING
 // Configures a finite number of owned-storage allocation failures for harness coverage.
 void VoxRlFailOwnedStorageAllocationsForTesting(u32 count);
-#endif
-
-#ifdef _WIN32
-// Owns a read-only Windows fixture-file mapping for the lifetime of a block view.
-class VoxRlFixtureFileMapping {
-public:
-    // Creates an unopened fixture mapping.
-    VoxRlFixtureFileMapping();
-
-    // Closes the mapping and its file handles.
-    ~VoxRlFixtureFileMapping();
-
-    // Opens an exact read-only fixture mapping from a UTF-16 filesystem path.
-    bool Open(const wchar_t* path);
-
-    // Closes the mapping and its backing handles.
-    void Close();
-
-    // Returns the mapped read-only bytes, or zero when no file is open.
-    const u8* Bytes() const;
-
-    // Returns the mapped byte count, or zero when no file is open.
-    u32 ByteLength() const;
-
-private:
-    // Disallows accidental copies of storage that owns Windows handles and a mapped view.
-    VoxRlFixtureFileMapping(const VoxRlFixtureFileMapping& other);
-
-    // Disallows accidental assignment of storage that owns Windows handles and a mapped view.
-    VoxRlFixtureFileMapping& operator=(const VoxRlFixtureFileMapping& other);
-
-    void* fileHandle_;
-    void* mappingHandle_;
-    const u8* bytes_;
-    u32 byteLength_;
-};
 #endif
 
 #endif
