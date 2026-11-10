@@ -3851,10 +3851,28 @@ int CvPlot::GetEffectiveFlankingBonus(const CvUnit* pUnit, const CvUnit* pOtherU
 	int iNumUnitsAdjacentToOther = pOtherPlot->GetNumEnemyUnitsAdjacent( pOtherUnit->getTeam(), pOtherUnit->getDomainType(), pUnit, true);
 	int iNumUnitsAdjacentToHere = GetNumEnemyUnitsAdjacent( pUnit->getTeam(), pUnit->getDomainType(), pOtherUnit, true);
 
-	if (iNumUnitsAdjacentToOther > iNumUnitsAdjacentToHere)
-		return (pUnit->GetFlankAttackModifier() + /*10*/ GD_INT_GET(BONUS_PER_ADJACENT_FRIEND)) * (iNumUnitsAdjacentToOther - iNumUnitsAdjacentToHere);
+	return GetFlankingBonusFromCounts(pUnit, pOtherUnit, iNumUnitsAdjacentToOther, iNumUnitsAdjacentToHere);
+}
+
+// Vox Deorum: the flanking bonus of pUnit against pOtherUnit when iOurFlankers flank the other unit and iTheirFlankers flank pUnit
+int CvPlot::GetFlankingBonusFromCounts(const CvUnit* pUnit, const CvUnit* pOtherUnit, int iOurFlankers, int iTheirFlankers)
+{
+	if (!pUnit || !pOtherUnit)
+		return 0;
+
+	if (iOurFlankers > iTheirFlankers)
+		return (pUnit->GetFlankAttackModifier() + /*10*/ GD_INT_GET(BONUS_PER_ADJACENT_FRIEND)) * (iOurFlankers - iTheirFlankers);
 
 	return 0;
+}
+
+// Vox Deorum: the ranged flanking bonus when iFlankers flank the defender; the attacker's own flankers are never subtracted
+int CvPlot::GetFlankingBonusAtRangeFromCount(const CvUnit* pAttackingUnit, const CvUnit* pDefendingUnit, int iFlankers)
+{
+	if (!pAttackingUnit || !pDefendingUnit)
+		return 0;
+
+	return (pAttackingUnit->GetFlankAttackModifier() + /*10*/ GD_INT_GET(BONUS_PER_ADJACENT_FRIEND)) * iFlankers;
 }
 
 int CvPlot::GetEffectiveFlankingBonusAtRange(const CvUnit* pAttackingUnit, const CvUnit* pDefendingUnit) const
@@ -3867,7 +3885,7 @@ int CvPlot::GetEffectiveFlankingBonusAtRange(const CvUnit* pAttackingUnit, const
 	// ranged units can't get flanked when they attack, but their target can be
 	int iNumUnitsAdjacentToHere = GetNumEnemyUnitsAdjacent( pDefendingUnit->getTeam(), pDefendingUnit->getDomainType(), pAttackingUnit, true);
 
-	return (pAttackingUnit->GetFlankAttackModifier() + /*10*/ GD_INT_GET(BONUS_PER_ADJACENT_FRIEND)) * (iNumUnitsAdjacentToHere);
+	return GetFlankingBonusAtRangeFromCount(pAttackingUnit, pDefendingUnit, iNumUnitsAdjacentToHere);
 }
 
 //	--------------------------------------------------------------------------------
@@ -5327,26 +5345,33 @@ bool CvPlot::isEnemyUnit(PlayerTypes ePlayer, bool bCombatOnly, bool bCheckVisib
 			const CvUnit* pLoopUnit = GetPlayerUnit(*pUnitNode);
 			pUnitNode = m_units.next(pUnitNode);
 
-			if(pLoopUnit && !pLoopUnit->isInvisible(eTeam, false) && !pLoopUnit->IsDead())
-			{
-				//airplanes not included
-				if (bCombatOnly && !pLoopUnit->IsCanDefend())
-					continue;
-
-				if (bIgnoreBarbs && pLoopUnit->isBarbarian())
-					continue;
-
-				if (bIgnoreEmbarked && !pLoopUnit->isNativeDomain(pLoopUnit->plot()))
-					continue;
-
-				if(isOtherTeam(pLoopUnit, eTeam) && isEnemy(pLoopUnit,eTeam,false))
-					return true;
-			}
+			// Vox Deorum: the per-unit rule lives in IsEnemyUnitFor, shared with neighborhood records
+			if (IsEnemyUnitFor(pLoopUnit, eTeam, bCombatOnly, bIgnoreBarbs, bIgnoreEmbarked))
+				return true;
 		}
 		while(pUnitNode != NULL);
 	}
 
 	return false;
+}
+
+// Vox Deorum: whether pLoopUnit counts as an enemy unit that team eTeam can see
+bool CvPlot::IsEnemyUnitFor(const CvUnit* pLoopUnit, TeamTypes eTeam, bool bCombatOnly, bool bIgnoreBarbs, bool bIgnoreEmbarked)
+{
+	if(!pLoopUnit || pLoopUnit->isInvisible(eTeam, false) || pLoopUnit->IsDead())
+		return false;
+
+	//airplanes not included
+	if (bCombatOnly && !pLoopUnit->IsCanDefend())
+		return false;
+
+	if (bIgnoreBarbs && pLoopUnit->isBarbarian())
+		return false;
+
+	if (bIgnoreEmbarked && !pLoopUnit->isNativeDomain(pLoopUnit->plot()))
+		return false;
+
+	return isOtherTeam(pLoopUnit, eTeam) && isEnemy(pLoopUnit,eTeam,false);
 }
 
 

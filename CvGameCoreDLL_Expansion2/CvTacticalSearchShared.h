@@ -35,7 +35,9 @@ bool AttackEndsTurn(const CvUnit* pUnit, int iNumAttacksLeft);
 // the rough state of the position after the assignment
 void GetNextPosition(const CvTacticalPosition& previousPosition, const STacticalAssignment* assignment, CvTacticalPosition& newPosition);
 // scores the damage of an attack on the plot into the result, with the search's own damage adjustments
-bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, const CvTacticalPlot* assumedPlot, const CvTacticalPosition& assumedPosition, CAttackCache& cache, STacticalAssignment* result, int iSelfDamage);
+// Vox Deorum: a caller that already has the attack's neighborhood record may pass it, otherwise it is built here
+bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, const CvTacticalPlot* assumedPlot, const CvTacticalPosition& assumedPosition, CAttackCache& cache, STacticalAssignment* result, int iSelfDamage,
+	const SCombatNeighborhood* pPrebuiltNeighborhood = NULL);
 // the plot score of the unit's latest assignment in the position, or 0
 int GetPrevPlotScore(int iUnitID, const CvBasePosition& position);
 

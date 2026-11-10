@@ -1105,6 +1105,8 @@ struct AttackKey
 	int iPrevSelfDamage;
 	int iPrevUnitDamage;
 	int iPrevCityDamage;
+	// Vox Deorum: the attack's neighborhood record, as the estimate depends on where other units stand
+	SCombatNeighborhood neighborhood;
 
 	bool operator==(const AttackKey& rhs) const
 	{
@@ -1114,7 +1116,8 @@ struct AttackKey
 			iGarrisonId == rhs.iGarrisonId &&
 			iPrevSelfDamage == rhs.iPrevSelfDamage &&
 			iPrevUnitDamage == rhs.iPrevUnitDamage &&
-			iPrevCityDamage == rhs.iPrevCityDamage;
+			iPrevCityDamage == rhs.iPrevCityDamage &&
+			neighborhood == rhs.neighborhood;
 	}
 };
 
@@ -1130,6 +1133,7 @@ struct AttackKeyHash
 		h ^= (size_t)k.iPrevSelfDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= (size_t)k.iPrevUnitDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= (size_t)k.iPrevCityDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= k.neighborhood.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 
 		return h;
 	}
@@ -1156,8 +1160,9 @@ protected:
 class CAttackCache {
 public:
 	void clear();
-	void storeAttack(int iAttackerId, int iAttackerPlot, int iDefenderId, int iGarrisonId, int iPrevSelfDamage, int iPrevUnitDamage, int iPrevCityDamage, int iUnitDamageDealt, int iCityDamageDealt, int iDamageTaken);
-	bool findAttack(int iAttackerId, int iAttackerPlot, int iDefenderId, int iGarrisonId, int iPrevSelfDamage, int iPrevUnitDamage, int iPrevCityDamage, int& iUnitDamageDealt, int& iCityDamageDealt, int& iDamageTaken) const;
+	// Vox Deorum: the neighborhood record is part of the key
+	void storeAttack(int iAttackerId, int iAttackerPlot, int iDefenderId, int iGarrisonId, int iPrevSelfDamage, int iPrevUnitDamage, int iPrevCityDamage, const SCombatNeighborhood& neighborhood, int iUnitDamageDealt, int iCityDamageDealt, int iDamageTaken);
+	bool findAttack(int iAttackerId, int iAttackerPlot, int iDefenderId, int iGarrisonId, int iPrevSelfDamage, int iPrevUnitDamage, int iPrevCityDamage, const SCombatNeighborhood& neighborhood, int& iUnitDamageDealt, int& iCityDamageDealt, int& iDamageTaken) const;
 protected:
 	//key is attacker id
 	std::tr1::unordered_map<AttackKey, AttackResult, AttackKeyHash> attackStats;
@@ -1509,6 +1514,8 @@ protected:
 
 	// the pool releases expanded positions' state and recycles their buffers
 	friend class CvTactPosStorage;
+	// Vox Deorum: the planned board reads the unit lists
+	friend class CvPlannedPlacement;
 
 public:
 
@@ -1732,13 +1739,48 @@ public:
 	int GetNumWaitingUnits() const { return iWaitingUnits; }
 };
 
+// Vox Deorum: the planned board of a search position as a unit placement. Our search units stand at their planned plots
+// with their planned moves, every other unit stands where it is, and units the plan has killed are gone. bind indexes the
+// position's search units by plot and by ID once, so the queries of a record read short sorted lists. The real units on a
+// plot come from the search's neighborhood cache.
+class CvPlannedPlacement : public CvUnitPlacement
+{
+public:
+	CvPlannedPlacement() : m_pPosition(NULL), m_ePlayer(NO_PLAYER), m_pCache(NULL) {}
+	/// Indexes a position's search units. The placement reads that position and the cache until the next bind.
+	void bind(const CvTacticalPosition& position, SNeighborhoodCache& cache);
+	/// Forgets the bound position, so the next record binds again.
+	void unbind() { m_pPosition = NULL; }
+	/// Whether a position is bound.
+	bool isBound() const { return m_pPosition != NULL; }
+	/// Lists the units on a plot in the planned position.
+	virtual void getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit>& units) const;
+	/// Finds where a unit stands in the planned position.
+	virtual bool locate(const CvUnit* pUnit, SPlacedUnit& placed) const;
+
+private:
+	/// A search unit's entry: its index in m_placed, -1 when its own planned damage killed it, -2 when the search doesn't plan it.
+	int findPlanned(const CvUnit* pUnit) const;
+	/// Whether a unit the search doesn't plan is dead in the planned position.
+	bool isKilled(const CvUnit* pUnit) const;
+	/// Places a search unit at its planned plot, unless its own planned damage has killed it.
+	bool place(const SUnitStats& stats, SPlacedUnit& placed) const;
+
+	const CvTacticalPosition* m_pPosition;
+	PlayerTypes m_ePlayer;
+	SNeighborhoodCache* m_pCache;
+	vector<SPlacedUnit> m_placed;         // living search units at their planned plots, sorted by plot index
+	vector<pair<int, int> > m_plannedIDs;  // (unit ID, index in m_placed or -1), sorted
+};
+
 class CvTactPosStorage
 {
 public:
 	// reserves the spare lists up front so they never reallocate. Every buffer sits in
 	// a slot or a spare list, and new ones are made only when the list is empty, so a list never
 	// holds more buffers than the slots have fields of its type: one plot table and three unit lists.
-	CvTactPosStorage(int iPreallocationSize) : iSize(iPreallocationSize), iUsableSize(iPreallocationSize), iCount(0), aPositions(new CvTacticalPosition[iPreallocationSize]), attackCache()
+	CvTactPosStorage(int iPreallocationSize) : iSize(iPreallocationSize), iUsableSize(iPreallocationSize), iCount(0), aPositions(new CvTacticalPosition[iPreallocationSize]), attackCache(),
+		pHeldPosition(NULL)
 	{
 		spareTactPlots.reserve(iPreallocationSize);
 		spareUnitLists.reserve(3 * iPreallocationSize);
@@ -1766,6 +1808,23 @@ public:
 	int consumeOne() { return iCount++; }
 	CAttackCache& getAttackCache() { return attackCache; }
 	CDangerCache& getDangerCache() { return dangerCache; }
+	// Vox Deorum: the planned-board index and the shared state of neighborhood records, reused through one search
+	CvPlannedPlacement& getPlannedPlacement() { return plannedPlacement; }
+	SNeighborhoodCache& getNeighborhoodCache() { return neighborhoodCache; }
+	// Vox Deorum: holds a position while its units are scored. Scoring never changes the position, so its records share
+	// one planned-board index and remember attacker sides until the release.
+	void holdPlacement(const CvTacticalPosition& position)
+	{
+		pHeldPosition = &position;
+		heldPlacement.unbind();
+		neighborhoodCache.forgetHeldAttackerSides();
+	}
+	// Vox Deorum: ends the hold, once the position may change again
+	void releasePlacement() { pHeldPosition = NULL; }
+	// Vox Deorum: whether records of a position may use the held placement
+	bool isHeld(const CvTacticalPosition& position) const { return pHeldPosition == &position; }
+	// Vox Deorum: the planned-board index of the held position, bound by its first record
+	CvPlannedPlacement& getHeldPlacement() { return heldPlacement; }
 
 	// frees the state only an open position needs, once its children exist. Later
 	// steps read just the assignments and freed plots of a non-root ancestor, so its plots, units,
@@ -1795,6 +1854,12 @@ protected:
 	CvTacticalPosition* aPositions; //preallocated block of N positions
 	CAttackCache attackCache; //performance optimization, unit strength calculation takes too long
 	CDangerCache dangerCache; //performance optimization, unit strength calculation takes too long
+	// Vox Deorum: reused by every neighborhood record of a search; reset clears the cache
+	CvPlannedPlacement plannedPlacement;
+	SNeighborhoodCache neighborhoodCache;
+	// Vox Deorum: the position whose units are being scored, and its planned-board index
+	const CvTacticalPosition* pHeldPosition;
+	CvPlannedPlacement heldPlacement;
 	// buffers released by expanded positions, waiting for a new child to take them
 	vector<vector<CvTacticalPlot>> spareTactPlots;
 	vector<vector<SUnitStats>> spareUnitLists;
@@ -1941,11 +2006,17 @@ namespace TacticalAIHelpers
 	bool IsCloseToContestedBorder(CvPlayer* pPlayer, CvPlot* pPlot);
 
 	std::vector<CvPlot*> GetPlotsForRangedAttack(const CvPlot* pTarget, const CvUnit* pUnit, int iRange, bool bCheckOccupied);
+	// Vox Deorum: a neighborhood record, if given, supplies every term that depends on other units (see SCombatNeighborhood)
 	int GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefender, const CvUnit* pAttacker, const CvPlot* pDefenderPlot, const CvPlot* pAttackerPlot, int& iAttackerDamage, 
-									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraDefenderDamage=0, bool bQuickAndDirty = false);
+									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraDefenderDamage=0, bool bQuickAndDirty = false,
+									const SCombatNeighborhood* pNeighborhood = NULL);
 	int GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, int& iAttackerDamage, int& iGarrisonDamage,
 									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraCityDamage=0, int iExtraGarrisonDamage=0, bool bQuickAndDirty = false,
-									bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL);
+									bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL, const SCombatNeighborhood* pNeighborhood = NULL);
+	// Vox Deorum: the neighborhood record of an attack in a search position, with our units at their planned plots and
+	// units the plan has killed left out. pDefender is NULL for a city target.
+	void BuildCombatNeighborhood(const CvTacticalPosition& position, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, const CvUnit* pDefender,
+									const CvPlot* pTargetPlot, SCombatNeighborhood& neighborhood);
 	bool KillLoneEnemyIfPossible(CvUnit* pOurUnit, CvUnit* pEnemyUnit);
 	bool IsSuicideMeleeAttack(const CvUnit* pAttacker, CvPlot* pTarget);
 	bool CanKillTarget(const CvUnit* pAttacker, CvPlot* pTarget);
