@@ -180,6 +180,9 @@ public:
 	virtual ~CvUnitPlacement() {}
 	/// Lists the units standing on a plot.
 	virtual void getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit>& units) const = 0;
+	/// Vox Deorum: finds a same-team unit of the class, excluding pReference, without allocating. A wrapper
+	/// excludes its moved unit from the base placement and checks that unit at its new plot.
+	virtual bool hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded = NULL) const = 0;
 	/// Finds where a unit stands. Returns false when the unit is gone.
 	virtual bool locate(const CvUnit* pUnit, SPlacedUnit& placed) const = 0;
 };
@@ -190,6 +193,8 @@ class CvBoardPlacement : public CvUnitPlacement
 public:
 	/// Lists the living units on a plot as they stand now.
 	virtual void getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit>& units) const;
+	/// Vox Deorum: checks the plot's units in place, skipping the reference and excluded units.
+	virtual bool hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded = NULL) const;
 	/// Finds where a unit stands now. Returns false for a unit about to die.
 	virtual bool locate(const CvUnit* pUnit, SPlacedUnit& placed) const;
 };
@@ -202,6 +207,8 @@ public:
 		m_base(base), m_pAttacker(pAttacker), m_pAttackerPlot(pAttackerPlot) {}
 	/// Lists the units on a plot, with the attacker only on its attack plot.
 	virtual void getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit>& units) const;
+	/// Vox Deorum: checks the attacker at its attack plot, then the base with the attacker excluded.
+	virtual bool hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded = NULL) const;
 	/// Finds a unit, with the attacker on its attack plot.
 	virtual bool locate(const CvUnit* pUnit, SPlacedUnit& placed) const;
 
@@ -290,11 +297,10 @@ struct SCombatNeighborhood
 		return h;
 	}
 
-	/// Fills the record for an attack under a placement. pDefender is NULL for a city target. A search passes its cache;
-	/// without one the record uses a cache of its own. bHeld says the placement stays bound to one unchanged position
-	/// since the cache last forgot its held attacker sides, so the attacker's side can be reused across targets.
+	/// Vox Deorum: fills an attack record. A city target has no defender. A supplied cache holds attacker sides
+	/// for one unchanged position until forgetHeldAttackerSides is called. Without one, the record uses a local cache.
 	void build(const CvUnitPlacement& placement, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, const CvUnit* pDefender, const CvPlot* pDefenderPlot,
-		SNeighborhoodCache* pCache = NULL, bool bHeld = false);
+		SNeighborhoodCache* pCache = NULL);
 	/// Fills the record from the real board, the same values full combat rules see.
 	void buildFromBoard(const CvUnit* pAttacker, const CvPlot* pAttackerPlot, const CvUnit* pDefender, const CvPlot* pDefenderPlot);
 
@@ -313,7 +319,8 @@ private:
 // move during a search, so the owner clears it once per search. The real units on each plot and the live retreat checks
 // are kept as first seen. The auras that come from units the search doesn't move (the defender's own auras and the
 // reverse general on the attacker) keep the providers that reach a plot on the real board; each record then drops the
-// ones its placement has killed. While the search holds one position, the attacker sides of its records are kept too.
+// ones its placement has killed. Defender reverse-general candidates are also kept for the search and checked
+// against each record's placement. A held position keeps attacker sides until the hold ends.
 struct SNeighborhoodCache
 {
 	// a unit's per-adjacent-class modifiers for one combat class, when any is nonzero
@@ -333,6 +340,8 @@ struct SNeighborhoodCache
 	void getDefenderGiveAuras(const CvUnitPlacement& placement, const CvUnit* pDefender, const CvPlot* pPlot, SGiveAuras& auras);
 	/// The reverse-general aura the attacker's enemies put on it at a plot, from the providers still alive in the placement.
 	int getAttackerReverseGeneral(const CvUnitPlacement& placement, const CvUnit* pAttacker, const CvPlot* pPlot);
+	/// Vox Deorum: the defender's reverse-general aura, using search candidates checked against this record's placement.
+	int getDefenderReverseGeneral(const CvUnitPlacement& placement, const CvUnit* pDefender, const CvPlot* pPlot);
 	/// The real units on a plot as the board lists them, listed on first use.
 	const std::vector<SPlacedUnit>& getBoardUnits(const CvPlot* pPlot);
 	/// Whether the live move check keeps a defender out of a plot, worked out on first use. Without unit checks the
@@ -350,7 +359,7 @@ struct SNeighborhoodCache
 	{
 		m_heldAttackerSides[std::make_pair(pAttacker, iPlotIndex)] = side;
 	}
-	/// Forgets the attacker sides, when the search holds another position.
+	/// Vox Deorum: forgets attacker sides when a position hold starts or ends.
 	void forgetHeldAttackerSides() { m_heldAttackerSides.clear(); }
 
 	std::vector<SPlacedUnit> scratch;     // reusable buffer for plot queries
@@ -359,7 +368,17 @@ private:
 	std::map<const CvUnit*, std::vector<SClassMod> > m_classMods;
 	typedef std::vector<const CvUnit*> Providers;  // aura providers that reach a plot on the real board, in their owner's order
 	std::map<std::pair<const CvUnit*, int>, Providers> m_defenderGiveAuras;  // by defender and plot index
-	std::map<long long, Providers> m_attackerReverseGeneral;                 // by plot index, owner and domain
+	// Vox Deorum: reverse-general values are read once from the fork's negative-aura providers, then reused.
+	typedef std::vector<std::pair<const CvUnit*, int> > ReverseGeneralProviders;
+	struct SReverseGeneralCandidate
+	{
+		const CvUnit* pUnit;
+		int iModifier;
+		int iRange;
+	};
+	typedef std::vector<SReverseGeneralCandidate> ReverseGeneralCandidates;
+	std::map<long long, ReverseGeneralProviders> m_attackerReverseGeneral;  // by plot index, owner and domain
+	std::map<std::pair<PlayerTypes, DomainTypes>, ReverseGeneralCandidates> m_defenderReverseGeneral;  // by defender owner and domain
 	std::map<int, std::vector<SPlacedUnit> > m_boardUnits;                   // by plot index
 	std::map<std::pair<const CvUnit*, int>, bool> m_moveBlocked;             // by defender and plot index * 2 + unit checks
 	std::map<std::pair<const CvUnit*, int>, SCombatNeighborhood::Side> m_heldAttackerSides;  // by attacker and plot index
@@ -1861,7 +1880,8 @@ public:
 	// Vox Deorum: aura rules shared by the live getters (no placement: the real board) and neighborhood records
 	// (pProviders, when given, receives every provider that reaches pAtPlot, in the owner's order)
 	void ResolveGiveAuras(const CvPlot* pAtPlot, SGiveAuras& auras, const CvUnitPlacement* pPlacement = NULL, std::vector<const CvUnit*>* pProviders = NULL) const;
-	int ResolveReverseGeneral(const CvPlot* pAtPlot, const CvUnitPlacement* pPlacement = NULL, std::vector<const CvUnit*>* pProviders = NULL) const;
+	// Vox Deorum: lists reverse-general providers with the modifiers used to resolve the aura.
+	int ResolveReverseGeneral(const CvPlot* pAtPlot, const CvUnitPlacement* pPlacement = NULL, std::vector<std::pair<const CvUnit*, int> >* pProviders = NULL) const;
 	bool IsNearbyUnitClassPresent(UnitClassTypes eUnitClass, int iUnitClassRange, const CvPlot* pAtPlot, const CvUnitPlacement* pPlacement = NULL) const;
 	int GetGiveDefenseModToUnit() const;
 	int GetHealEnemyTerritoryFromNearbyUnit() const;

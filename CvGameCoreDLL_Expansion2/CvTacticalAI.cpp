@@ -6792,7 +6792,7 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 		if (pDefender->GetCurrHitPoints() > iDamage + iExtraDefenderDamage)
 		{
 			int iAttackerStrength = pAttacker->GetMaxAttackStrength(pAttackerPlot, pDefenderPlot, pDefender, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iExtraSelfDamage, iExtraDefenderDamage + iDamage, pNeighborhood);
-			//do not override defender flanking/general bonus (it is known during combat simulation)
+			// Vox Deorum: with a record, defense reads its neighbor terms; without one, it follows the live-board rules.
 			int iDefenderStrength = pDefender->GetMaxDefenseStrength(pDefenderPlot, pAttacker, pAttackerPlot, false, bQuickAndDirty, iExtraDefenderDamage + iDamage, pNeighborhood);
 
 			//just assume the unit can attack from its current location - modifiers might be different, but thats acceptable
@@ -7659,6 +7659,38 @@ void CvPlannedPlacement::getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit
 	units.insert(units.end(), range.first, range.second);
 }
 
+// Vox Deorum: checks live units the plan keeps and search units planned on this plot without allocating a list.
+// Skips the excluded unit so a wrapper can check its attacker at the attack plot.
+bool CvPlannedPlacement::hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded) const
+{
+	if (!pPlot)
+		return false;
+
+	TeamTypes eTeam = pReference->getTeam();
+	for (int i = 0; i < pPlot->getNumUnits(); i++)
+	{
+		const CvUnit* pUnit = pPlot->getUnitByIndex(i);
+		if (!pUnit || pUnit == pReference || pUnit == pExcluded || pUnit->getUnitClassType() != eUnitClass || pUnit->getTeam() != eTeam)
+			continue;
+		if (findPlanned(pUnit) != -2 || isKilled(pUnit))
+			continue;
+		return true;
+	}
+
+	SPlacedUnit key;
+	key.pPlot = pPlot;
+	std::pair<vector<SPlacedUnit>::const_iterator, vector<SPlacedUnit>::const_iterator> range =
+		std::equal_range(m_placed.begin(), m_placed.end(), key, PlacedUnitPlotLess);
+	for (vector<SPlacedUnit>::const_iterator it = range.first; it != range.second; ++it)
+	{
+		const CvUnit* pUnit = it->pUnit;
+		if (pUnit == pReference || pUnit == pExcluded || pUnit->getUnitClassType() != eUnitClass || pUnit->getTeam() != eTeam)
+			continue;
+		return true;
+	}
+	return false;
+}
+
 // Vox Deorum: finds where a unit stands in the planned position
 bool CvPlannedPlacement::locate(const CvUnit* pUnit, SPlacedUnit& placed) const
 {
@@ -7716,18 +7748,16 @@ bool CvPlannedPlacement::place(const SUnitStats& stats, SPlacedUnit& placed) con
 	return true;
 }
 
-// Vox Deorum: the neighborhood record of an attack in a search position, from its planned board. The search storage
-// holds the index and the cache, so a record allocates nothing once the search has warmed up. A held position keeps its
-// index across records; any other position is indexed afresh.
+// Vox Deorum: builds a record from the held position, reusing its planned-board index and neighborhood cache.
 void TacticalAIHelpers::BuildCombatNeighborhood(const CvTacticalPosition& position, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, const CvUnit* pDefender,
 	const CvPlot* pTargetPlot, SCombatNeighborhood& neighborhood)
 {
 	SNeighborhoodCache& cache = gTactPosStorage.getNeighborhoodCache();
-	bool bHeld = gTactPosStorage.isHeld(position);
-	CvPlannedPlacement& placement = bHeld ? gTactPosStorage.getHeldPlacement() : gTactPosStorage.getPlannedPlacement();
-	if (!bHeld || !placement.isBound())
+	ASSERT(gTactPosStorage.isHeld(position));
+	CvPlannedPlacement& placement = gTactPosStorage.getHeldPlacement();
+	if (!placement.isBound())
 		placement.bind(position, cache);
-	neighborhood.build(placement, pAttacker, pAttackerPlot, pDefender, pTargetPlot, &cache, bHeld);
+	neighborhood.build(placement, pAttacker, pAttackerPlot, pDefender, pTargetPlot, &cache);
 }
 
 //note that the score returned from this function is not multiplied by 10 yet

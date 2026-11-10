@@ -24240,16 +24240,28 @@ int CvUnit::GetReverseGreatGeneralModifier(const CvPlot* pAtPlot) const
 	return ResolveReverseGeneral(pAtPlot);
 }
 
+// Vox Deorum: checks whether an enemy aura reaches the plot under the placement.
+static bool IsReverseGeneralInRange(const CvUnit* pProvider, DomainTypes eDomain, int iModifier, int iRange,
+	const CvUnitPlacement& placement, const CvPlot* pPlot)
+{
+	if (iModifier == 0 || pProvider->getDomainType() != eDomain || (eDomain != DOMAIN_LAND && eDomain != DOMAIN_SEA))
+		return false;
+	SPlacedUnit placed;
+	return placement.locate(pProvider, placed) && !(eDomain == DOMAIN_LAND && placed.bEmbarked) &&
+		plotDistance(*pPlot, *placed.pPlot) <= iRange;
+}
+
 // Vox Deorum: the strongest enemy reverse-general aura at pAtPlot. Without a placement the providers stand on the real
 // board, as for the live getter; a neighborhood record passes its placement to supply their positions. pProviders, when
-// given, receives every provider that reaches pAtPlot.
-int CvUnit::ResolveReverseGeneral(const CvPlot* pAtPlot, const CvUnitPlacement* pPlacement, std::vector<const CvUnit*>* pProviders) const
+// given, receives every provider that reaches pAtPlot and the modifier used for it.
+int CvUnit::ResolveReverseGeneral(const CvPlot* pAtPlot, const CvUnitPlacement* pPlacement, std::vector<std::pair<const CvUnit*, int> >* pProviders) const
 {
 	VALIDATE_OBJECT();
 	CvBoardPlacement board;
 	const CvUnitPlacement& placement = pPlacement ? *pPlacement : board;
 
-	int iMaxMod = 0;
+	int iMinModifier = 0;
+	DomainTypes eDomain = getDomainType();
 	const std::vector<PlayerTypes>& vEnemies = GET_PLAYER(getOwner()).GetPlayersAtWarWith();
 	for(std::vector<PlayerTypes>::const_iterator it=vEnemies.begin(); it!=vEnemies.end(); ++it)
 	{
@@ -24267,37 +24279,21 @@ int CvUnit::ResolveReverseGeneral(const CvPlot* pAtPlot, const CvUnitPlacement* 
 			}
 
 			CvUnit* pUnit = kLoopPlayer.getUnit(it->first);
-			//catch weird problems
-			SPlacedUnit placed;
-			if (pUnit == NULL || pUnit->isDelayedDeath() || !placement.locate(pUnit, placed))
+			if (!pUnit || pUnit->isDelayedDeath())
 				continue;
 
-			// Unit with a combat modifier against the enemy
+			// Vox Deorum: the fork stores no modifier or range in its negative-aura provider list.
 			int iMod = pUnit->getNearbyEnemyCombatMod();
-			if(iMod != 0)
-			{
-				// Same domain
-				if(((pUnit->getDomainType() == getDomainType()) && (pUnit->getDomainType() == DOMAIN_LAND) && !placed.bEmbarked) || ((pUnit->getDomainType() == getDomainType()) && (pUnit->getDomainType() == DOMAIN_SEA)))
-				{
-					// Within range?
-					int iDistance = plotDistance(*pAtPlot, *placed.pPlot);
-					if(iDistance <= pUnit->getNearbyEnemyCombatRange())
-					{
-						if (pProviders)
-							pProviders->push_back(pUnit);
-						// Don't assume the first one found is the worst!
-						// Combat modifiers are negative, as applied against the defender (and not for the attacker)
-						if (iMod < iMaxMod)
-						{
-							iMaxMod = iMod;
-						}
-					}
-				}
-			}
+			if (!IsReverseGeneralInRange(pUnit, eDomain, iMod, pUnit->getNearbyEnemyCombatRange(), placement, pAtPlot))
+				continue;
+			if (pProviders)
+				pProviders->push_back(std::make_pair(pUnit, iMod));
+			// Vox Deorum: the most negative modifier wins, with zero when no negative aura reaches the plot.
+			iMinModifier = std::min(iMinModifier, iMod);
 		}
 	}
 
-	return iMaxMod;
+	return iMinModifier;
 }
 
 //	--------------------------------------------------------------------------------
@@ -24409,10 +24405,6 @@ int CvUnit::GetNearbyUnitClassModifier(UnitClassTypes eUnitClass, int iUnitClass
 // units stand on the real board; a neighborhood record passes its placement.
 bool CvUnit::IsNearbyUnitClassPresent(UnitClassTypes eUnitClass, int iUnitClassRange, const CvPlot* pAtPlot, const CvUnitPlacement* pPlacement) const
 {
-	CvBoardPlacement board;
-	const CvUnitPlacement& placement = pPlacement ? *pPlacement : board;
-	std::vector<SPlacedUnit> units;
-
 	CvPlayer& kPlayer = GET_PLAYER(getOwner());
 	CvPlot* pLoopPlot = NULL;
 	// Look around this Unit to see if there's a nearby UnitClass that will give us the modifier
@@ -24424,10 +24416,17 @@ bool CvUnit::IsNearbyUnitClassPresent(UnitClassTypes eUnitClass, int iUnitClassR
 			if (pLoopPlot == NULL)
 				continue;
 
-			placement.getUnitsAt(pLoopPlot, units);
-			for (size_t iK = 0; iK < units.size(); iK++)
+			// Vox Deorum: query the placement without copying units; the live path walks the plot in place.
+			if (pPlacement)
 			{
-				const CvUnit* pLoopUnit = units[iK].pUnit;
+				if (pPlacement->hasUnitClassAt(pLoopPlot, eUnitClass, this))
+					return true;
+				continue;
+			}
+
+			for (int iK = 0; iK < pLoopPlot->getNumUnits(); iK++)
+			{
+				const CvUnit* pLoopUnit = pLoopPlot->getUnitByIndex(iK);
 				if (pLoopUnit != NULL && pLoopUnit != this)
 				{
 					if (pLoopUnit->getUnitClassType() == eUnitClass)
@@ -34551,6 +34550,23 @@ void CvBoardPlacement::getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit>&
 	}
 }
 
+// Vox Deorum: checks a plot's units without copying them, skipping the reference and excluded units.
+bool CvBoardPlacement::hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded) const
+{
+	if (!pPlot)
+		return false;
+
+	TeamTypes eTeam = pReference->getTeam();
+	for (int i = 0; i < pPlot->getNumUnits(); i++)
+	{
+		const CvUnit* pUnit = pPlot->getUnitByIndex(i);
+		if (!pUnit || pUnit == pReference || pUnit == pExcluded || pUnit->getUnitClassType() != eUnitClass || pUnit->getTeam() != eTeam)
+			continue;
+		return true;
+	}
+	return false;
+}
+
 // Finds where a unit stands now.
 bool CvBoardPlacement::locate(const CvUnit* pUnit, SPlacedUnit& placed) const
 {
@@ -34579,6 +34595,21 @@ void CvAttackerPlacement::getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUni
 		units.push_back(attacker);
 }
 
+// Vox Deorum: checks the attacker at its attack plot, then the base with the attacker excluded.
+bool CvAttackerPlacement::hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded) const
+{
+	if (!pPlot)
+		return false;
+	if (m_pAttacker && m_pAttacker != pReference && m_pAttacker != pExcluded && pPlot == m_pAttackerPlot &&
+		m_pAttacker->getUnitClassType() == eUnitClass && m_pAttacker->getTeam() == pReference->getTeam())
+	{
+		SPlacedUnit placed;
+		if (locate(m_pAttacker, placed) && placed.pPlot == pPlot)
+			return true;
+	}
+	return m_base.hasUnitClassAt(pPlot, eUnitClass, pReference, m_pAttacker);
+}
+
 // Finds a unit, with the attacker on its attack plot.
 bool CvAttackerPlacement::locate(const CvUnit* pUnit, SPlacedUnit& placed) const
 {
@@ -34589,15 +34620,16 @@ bool CvAttackerPlacement::locate(const CvUnit* pUnit, SPlacedUnit& placed) const
 	return true;
 }
 
-// Forgets everything, for a new search.
+// Vox Deorum: forgets all search facts and held attacker sides for a new search.
 void SNeighborhoodCache::clear()
 {
 	m_classMods.clear();
 	m_defenderGiveAuras.clear();
 	m_attackerReverseGeneral.clear();
+	m_defenderReverseGeneral.clear();
 	m_boardUnits.clear();
 	m_moveBlocked.clear();
-	m_heldAttackerSides.clear();
+	forgetHeldAttackerSides();
 }
 
 // The real units on a plot as the board lists them. The search never moves real units, so the list made on first use
@@ -34677,28 +34709,74 @@ void SNeighborhoodCache::getDefenderGiveAuras(const CvUnitPlacement& placement, 
 	}
 }
 
-// The reverse-general aura the attacker's enemies put on it at a plot. The search never moves those providers, so the
+// Vox Deorum: the reverse-general aura the attacker's enemies put on it at a plot. The search never moves those providers, so the
 // ones that reach the plot on the real board are listed once per search for each plot, owner and domain; the placement
-// then drops the ones the plan has killed, and the strongest survivor wins, as in CvUnit::ResolveReverseGeneral.
+// then drops the ones the plan has killed, and the lowest cached modifier wins, as in CvUnit::ResolveReverseGeneral.
 int SNeighborhoodCache::getAttackerReverseGeneral(const CvUnitPlacement& placement, const CvUnit* pAttacker, const CvPlot* pPlot)
 {
 	long long iKey = ((long long)pPlot->GetPlotIndex() << 16) | ((long long)pAttacker->getOwner() << 8) | (long long)(pAttacker->getDomainType() & 0xff);
-	std::map<long long, Providers>::iterator it = m_attackerReverseGeneral.find(iKey);
+	// Vox Deorum: retain each provider's resolved modifier instead of reading it again for every record.
+	std::map<long long, ReverseGeneralProviders>::iterator it = m_attackerReverseGeneral.find(iKey);
 	if (it == m_attackerReverseGeneral.end())
 	{
 		CvBoardPlacement board;
-		it = m_attackerReverseGeneral.insert(std::make_pair(iKey, Providers())).first;
+		it = m_attackerReverseGeneral.insert(std::make_pair(iKey, ReverseGeneralProviders())).first;
 		pAttacker->ResolveReverseGeneral(pPlot, &board, &it->second);
 	}
 
-	int iMaxMod = 0;
-	for (Providers::const_iterator itP = it->second.begin(); itP != it->second.end(); ++itP)
+	int iMinModifier = 0;
+	for (ReverseGeneralProviders::const_iterator itP = it->second.begin(); itP != it->second.end(); ++itP)
 	{
 		SPlacedUnit placed;
-		if (placement.locate(*itP, placed) && (*itP)->getNearbyEnemyCombatMod() < iMaxMod)
-			iMaxMod = (*itP)->getNearbyEnemyCombatMod();
+		if (placement.locate(itP->first, placed))
+			iMinModifier = std::min(iMinModifier, itP->second);
 	}
-	return iMaxMod;
+	return iMinModifier;
+}
+
+// Vox Deorum: lists the defender's enemy providers once per search, owner and domain. Each record checks
+// placement, survival, embarkation and range because the attacker can provide an aura from a different attack plot.
+int SNeighborhoodCache::getDefenderReverseGeneral(const CvUnitPlacement& placement, const CvUnit* pDefender, const CvPlot* pPlot)
+{
+	DomainTypes eDomain = pDefender->getDomainType();
+	if (eDomain != DOMAIN_LAND && eDomain != DOMAIN_SEA)
+		return 0;
+	std::pair<PlayerTypes, DomainTypes> key(pDefender->getOwner(), eDomain);
+	std::map<std::pair<PlayerTypes, DomainTypes>, ReverseGeneralCandidates>::iterator it = m_defenderReverseGeneral.find(key);
+	if (it == m_defenderReverseGeneral.end())
+	{
+		it = m_defenderReverseGeneral.insert(std::make_pair(key, ReverseGeneralCandidates())).first;
+		const std::vector<PlayerTypes>& enemies = GET_PLAYER(pDefender->getOwner()).GetPlayersAtWarWith();
+		for (std::vector<PlayerTypes>::const_iterator itEnemy = enemies.begin(); itEnemy != enemies.end(); ++itEnemy)
+		{
+			CvPlayer& player = GET_PLAYER(*itEnemy);
+			const std::vector<std::pair<int, int> >& providers = player.GetAreaEffectNegativeUnits();
+			for (std::vector<std::pair<int, int> >::const_iterator itP = providers.begin(); itP != providers.end(); ++itP)
+			{
+				const CvUnit* pProvider = player.getUnit(itP->first);
+				if (!pProvider || pProvider->getDomainType() != eDomain)
+					continue;
+				int iModifier = pProvider->getNearbyEnemyCombatMod();
+				if (iModifier == 0)
+					continue;
+				SReverseGeneralCandidate candidate;
+				candidate.pUnit = pProvider;
+				candidate.iModifier = iModifier;
+				candidate.iRange = pProvider->getNearbyEnemyCombatRange();
+				it->second.push_back(candidate);
+			}
+		}
+	}
+
+	int iMinModifier = 0;
+	for (ReverseGeneralCandidates::const_iterator itP = it->second.begin(); itP != it->second.end(); ++itP)
+	{
+		if (itP->pUnit->isDelayedDeath() ||
+			!IsReverseGeneralInRange(itP->pUnit, eDomain, itP->iModifier, itP->iRange, placement, pPlot))
+			continue;
+		iMinModifier = std::min(iMinModifier, itP->iModifier);
+	}
+	return iMinModifier;
 }
 
 // One pass over the units next to a combatant's plot. It fills the combatant's adjacency terms (as
@@ -34802,7 +34880,8 @@ void SCombatNeighborhood::fillAuras(const CvUnitPlacement& placement, SNeighborh
 		side.iGiveCombat = static_cast<short>(auras.iCombat);
 		side.iGiveDefense = static_cast<short>(auras.iDefense);
 		side.iGiveOutsideLands = static_cast<short>(auras.iOutsideLands);
-		side.iReverseGeneral = static_cast<short>(pUnit->ResolveReverseGeneral(pPlot, &placement));
+		// Vox Deorum: reuse the held position's candidates, then check this record's placement and range.
+		side.iReverseGeneral = static_cast<short>(cache.getDefenderReverseGeneral(placement, pUnit, pPlot));
 	}
 }
 
@@ -34873,11 +34952,11 @@ bool SCombatNeighborhood::isDefenderTrapped(const CvUnitPlacement& placement, SN
 	return true;
 }
 
-// Fills the record for an attack under a placement. The attacker stands on its attack plot whatever the placement says.
+// Vox Deorum: fills the record for an attack under a placement. The attacker stands on its attack plot whatever the placement says.
 // Only the terms the strength functions read for this pair of units are worked out (see the struct comment). The
-// attacker's side doesn't depend on the target, apart from the melee flank count, so a held position reuses it.
+// attacker's side doesn't depend on the target, apart from the melee flank count, so the supplied cache reuses it.
 void SCombatNeighborhood::build(const CvUnitPlacement& placement, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, const CvUnit* pDefender,
-	const CvPlot* pDefenderPlot, SNeighborhoodCache* pCache, bool bHeld)
+	const CvPlot* pDefenderPlot, SNeighborhoodCache* pCache)
 {
 	*this = SCombatNeighborhood();
 	if (!pAttacker || !pAttackerPlot || !pDefenderPlot)
@@ -34886,7 +34965,7 @@ void SCombatNeighborhood::build(const CvUnitPlacement& placement, const CvUnit* 
 	if (!pCache)
 	{
 		SNeighborhoodCache localCache;
-		build(placement, pAttacker, pAttackerPlot, pDefender, pDefenderPlot, &localCache, false);
+		build(placement, pAttacker, pAttackerPlot, pDefender, pDefenderPlot, &localCache);
 		return;
 	}
 
@@ -34902,7 +34981,7 @@ void SCombatNeighborhood::build(const CvUnitPlacement& placement, const CvUnit* 
 
 	// a remembered side already has the adjacency and aura terms; the scan runs again only for the defender's flank count
 	int iDefenderFlank = 0;
-	const Side* pHeldSide = bHeld ? cache.findHeldAttackerSide(pAttacker, pAttackerPlot->GetPlotIndex()) : NULL;
+	const Side* pHeldSide = cache.findHeldAttackerSide(pAttacker, pAttackerPlot->GetPlotIndex());
 	if (pHeldSide)
 	{
 		sides[ATTACKER] = *pHeldSide;
@@ -34913,8 +34992,7 @@ void SCombatNeighborhood::build(const CvUnitPlacement& placement, const CvUnit* 
 	{
 		iDefenderFlank = scanNeighbors(attackerPlacement, cache, pAttacker, pAttackerPlot, pDefender, true, bDefenderFlank, sides[ATTACKER]);
 		fillAuras(attackerPlacement, cache, pAttacker, pAttackerPlot, true, sides[ATTACKER]);
-		if (bHeld)
-			cache.rememberHeldAttackerSide(pAttacker, pAttackerPlot->GetPlotIndex(), sides[ATTACKER]);
+		cache.rememberHeldAttackerSide(pAttacker, pAttackerPlot->GetPlotIndex(), sides[ATTACKER]);
 	}
 	if (!pDefender)
 		return;

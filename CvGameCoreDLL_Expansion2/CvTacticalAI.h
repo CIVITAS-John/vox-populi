@@ -1755,6 +1755,8 @@ public:
 	bool isBound() const { return m_pPosition != NULL; }
 	/// Lists the units on a plot in the planned position.
 	virtual void getUnitsAt(const CvPlot* pPlot, std::vector<SPlacedUnit>& units) const;
+	/// Vox Deorum: checks live and planned units without a list, skipping the reference and excluded units.
+	virtual bool hasUnitClassAt(const CvPlot* pPlot, UnitClassTypes eUnitClass, const CvUnit* pReference, const CvUnit* pExcluded = NULL) const;
 	/// Finds where a unit stands in the planned position.
 	virtual bool locate(const CvUnit* pUnit, SPlacedUnit& placed) const;
 
@@ -1808,19 +1810,23 @@ public:
 	int consumeOne() { return iCount++; }
 	CAttackCache& getAttackCache() { return attackCache; }
 	CDangerCache& getDangerCache() { return dangerCache; }
-	// Vox Deorum: the planned-board index and the shared state of neighborhood records, reused through one search
-	CvPlannedPlacement& getPlannedPlacement() { return plannedPlacement; }
+	// Vox Deorum: the shared state of neighborhood records, reused through one search
 	SNeighborhoodCache& getNeighborhoodCache() { return neighborhoodCache; }
 	// Vox Deorum: holds a position while its units are scored. Scoring never changes the position, so its records share
-	// one planned-board index and remember attacker sides until the release.
+	// one planned-board index and remembered attacker sides until the release.
 	void holdPlacement(const CvTacticalPosition& position)
 	{
 		pHeldPosition = &position;
 		heldPlacement.unbind();
 		neighborhoodCache.forgetHeldAttackerSides();
 	}
-	// Vox Deorum: ends the hold, once the position may change again
-	void releasePlacement() { pHeldPosition = NULL; }
+	// Vox Deorum: ends the hold and forgets its index and attacker sides before the position can change.
+	void releasePlacement()
+	{
+		pHeldPosition = NULL;
+		heldPlacement.unbind();
+		neighborhoodCache.forgetHeldAttackerSides();
+	}
 	// Vox Deorum: whether records of a position may use the held placement
 	bool isHeld(const CvTacticalPosition& position) const { return pHeldPosition == &position; }
 	// Vox Deorum: the planned-board index of the held position, bound by its first record
@@ -1855,7 +1861,6 @@ protected:
 	CAttackCache attackCache; //performance optimization, unit strength calculation takes too long
 	CDangerCache dangerCache; //performance optimization, unit strength calculation takes too long
 	// Vox Deorum: reused by every neighborhood record of a search; reset clears the cache
-	CvPlannedPlacement plannedPlacement;
 	SNeighborhoodCache neighborhoodCache;
 	// Vox Deorum: the position whose units are being scored, and its planned-board index
 	const CvTacticalPosition* pHeldPosition;
