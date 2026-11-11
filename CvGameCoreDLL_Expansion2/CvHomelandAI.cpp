@@ -1962,13 +1962,13 @@ void CvHomelandAI::PlotUpgradeMoves()
 
 		// Find priority of this financial request
 		int iCurrentFlavorMilitaryTraining = 0;
-		for(int iFlavorLoop = 0; iFlavorLoop < GC.getNumFlavorTypes() && iCurrentFlavorMilitaryTraining == 0; iFlavorLoop++)
+		for (int iFlavorLoop = 0; iFlavorLoop < GC.getNumFlavorTypes() && iCurrentFlavorMilitaryTraining == 0; iFlavorLoop++)
 		{
-			if(GC.getFlavorTypes((FlavorTypes)iFlavorLoop) == "FLAVOR_MILITARY_TRAINING")
+			if (GC.getFlavorTypes((FlavorTypes)iFlavorLoop) == "FLAVOR_MILITARY_TRAINING")
 			{
 				iCurrentFlavorMilitaryTraining = m_pPlayer->GetFlavorManager()->GetPersonalityIndividualFlavor((FlavorTypes)iFlavorLoop);
 			}
-			if(m_pPlayer->IsAtWar())
+			if (m_pPlayer->IsAtWar())
 			{
 				iCurrentFlavorMilitaryTraining *= 50;
 			}
@@ -1976,8 +1976,11 @@ void CvHomelandAI::PlotUpgradeMoves()
 		int iGoldPriority = /*500*/ GD_INT_GET(AI_GOLD_PRIORITY_UPGRADE_BASE);
 		iGoldPriority += iCurrentFlavorMilitaryTraining * /*100*/ GD_INT_GET(AI_GOLD_PRIORITY_UPGRADE_PER_FLAVOR_POINT);
 
-		m_pPlayer->GetEconomicAI()->CancelSaveForPurchase(PURCHASE_TYPE_UNIT_UPGRADE);
-		m_pPlayer->GetEconomicAI()->StartSaveForPurchase(PURCHASE_TYPE_UNIT_UPGRADE, iAmountRequired, iGoldPriority);
+		if (iAmountRequired > 0)
+		{
+			m_pPlayer->GetEconomicAI()->CancelSaveForPurchase(PURCHASE_TYPE_UNIT_UPGRADE);
+			m_pPlayer->GetEconomicAI()->StartSaveForPurchase(PURCHASE_TYPE_UNIT_UPGRADE, iAmountRequired, iGoldPriority);
+		}
 
 		if (GC.getLogging() && GC.getAILogging())
 		{
@@ -6923,6 +6926,7 @@ const char* homelandMoveNames[] =
 	"H_MOVE_DIPLOMAT_EMBASSY",
 	"H_MOVE_MESSENGER",
 	"H_MOVE_SECONDARY_SETTLER",
+	"H_MOVE_OPPORTUNITY_ATTACK",
 };
 
 const char* directiveNames[] = 

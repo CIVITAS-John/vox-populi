@@ -3258,7 +3258,10 @@ void CvUnit::doTurn()
 		SetActivityType(ACTIVITY_SLEEP);
 	}
 
-	doDelayedDeath();
+	// this deletes the unit, so nothing below may reference it
+	if (doDelayedDeath())
+		return;
+
 	DoImprovementExperience(plot());
 	DoStackedGreatGeneralExperience(plot());
 	DoConvertOnDamageThreshold(plot());
@@ -13968,7 +13971,7 @@ bool CvUnit::CanUpgradeTo(UnitTypes eUpgradeUnitType, bool bOnlyTestVisible, CvS
 		}
 
 		// Player must have enough Gold
-		if (kOwner.GetTreasury()->GetGold() < upgradePrice(eUpgradeUnitType) && !kOwner.isMinorCiv())
+		if ((upgradePrice(eUpgradeUnitType) != 0 && kOwner.GetTreasury()->GetGold() < upgradePrice(eUpgradeUnitType)) && !kOwner.isMinorCiv())
 		{
 			if (toolTipSink == NULL)
 				return false;
@@ -14162,6 +14165,10 @@ int CvUnit::upgradePrice(UnitTypes eUnit) const
 	if (kPlayer.isMinorCiv())
 		return 0;
 
+	// does the discount make the unit upgrade free?
+	if (getUpgradeDiscount() == 100)
+		return 0;
+
 	iPrice = /*10*/ GD_INT_GET(BASE_UNIT_UPGRADE_COST);
 
 	int iProductionBase = kPlayer.getProductionNeeded(getUnitType(), true);
@@ -14218,6 +14225,7 @@ int CvUnit::upgradePrice(UnitTypes eUnit) const
 	iPrice /= iDivisor;
 	iPrice *= iDivisor;
 
+	// regular unit upgrade prices must be non-zero
 	return max(1, iPrice);
 }
 
