@@ -144,7 +144,7 @@ void CvAStar::DeInit()
 	{
 		for(int iI = 0; iI < m_iColumns; iI++)
 		{
-			// Vox Deorum: nodes were created with placement new, so run the destructors to free the child vectors
+			//nodes were created with placement new, so run the destructors to free the child vectors
 			for(int iJ = 0; iJ < m_iRows; iJ++)
 				m_ppaaNodes[iI][iJ].~CvAStarNode();
 
@@ -490,7 +490,7 @@ CvAStarNode* CvAStar::GetBest()
 	if (m_openNodes.empty())
 		return NULL;
 
-	// Vox Deorum: indexed heap instead of make_heap rebuilds. take the best node from the top of the heap and fill the gap with the last node
+	//take the best node from the top of the heap and fill the gap with the last node
 	CvAStarNode* temp = m_openNodes.front();
 	CvAStarNode* last = m_openNodes.back();
 	m_openNodes.pop_back();
@@ -509,7 +509,7 @@ CvAStarNode* CvAStar::GetBest()
 }
 
 //	--------------------------------------------------------------------------------
-/// Vox Deorum: restore heap order after the cost of an open node has changed
+/// Restore heap order after the cost of an open node has changed
 void CvAStar::UpdateOpenNode(CvAStarNode* node)
 {
 	int iIndex = node->m_iOpenListIndex;
@@ -519,7 +519,7 @@ void CvAStar::UpdateOpenNode(CvAStarNode* node)
 }
 
 //	--------------------------------------------------------------------------------
-/// Vox Deorum: move an open node towards the top of the heap while it is better than its parent
+/// Move an open node towards the top of the heap while it is better than its parent
 void CvAStar::SiftUpOpenNode(int iIndex)
 {
 	PrNodeIsBetter isWorse; //sorts the best node first, so it returns true if lhs is worse than rhs
@@ -540,7 +540,7 @@ void CvAStar::SiftUpOpenNode(int iIndex)
 }
 
 //	--------------------------------------------------------------------------------
-/// Vox Deorum: move an open node towards the bottom of the heap while one of its children is better
+/// Move an open node towards the bottom of the heap while one of its children is better
 void CvAStar::SiftDownOpenNode(int iIndex)
 {
 	PrNodeIsBetter isWorse; //sorts the best node first, so it returns true if lhs is worse than rhs
@@ -722,7 +722,7 @@ NodeState CvAStar::LinkChild(CvAStarNode* node, CvAStarNode* check)
 		if(iKnownCost < check->m_iKnownCost)
 		{
 			NodeAddedToPath(node, check, iKnownCost, ASNC_OPENADD_UP);
-			UpdateOpenNode(check); // Vox Deorum: fix this node's heap position right away
+			UpdateOpenNode(check);
 		}
 	}
 	//is the new node on the closed list?
@@ -761,7 +761,7 @@ void CvAStar::AddToOpen(CvAStarNode* addnode)
 {
 	addnode->m_bIsOpen = true;
 	m_openNodes.push_back(addnode);
-	SiftUpOpenNode((int)m_openNodes.size() - 1); // Vox Deorum: indexed open list heap
+	SiftUpOpenNode((int)m_openNodes.size() - 1);
 }
 
 const CvAStarNode * CvAStar::GetNode(int iCol, int iRow) const
@@ -795,7 +795,6 @@ void CvAStar::UpdateDownstreamNodes(CvAStarNode* node)
 				//also need to check closed nodes, they might have open children!
 				NodeAddedToPath(parent, kid, iKnownCost, ASNC_PARENTADD_UP);
 
-				// Vox Deorum: fix this node's heap position right away
 				if (kid->m_bIsOpen)
 					UpdateOpenNode(kid);
 
@@ -1108,7 +1107,6 @@ bool CvPathFinder::DestinationReached(int iToX, int iToY) const
 
 	if ( HaveFlag(CvUnit::MOVEFLAG_APPROX_TARGET_RING2) )
 	{
-		// Vox Deorum: distance is only needed for approximate targets, and it is the cheapest check
 		//the main check (do not allow the actual target plot! it's probably occupied by the enemy)
 		int iDistance = ::plotDistance(iToX, iToY, GetDestX(), GetDestY());
 		if (iDistance > 2 || iDistance < 1)
@@ -1126,7 +1124,6 @@ bool CvPathFinder::DestinationReached(int iToX, int iToY) const
 	}
 	else if ( HaveFlag(CvUnit::MOVEFLAG_APPROX_TARGET_RING1) )
 	{
-		// Vox Deorum: check distance first, it is the cheapest check
 		//the main check (do not allow the actual target plot! it's probably occupied by the enemy)
 		if (::plotDistance(iToX, iToY, GetDestX(), GetDestY()) != 1)
 			return false;
@@ -3049,7 +3046,6 @@ bool CvTwoLayerPathFinder::AddStopNodeIfRequired(const CvAStarNode* current, con
 			return false;
 
 		CvAStarNode* pStopNode = GetPartialMoveNode(current->m_iX, current->m_iY);
-		// Vox Deorum: no UpdateNodeCacheData here, the cache is copied from current below
 
 		//assume a stop here
 		//cost is the same plus a little bit to encourage going the full distance when in doubt

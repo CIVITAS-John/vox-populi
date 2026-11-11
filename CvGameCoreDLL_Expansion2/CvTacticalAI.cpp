@@ -2819,7 +2819,7 @@ bool CvTacticalAI::CheckForEnemiesNearArmy(CvArmyAI* pArmy)
 	if (ourUnitsInitial.empty())
 		return false;
 
-	// Vox Deorum: unwrap the contact group around its first unit before averaging.
+	// Unwrap the contact group around its first unit before averaging.
 	const int iReferenceX = (*ourUnitsInitial.begin())->getX();
 	const int iReferenceY = (*ourUnitsInitial.begin())->getY();
 	int x = 0;
@@ -2834,7 +2834,7 @@ bool CvTacticalAI::CheckForEnemiesNearArmy(CvArmyAI* pArmy)
 		for (size_t i = 0; i < vEnemyAttackers.size(); i++)
 			allEnemyPlots.insert(vEnemyAttackers[i]->plot());
 	}
-	// Vox Deorum: round before wrapping the center back onto the map, including negative coordinates.
+	// Round before wrapping the center back onto the map, including negative coordinates.
 	const double unitCount = static_cast<double>(ourUnitsInitial.size());
 	x = static_cast<int>(std::floor(iReferenceX + x / unitCount + 0.5));
 	y = static_cast<int>(std::floor(iReferenceY + y / unitCount + 0.5));
@@ -8248,7 +8248,8 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		if (pEnemyUnit && iPrevUnitHitPoints > 0)
 			iPrevUnitHitPoints = max(1, iPrevUnitHitPoints - assumedPosition.GetUncertainUnitDamage(pEnemyUnit->GetID()));
 		int iHpAfterAttack = iPrevUnitHitPoints > 0 ? iPrevUnitHitPoints - actualDamageDealt.GetValue(pEnemyUnit->GetID()) : -1;
-		if (iHpAfterAttack == -1 || iHpAfterAttack > iExpectedCityHitPoints - iActualCityDamageDealt)
+		//the city value only applies when the target is a city (for a unit target it is 0 - 0)
+		if (iHpAfterAttack == -1 || (pEnemyCity && iHpAfterAttack > iExpectedCityHitPoints - iActualCityDamageDealt))
 			iHpAfterAttack = iExpectedCityHitPoints - iActualCityDamageDealt;
 		iBonusScore += min(max(30 - iHpAfterAttack, 0), iTotalActualDamageDealt);
 	}
@@ -13671,7 +13672,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	//the initial position absorbs all the tactical plots (up to the hard cap)
 	//in the passes below; reserve up front so the setup never reallocates.
 	//under address-space exhaustion the reallocation copy is exactly what
-	//fails (see issue #13254). child positions copy exact-size and stay lean.
+	//fails (see issue #13254). child positions inherit the same capacity.
 	initialPosition->reservePlotStorage();
 
 	//first pass: make sure there are no duplicates and other invalid inputs
@@ -14051,6 +14052,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			bPrecondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer, true, true) || pToPlot->isEnemyCity(*pUnit)); //enemy present
 			CvCity* pCity = pToPlot->getPlotCity();
 			CvUnit* pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
+			//the attack can delete the defender: when we take the city and move in, CvUnit::setXY kills the garrison
+			//at once (kill(false)), so afterwards look it up again by ID instead of using the pointer
+			const IDInfo kEnemy = pEnemy ? IDInfo(pEnemy->getOwner(), pEnemy->GetID()) : IDInfo();
 			bool bCityKill = false;
 			bool bUnitKill = false;
 			//because of randomness in previous combat results, it may happen that we cannot actually kill the enemy
@@ -14089,7 +14093,8 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			}
 			if (bPostcondition && bUnitKill)
 			{
-				bPostcondition = pEnemy->IsDead(); //defending unit is dead
+				CvUnit* pEnemyAfter = ::GetPlayerUnit(kEnemy);
+				bPostcondition = !pEnemyAfter || pEnemyAfter->IsDead(); //defending unit is dead or gone
 			}
 			break;
 		}

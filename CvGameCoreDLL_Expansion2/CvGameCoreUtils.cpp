@@ -485,7 +485,6 @@ int plotDistance(int iX1, int iY1, int iX2, int iY2)
 	int iZ1H = -iX1H-iY1;
 	int iZ2H = -iX2H-iY2;
 
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13495
 	int iDX = iX2H - iX1H;
 	int iDY = dyWrap(iY2 - iY1);
 	int iDZ = iZ2H - iZ1H;
