@@ -33,8 +33,8 @@ const double groundBonusResourceWeight = 0.15;
 const double groundUnitWeight = 1.0;
 // The share of a plot's weight lost, or credited, when it is merely blockaded instead of occupied.
 const double groundBlockadeShare = 0.5;
-// A hostile plot credits groundCreditShare times its weight above groundCreditFloor, so plain hostile land credits
-// nothing.
+// A hostile plot without a city credits groundCreditShare times its weight above groundCreditFloor, so plain hostile
+// land credits nothing. A hostile city credits its whole weight.
 const double groundCreditShare = 0.5;
 const double groundCreditFloor = 1.0;
 // The share of a ready upgrade's value gain a unit is credited with before it upgrades.
@@ -103,13 +103,18 @@ void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double&
 double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount);
 // Returns the ground base B: groundUnitWeight per military unit plus the land weight.
 double GroundBase(unsigned int iUnits, double fLand);
-// Adds one plot to the ground score's two sums. Our plot (bOurs) is lost when a hostile holder stands on it, and
-// groundBlockadeShare of it when a hostile unit next to it blockades it and no holder of our side or a neutral stands
-// on it. A hostile plot without a city (bHostileNoCity) credits groundCreditShare times its weight above
-// groundCreditFloor when our side stands on it, and groundBlockadeShare of that when our side blockades it and no
-// hostile or neutral holder stands on it. iStand holds the side bits standing on the plot, iNearby the side bits
+// Returns the most one plot can move the ground score, by its owner when watching started: its whole weight for our
+// plot (bOurs) and for a hostile plot with a city (bHostile, bCity), groundCreditShare times the weight above
+// groundCreditFloor for other hostile land, never below 0, and 0 for every other plot. Water lowers the weight below
+// the floor, so hostile water and plain hostile land have no stake.
+double GroundStake(bool bOurs, bool bHostile, bool bCity, double fWeight);
+// Adds one plot to the ground score's two sums. Our plot (bOurs) loses its stake when a hostile holder stands on it,
+// and groundBlockadeShare of it when a hostile unit next to it blockades it and no holder of our side or a neutral
+// stands on it. A hostile plot (bHostile) credits its stake when our side stands on it, and groundBlockadeShare of it
+// when our side blockades it and no hostile or neutral holder stands on it. A city holds its own plot, so a hostile
+// city is credited only once our side takes it. iStand holds the side bits standing on the plot, iNearby the side bits
 // blockading from its neighbors.
-void AddGroundPlot(bool bOurs, bool bHostileNoCity, double fWeight, unsigned int iStand, unsigned int iNearby,
+void AddGroundPlot(bool bOurs, bool bHostile, bool bCity, double fWeight, unsigned int iStand, unsigned int iNearby,
 	double& fLost, double& fCredit);
 
 #endif //CIV5_TACTICAL_OPERATIONAL_VALUE_H

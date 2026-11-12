@@ -2047,8 +2047,8 @@ double CvTacticalOperationalLoop::GroundAround(PlayerTypes eUs, const CvPlot& kT
 			iNearby |= iNeighborBlock;
 		}
 		const bool bOurs = pPlot->getOwner() == eUs;
-		const bool bHostileNoCity = !bOurs && !pPlot->isCity() && GroundSide(eUs, pPlot->getOwner()) == groundHoldsHostile;
-		AddGroundPlot(bOurs, bHostileNoCity, GroundPlotWeight(eUs, *pPlot), iStand, iNearby, fLost, fCredit);
+		const bool bHostile = !bOurs && GroundSide(eUs, pPlot->getOwner()) == groundHoldsHostile;
+		AddGroundPlot(bOurs, bHostile, pPlot->isCity(), GroundPlotWeight(eUs, *pPlot), iStand, iNearby, fLost, fCredit);
 	}
 	return fLost - fCredit;
 }

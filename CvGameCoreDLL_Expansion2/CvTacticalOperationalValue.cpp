@@ -222,23 +222,32 @@ double GroundBase(unsigned int iUnits, double fLand)
 	return groundUnitWeight * iUnits + fLand;
 }
 
+// Gives our plot and a hostile city their whole weight, other hostile land the share of its weight above the floor
+// (never below 0), and every other plot 0.
+double GroundStake(bool bOurs, bool bHostile, bool bCity, double fWeight)
+{
+	if (bOurs || (bHostile && bCity))
+		return fWeight;
+	return bHostile ? groundCreditShare * std::max(0.0, fWeight - groundCreditFloor) : 0.0;
+}
+
 // Adds the plot's loss to fLost or its credit to fCredit. The two sums stay apart so callers keep one summing order.
-void AddGroundPlot(bool bOurs, bool bHostileNoCity, double fWeight, unsigned int iStand, unsigned int iNearby,
+void AddGroundPlot(bool bOurs, bool bHostile, bool bCity, double fWeight, unsigned int iStand, unsigned int iNearby,
 	double& fLost, double& fCredit)
 {
+	const double fStake = GroundStake(bOurs, bHostile, bCity, fWeight);
 	if (bOurs)
 	{
 		if ((iStand & groundHoldsHostile) != 0)
-			fLost += fWeight;
+			fLost += fStake;
 		else if ((iNearby & groundHoldsHostile) != 0 && (iStand & (groundHoldsOurs | groundHoldsNeutral)) == 0)
-			fLost += groundBlockadeShare * fWeight;
+			fLost += groundBlockadeShare * fStake;
 	}
-	else if (bHostileNoCity)
+	else if (bHostile)
 	{
-		const double fValue = groundCreditShare * std::max(0.0, fWeight - groundCreditFloor);
 		if ((iStand & groundHoldsOurs) != 0)
-			fCredit += fValue;
+			fCredit += fStake;
 		else if ((iNearby & groundHoldsOurs) != 0 && (iStand & (groundHoldsHostile | groundHoldsNeutral)) == 0)
-			fCredit += groundBlockadeShare * fValue;
+			fCredit += groundBlockadeShare * fStake;
 	}
 }
