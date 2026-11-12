@@ -880,9 +880,8 @@ void CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOpe
 		const double fLocalShare = fBoth > 0.0 ? field.fLocalStrength / fBoth : 1.0;
 
 		//a garrison whose city can fall has danger past its HP, so it counts at its whole value
-		vector<CvUnit*> vDefenders;
 		vector<CvUnit*> vEndangered;
-		GatherCityRecruits(*GET_PLAYER(turn.ePlayer).GetTacticalAI(), turn, *pCity, vDefenders, vEndangered);
+		GatherCityEndangered(*GET_PLAYER(turn.ePlayer).GetTacticalAI(), turn, *pCity, vEndangered);
 		double fExposure = 0.0;
 		for (size_t i = 0; i < vEndangered.size(); i++)
 			fExposure += UnitExposure(OurUnitWorth(*vEndangered[i]), vEndangered[i]->getDamage(), vEndangered[i]->GetMaxHitPoints(),
@@ -1008,37 +1007,51 @@ double CvTacticalOperationalLoop::EnemyCityStrength(const SOperationalTurn& turn
 	return fStrength;
 }
 
-// Reads the tactical roster as native recruitment does, so units of operations and armies stay out. A unit near the
-// city that a threat can damage next turn, or that stands in a friendly city in danger, is endangered; units that cover
-// a friendly civilian join only as endangered. A defender is a land combat unit, or a sea one at a coastal city, within
-// one turn; the held garrison stands on the city. Under the air search an aircraft joins when its range reaches the
-// city from its base or a plot its carrier can reach, and the carrier joins with it, as ExecuteFight adds carriers.
-void CvTacticalOperationalLoop::GatherCityRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
-	vector<CvUnit*>& vDefenders, vector<CvUnit*>& vEndangered)
+// The roster unit a city fight can recruit, as native recruitment reads it, so units of operations and armies stay
+// out; NULL for any other unit.
+CvUnit* CvTacticalOperationalLoop::CityRecruit(CvTacticalAI& kTactical, int iUnitID)
+{
+	CvUnit* pUnit = kTactical.m_pPlayer->getUnit(iUnitID);
+	if (!pUnit || !pUnit->canUseForTacticalAI() || pUnit->getArmyID() != -1 || !pUnit->plot())
+		return NULL;
+	return pUnit;
+}
+
+// A non-air unit near the city that a threat can damage next turn, or that stands in a friendly city in danger, is
+// endangered. Units that cover a friendly civilian can join only this way.
+void CvTacticalOperationalLoop::GatherCityEndangered(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
+	vector<CvUnit*>& vEndangered)
+{
+	vEndangered.clear();
+	const CvPlot* pCityPlot = kCity.plot();
+	for (list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end(); ++it)
+	{
+		CvUnit* pUnit = CityRecruit(kTactical, *it);
+		if (!pUnit || pUnit->getDomainType() == DOMAIN_AIR || plotDistance(*pUnit->plot(), *pCityPlot) > TACTICAL_COMBAT_MAX_TARGET_DISTANCE)
+			continue;
+		if (turn.endangeredUnits.find(pUnit->GetID()) != turn.endangeredUnits.end() ||
+			(pUnit->plot()->isFriendlyCity(*pUnit) && pUnit->GetDanger() > 0))
+			vEndangered.push_back(pUnit);
+	}
+}
+
+// A defender is a land combat unit, or a sea one at a coastal city, within one turn; the held garrison stands on the
+// city. Under the air search an aircraft joins when its range reaches the city from its base or a plot its carrier can
+// reach, and the carrier joins with it, as ExecuteFight adds carriers. Endangered recruits are never defenders.
+void CvTacticalOperationalLoop::GatherCityDefenders(CvTacticalAI& kTactical, const CvCity& kCity, const vector<CvUnit*>& vEndangered,
+	vector<CvUnit*>& vDefenders)
 {
 	vDefenders.clear();
-	vEndangered.clear();
 	// carrier reach is rebuilt for every recruitment, as FindUnitsWithinStrikingDistance does, because earlier
 	// commands may have opened or closed sea routes
 	if (MOD_VOX_TACTICAL_AIR_SEARCH)
 		TacticalAIHelpers::ResetAirSearchCaches();
-	CvPlayer& kPlayer = *kTactical.m_pPlayer;
 	const CvPlot* pCityPlot = kCity.plot();
 	const bool bCoastal = kCity.isCoastal();
 	for (list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end(); ++it)
 	{
-		CvUnit* pUnit = kPlayer.getUnit(*it);
-		if (!pUnit || !pUnit->canUseForTacticalAI() || pUnit->getArmyID() != -1 || !pUnit->plot())
-			continue;
-		const int iDistance = plotDistance(*pUnit->plot(), *pCityPlot);
-		if (pUnit->getDomainType() != DOMAIN_AIR && iDistance <= TACTICAL_COMBAT_MAX_TARGET_DISTANCE &&
-			(turn.endangeredUnits.find(pUnit->GetID()) != turn.endangeredUnits.end() ||
-			(pUnit->plot()->isFriendlyCity(*pUnit) && pUnit->GetDanger() > 0)))
-		{
-			vEndangered.push_back(pUnit);
-			continue;
-		}
-		if (pUnit->IsCoveringFriendlyCivilian())
+		CvUnit* pUnit = CityRecruit(kTactical, *it);
+		if (!pUnit || pUnit->IsCoveringFriendlyCivilian() || std::find(vEndangered.begin(), vEndangered.end(), pUnit) != vEndangered.end())
 			continue;
 		if (pUnit->getDomainType() == DOMAIN_AIR)
 		{
@@ -1055,7 +1068,7 @@ void CvTacticalOperationalLoop::GatherCityRecruits(CvTacticalAI& kTactical, cons
 		if (!(pUnit->IsCombatUnit() || pUnit->IsCanAttackRanged()) ||
 			(pUnit->getDomainType() != DOMAIN_LAND && !(bCoastal && pUnit->getDomainType() == DOMAIN_SEA)))
 			continue;
-		if (iDistance <= std::max(1, pUnit->baseMoves(false)))
+		if (plotDistance(*pUnit->plot(), *pCityPlot) <= std::max(1, pUnit->baseMoves(false)))
 			vDefenders.push_back(pUnit);
 	}
 
@@ -1106,11 +1119,12 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckFight(CvTacticalAI& kTac
 		CvCity* pOurCity = pPlot->getPlotCity();
 		if (!pOurCity || pOurCity->getOwner() != ePlayer)
 			return OPERATIONAL_CHECK_TARGET_GONE;
-		vector<CvUnit*> vDefenders;
 		vector<CvUnit*> vEndangered;
-		GatherCityRecruits(kTactical, turn, *pOurCity, vDefenders, vEndangered);
+		GatherCityEndangered(kTactical, turn, *pOurCity, vEndangered);
 		if (!vEndangered.empty())
 			return OPERATIONAL_CHECK_PASSED;
+		vector<CvUnit*> vDefenders;
+		GatherCityDefenders(kTactical, *pOurCity, vEndangered, vDefenders);
 		if (vDefenders.empty())
 			return OPERATIONAL_CHECK_NO_DEFENDERS;
 		for (int i = 0; i < RING_PLOTS[TACTICAL_COMBAT_MAX_TARGET_DISTANCE + 1]; i++)
@@ -1316,7 +1330,8 @@ void CvTacticalOperationalLoop::ExecuteCityDefense(CvTacticalAI& kTactical, cons
 
 	vector<CvUnit*> vUnits;
 	vector<CvUnit*> vEndangered;
-	GatherCityRecruits(kTactical, turn, *pCity, vUnits, vEndangered);
+	GatherCityEndangered(kTactical, turn, *pCity, vEndangered);
+	GatherCityDefenders(kTactical, *pCity, vEndangered, vUnits);
 	for (size_t i = 0; i < vEndangered.size(); i++)
 	{
 		record.vEndangered.push_back(make_pair(vEndangered[i]->GetID(), false));

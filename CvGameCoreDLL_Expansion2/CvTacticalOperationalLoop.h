@@ -369,10 +369,18 @@ public:
 	// The enemy strength T against our city: its approach list together with the visible units native danger says can
 	// attack it next turn, each once.
 	static double EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity);
-	// Our city fight's recruits from the tactical roster: local defenders within one turn, the held garrison, aircraft in
-	// reach with their carriers under the air search, and the endangered units within 4 plots. Army units are left out.
-	static void GatherCityRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
-		vector<CvUnit*>& vDefenders, vector<CvUnit*>& vEndangered);
+	// The roster unit with this ID when a city fight can recruit it: usable by the tactical AI, outside armies and on
+	// the map. NULL otherwise.
+	static CvUnit* CityRecruit(CvTacticalAI& kTactical, int iUnitID);
+	// Our city fight's endangered recruits from the tactical roster: non-air units within 4 plots on the turn's
+	// endangered list or in a friendly city in danger. Cheap enough for every estimate.
+	static void GatherCityEndangered(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
+		vector<CvUnit*>& vEndangered);
+	// Our city fight's defenders from the tactical roster, leaving out the given endangered recruits: local units within
+	// one turn, the held garrison, and aircraft in reach with their carriers under the air search. Resets the air caches
+	// and paths carrier reach, so only readiness and execution call it.
+	static void GatherCityDefenders(CvTacticalAI& kTactical, const CvCity& kCity, const vector<CvUnit*>& vEndangered,
+		vector<CvUnit*>& vDefenders);
 	// Fills a native target with the battlefield's type, plot and zone, for native recruitment and damage estimates.
 	static CvTacticalTarget FightTarget(const SOperationalBattlefield& field, const CvPlot& kPlot);
 	// The fight's readiness check: native city strike and striking-distance recruitment, or for our city its defenders,
