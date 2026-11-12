@@ -366,6 +366,81 @@ STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes e
 }
 
 //------------------------------------------------------------------------------
+// Reinforce selection
+//------------------------------------------------------------------------------
+
+// Rounds the plain distance up to whole turns.
+int TravelTurns(int iDistance, int iMoves)
+{
+	const int iPerTurn = std::max(1, iMoves);
+	return std::max(1, (iDistance + iPerTurn - 1) / iPerTurn);
+}
+
+// Orders Reinforce candidates nearest first
+struct PrOperationalCandidateNearest
+{
+	// Ranks by join turns, then travel turns, then unit ID.
+	bool operator()(const SOperationalCandidate& lhs, const SOperationalCandidate& rhs) const
+	{
+		if (lhs.iJoinTurns != rhs.iJoinTurns)
+			return lhs.iJoinTurns < rhs.iJoinTurns;
+		if (lhs.iTravelTurns != rhs.iTravelTurns)
+			return lhs.iTravelTurns < rhs.iTravelTurns;
+		return lhs.iUnitID < rhs.iUnitID;
+	}
+};
+
+// Full strength sets the stop; discounted help sets the score.
+void SelectReinforcement(const vector<SOperationalCandidate>& candidates, double fLocal, double fEnemy, double fRatio, bool bNeedCapturer,
+	SOperationalReinforce& out)
+{
+	vector<SOperationalCandidate> sorted = candidates;
+	std::sort(sorted.begin(), sorted.end(), PrOperationalCandidateNearest());
+	out.fLocal = fLocal;
+	out.fEnemy = fEnemy;
+	out.fNeed = std::max(0.0, fRatio * fEnemy - fLocal);
+	out.vSelected.clear();
+	out.fSelectedStrength = 0.0;
+	out.fHelp = 0.0;
+	out.fRoleHelp = 0.0;
+	out.iRoleUnit = -1;
+	out.bMissingRole = false;
+	out.fGain = 0.0;
+	out.fArrivalRatio = 0.0;
+	out.fOdds = 0.0;
+
+	bool bHasCapturer = !bNeedCapturer;
+	size_t i = 0;
+	for (; i < sorted.size() && out.fSelectedStrength < out.fNeed; i++)
+	{
+		out.vSelected.push_back(sorted[i].iUnitID);
+		out.fSelectedStrength += sorted[i].fStrength;
+		out.fHelp += sorted[i].fStrength / std::max(1, sorted[i].iJoinTurns);
+		bHasCapturer = bHasCapturer || sorted[i].bCapturer;
+	}
+
+	//the nearest capturer left completes the capture role, even when no help is needed
+	for (; i < sorted.size() && !bHasCapturer; i++)
+	{
+		if (!sorted[i].bCapturer)
+			continue;
+		out.iRoleUnit = sorted[i].iUnitID;
+		out.fRoleHelp = sorted[i].fStrength / std::max(1, sorted[i].iJoinTurns);
+		out.vSelected.push_back(sorted[i].iUnitID);
+		out.fSelectedStrength += sorted[i].fStrength;
+		out.fHelp += out.fRoleHelp;
+		bHasCapturer = true;
+	}
+	out.bMissingRole = !bHasCapturer;
+
+	if (fEnemy <= 0.0)
+		return;
+	out.fGain = std::min(fRatio / (1.0 + fRatio), std::min(out.fHelp, out.fNeed + out.fRoleHelp) / ((1.0 + fRatio) * fEnemy));
+	out.fArrivalRatio = (fLocal + out.fSelectedStrength) / fEnemy;
+	out.fOdds = fRatio > 0.0 ? std::min(1.0, out.fArrivalRatio / fRatio) : 1.0;
+}
+
+//------------------------------------------------------------------------------
 // turn and command loop
 //------------------------------------------------------------------------------
 
@@ -415,8 +490,8 @@ void CvTacticalOperationalLoop::ProcessDominanceZones(CvTacticalAI& kTactical)
 	kTactical.ReviewUnassignedUnits();
 }
 
-// Picks the top ready fight, checks it, executes it on a pass, retires the fights it covered, then estimates every
-// open fight again and wakes waiting fights on helpful changes.
+// Picks the top ready offer, checks it, executes it on a pass, retires the offers it covered, then estimates every
+// open offer again and wakes waiting fights on helpful changes.
 void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord)
 {
 	SOperationalTurn turn;
@@ -426,9 +501,15 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 	for (size_t i = 0; i < turn.battlefields.size(); i++)
 	{
 		SOperationalBattlefield& field = turn.battlefields[i];
-		EstimateFight(turn, field);
-		if (field.eFight != OPERATIONAL_OFFER_DROPPED)
-			field.eFight = field.fEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
+		if (!EstimateFight(turn, field))
+		{
+			field.eFight = OPERATIONAL_OFFER_DROPPED;
+			field.eReinforce = OPERATIONAL_OFFER_DROPPED;
+			continue;
+		}
+		field.eFight = field.fEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
+		EstimateReinforce(kTactical, turn, field);
+		field.eReinforce = field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
 	}
 
 	SOperationalTurnRecord localRecord;
@@ -438,30 +519,39 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 	int iCommands = 0;
 	for (;;)
 	{
-		//the ready fight with the highest estimate; ties go to our cities, then enemy cities, then enemy units, then the
-		//lower plot, then build order
+		//the ready offer with the highest estimate; ties go to our cities' fights, then enemy cities' fights, then enemy
+		//units' fights, then Reinforce, then the lower plot, then build order
 		int iBest = -1;
+		bool bBestReinforce = false;
+		double fBest = 0.0;
+		int iBestRank = 0;
 		for (size_t i = 0; i < turn.battlefields.size(); i++)
 		{
 			const SOperationalBattlefield& field = turn.battlefields[i];
-			if (field.eFight != OPERATIONAL_OFFER_READY)
-				continue;
-			if (iBest >= 0)
+			for (int iOffer = 0; iOffer < 2; iOffer++)
 			{
-				const SOperationalBattlefield& best = turn.battlefields[iBest];
-				if (field.fEstimate < best.fEstimate)
+				const bool bReinforce = iOffer == 1;
+				if ((bReinforce ? field.eReinforce : field.eFight) != OPERATIONAL_OFFER_READY)
 					continue;
-				if (field.fEstimate == best.fEstimate)
+				const double fEstimate = bReinforce ? field.fReinforceEstimate : field.fEstimate;
+				const int iRank = bReinforce ? 3 : field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? 0 : field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? 1 : 2;
+				if (iBest >= 0)
 				{
-					const int iRank = field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? 0 : field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? 1 : 2;
-					const int iBestRank = best.eCenter == OPERATIONAL_CENTER_OUR_CITY ? 0 : best.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? 1 : 2;
-					if (iRank > iBestRank)
+					if (fEstimate < fBest)
 						continue;
-					if (iRank == iBestRank && field.iPlotIndex >= best.iPlotIndex)
-						continue;
+					if (fEstimate == fBest)
+					{
+						if (iRank > iBestRank)
+							continue;
+						if (iRank == iBestRank && field.iPlotIndex >= turn.battlefields[iBest].iPlotIndex)
+							continue;
+					}
 				}
+				iBest = static_cast<int>(i);
+				bBestReinforce = bReinforce;
+				fBest = fEstimate;
+				iBestRank = iRank;
 			}
-			iBest = static_cast<int>(i);
 		}
 		if (iBest < 0)
 			break;
@@ -474,15 +564,22 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 		}
 
 		SOperationalBattlefield& field = turn.battlefields[iBest];
-		const eOperationalCheckResult eResult = CheckFight(kTactical, turn, field);
-		SOperationalCheckRecord check = { iBest, eResult };
+		const eOperationalCheckResult eResult = bBestReinforce ? CheckReinforce(kTactical, turn, field) : CheckFight(kTactical, turn, field);
+		SOperationalCheckRecord check = { iBest, eResult, bBestReinforce };
 		record.checks.push_back(check);
 		if (bLog)
 		{
 			static const char* const aszResults[] = { "passed", "failed: target gone", "failed: no recruits", "failed: no damage",
-				"failed: no capturer", "failed: no defenders", "failed: no nearby enemy" };
-			kTactical.LogTacticalMessage(CvString::format("Operational check of fight %d at plot %d, estimate %.6f: %s",
-				iBest, field.iPlotIndex, field.fEstimate, aszResults[eResult]));
+				"failed: no capturer", "failed: no defenders", "failed: no nearby enemy", "failed: no reachable unit",
+				"reduced" };
+			kTactical.LogTacticalMessage(CvString::format("Operational check of %s %d at plot %d, estimate %.6f: %s",
+				bBestReinforce ? "Reinforce" : "fight", iBest, field.iPlotIndex, fBest, aszResults[eResult]));
+		}
+		if (bBestReinforce && eResult != OPERATIONAL_CHECK_PASSED)
+		{
+			//a reduced selection goes back into the queue at its checked estimate; Reinforce never waits
+			field.eReinforce = eResult == OPERATIONAL_CHECK_REDUCED && field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
+			continue;
 		}
 		if (eResult != OPERATIONAL_CHECK_PASSED)
 		{
@@ -497,41 +594,53 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			continue;
 		}
 
-		//the record is kept before the fight runs, so a command that ends the run is still recorded
+		//the record is kept before the offer runs, so a command that ends the run is still recorded
 		record.commands.push_back(SOperationalCommandRecord());
 		SOperationalCommandRecord& command = record.commands.back();
 		command.iCommand = iCommands;
 		command.iBattlefield = iBest;
 		command.iPlotIndex = field.iPlotIndex;
-		command.eKind = field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? OPERATIONAL_KIND_OWN_CITY_FIGHT :
+		command.eKind = bBestReinforce ? OPERATIONAL_KIND_REINFORCE : field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? OPERATIONAL_KIND_OWN_CITY_FIGHT :
 			field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? OPERATIONAL_KIND_CITY_FIGHT : OPERATIONAL_KIND_UNIT_FIGHT;
 		command.eOwner = field.eOwner;
-		command.fEstimate = field.fEstimate;
-		command.iFailuresBefore = field.iFailures;
+		//a Reinforce runs at its checked estimate, which a replaced selection may have raised
+		command.fEstimate = bBestReinforce ? field.fReinforceEstimate : fBest;
+		command.iFailuresBefore = bBestReinforce ? 0 : field.iFailures;
 
 		SOperationalBoard before;
 		SnapshotBoard(turn, before);
 		BeginCommand(kTactical, iCommands, field.iZoneID);
-		ExecuteFight(kTactical, turn, field, command);
+		if (bBestReinforce)
+			ExecuteReinforce(kTactical, turn, field, command);
+		else
+			ExecuteFight(kTactical, turn, field, command);
 		EndCommand(kTactical);
 		iCommands++;
-		field.eFight = OPERATIONAL_OFFER_EXECUTED;
+		if (bBestReinforce)
+			field.eReinforce = OPERATIONAL_OFFER_EXECUTED;
+		else
+			field.eFight = OPERATIONAL_OFFER_EXECUTED;
 
 		//the exemptions read the threats after the command, since its search may have moved units into a target's reach
 		BuildThreats(turn);
 
-		//an enemy-unit fight that ran its search covered the unit fights around its target
-		if (command.bSearchRan)
+		for (size_t i = 0; i < turn.battlefields.size(); i++)
 		{
-			for (size_t i = 0; i < turn.battlefields.size(); i++)
+			SOperationalBattlefield& other = turn.battlefields[i];
+			//an enemy-unit fight that ran its search covered the unit fights around its target
+			if (!bBestReinforce && command.bSearchRan && RetiresFight(field, other))
 			{
-				SOperationalBattlefield& other = turn.battlefields[i];
-				if (RetiresFight(field, other))
-				{
-					other.eFight = OPERATIONAL_OFFER_RETIRED;
-					command.vRetired.push_back(other.iID);
-				}
+				other.eFight = OPERATIONAL_OFFER_RETIRED;
+				command.vRetired.push_back(other.iID);
 			}
+			//a Reinforce that moved a unit covered the enemy groups it counted
+			if (bBestReinforce && command.bMoved && RetiresReinforce(field, other))
+			{
+				other.eReinforce = OPERATIONAL_OFFER_RETIRED;
+				command.vRetiredReinforce.push_back(other.iID);
+			}
+			//reach checks hold only until a command changes the board
+			other.reinforce.bChecked = false;
 		}
 
 		SOperationalBoard after;
@@ -539,7 +648,7 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 		SOperationalChanges changes;
 		DiffBoard(turn.ePlayer, before, after, changes);
 
-		//a city this command captured becomes one of our cities, with its own fight from the next estimate on
+		//a city this command captured becomes one of our cities, with its own offers from the next estimate on
 		for (size_t i = 0; i < changes.vCapturedPlots.size(); i++)
 		{
 			CvPlot* pPlot = GC.getMap().plotByIndex(changes.vCapturedPlots[i]);
@@ -553,26 +662,39 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				AddOwnCityBattlefield(kTactical, turn, *pCity);
 		}
 		if (bLog)
-			kTactical.LogTacticalMessage(CvString::format("Operational command %d: fight %d at plot %d, search %s, %d retired",
-				command.iCommand, iBest, command.iPlotIndex, command.bSearchRan ? "ran" : "did not run", (int)command.vRetired.size()));
+			kTactical.LogTacticalMessage(CvString::format("Operational command %d: %s %d at plot %d, search %s, %d fights and %d Reinforce retired",
+				command.iCommand, bBestReinforce ? "Reinforce" : "fight", iBest, command.iPlotIndex, command.bSearchRan ? "ran" : "did not run",
+				(int)command.vRetired.size(), (int)command.vRetiredReinforce.size()));
 
-		//estimate every open fight on the new board
+		//estimate every open offer on the new board; an executed fight still sets the stake its Reinforce reads
 		for (size_t i = 0; i < turn.battlefields.size(); i++)
 		{
 			SOperationalBattlefield& other = turn.battlefields[i];
-			if (other.eFight == OPERATIONAL_OFFER_EXECUTED || other.eFight == OPERATIONAL_OFFER_RETIRED ||
-				other.eFight == OPERATIONAL_OFFER_SKIPPED || other.eFight == OPERATIONAL_OFFER_DROPPED)
+			const bool bFightOpen = other.eFight == OPERATIONAL_OFFER_READY || other.eFight == OPERATIONAL_OFFER_INACTIVE ||
+				other.eFight == OPERATIONAL_OFFER_WAITING;
+			const bool bReinforceOpen = other.eReinforce == OPERATIONAL_OFFER_READY || other.eReinforce == OPERATIONAL_OFFER_INACTIVE;
+			if (!bFightOpen && !bReinforceOpen)
 				continue;
-			EstimateFight(turn, other);
-			if (other.eFight == OPERATIONAL_OFFER_DROPPED)
+			if (!EstimateFight(turn, other))
+			{
+				if (bFightOpen)
+					other.eFight = OPERATIONAL_OFFER_DROPPED;
+				if (bReinforceOpen)
+					other.eReinforce = OPERATIONAL_OFFER_DROPPED;
 				continue;
+			}
 			if (other.eFight == OPERATIONAL_OFFER_WAITING)
 			{
 				if (other.fEstimate > 0.0 && WakesFight(turn.ePlayer, turn, other, changes))
 					other.eFight = OPERATIONAL_OFFER_READY;
 			}
-			else
+			else if (bFightOpen)
 				other.eFight = other.fEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
+			if (bReinforceOpen)
+			{
+				EstimateReinforce(kTactical, turn, other);
+				other.eReinforce = other.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
+			}
 		}
 	}
 }
@@ -753,8 +875,8 @@ void CvTacticalOperationalLoop::BuildThreats(SOperationalTurn& turn)
 }
 
 // Reads the snapshot native took before it dropped targets near better ones, so every enemy unit and city keeps a
-// battlefield. Targets that are no longer hostile, such as a city captured earlier in the turn, get none. Every city of
-// ours then gets a battlefield, safe ones included.
+// battlefield. Targets that are no longer hostile, such as a city captured earlier in the turn, get none. Zone ownership
+// and posture are read once for the turn. Every city of ours then gets a battlefield, safe ones included.
 void CvTacticalOperationalLoop::BuildBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn)
 {
 	CvPlayer& kPlayer = *kTactical.m_pPlayer;
@@ -801,12 +923,32 @@ void CvTacticalOperationalLoop::BuildBattlefields(CvTacticalAI& kTactical, SOper
 		field.fTheater = fTheaterFloor + (pZoneCity && turn.fCityScale > 0.0 ? CityValue(*pZoneCity, ePlayer) / turn.fCityScale : 0.0);
 		field.fGround = pDefender ? TargetGround(ePlayer, *pPlot, pDefender, turn.fGroundBase) : 0.0;
 		field.bNearOurCity = kPlayer.GetCityDistanceInPlots(pPlot) < 4;
+		//Reinforce marches only into a zone of ours or one neighboring ours, and never into a Withdraw zone
+		field.bBorder = pZone && IsBorderZone(kTactical, *pZone);
+		field.bWithdraw = pZone && pZone->GetPosture() == TACTICAL_POSTURE_WITHDRAW;
 		turn.battlefields.push_back(field);
 	}
 
 	int iLoop = 0;
 	for (CvCity* pCity = kPlayer.firstCity(&iLoop); pCity != NULL; pCity = kPlayer.nextCity(&iLoop))
 		AddOwnCityBattlefield(kTactical, turn, *pCity);
+}
+
+// Neighbor IDs resolve through our own map without a refresh. The zone's own HasNeighborZone reads the zone owner's
+// map, which may not know our zones and does not exist for unowned zones.
+bool CvTacticalOperationalLoop::IsBorderZone(CvTacticalAI& kTactical, const CvTacticalDominanceZone& kZone)
+{
+	const PlayerTypes ePlayer = kTactical.m_pPlayer->GetID();
+	if (kZone.GetOwner() == ePlayer)
+		return true;
+	const vector<int>& vNeighbors = kZone.GetNeighboringZones();
+	for (size_t i = 0; i < vNeighbors.size(); i++)
+	{
+		const CvTacticalDominanceZone* pNeighbor = kTactical.GetTacticalAnalysisMap()->GetZoneByIDWithoutRefresh(vNeighbors[i]);
+		if (pNeighbor && pNeighbor->GetOwner() == ePlayer)
+			return true;
+	}
+	return false;
 }
 
 // The city plot lies in the city's land zone; a city without one takes its water zone, which has the city's negative
@@ -834,7 +976,7 @@ void CvTacticalOperationalLoop::AddOwnCityBattlefield(CvTacticalAI& kTactical, S
 // share of the city and its garrison. Own-city fight: the weighted city stake times the enemy's strength share
 // T / (L + T), which is 0 without strength on either side, plus the weighted exposure of its endangered recruits.
 // Terms over a zero scale count 0.
-void CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOperationalBattlefield& field)
+bool CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOperationalBattlefield& field)
 {
 	const double* afWeight = turn.weights.afWeight;
 	const double fPrizeFloor = turn.weights.afConstant[OPERATIONAL_CONSTANT_PRIZE_FLOOR];
@@ -842,18 +984,12 @@ void CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOpe
 	SOperationalStake stake;
 	field.fEstimate = 0.0;
 	if (field.eOwner == NO_PLAYER)
-	{
-		field.eFight = OPERATIONAL_OFFER_DROPPED;
-		return;
-	}
+		return false;
 	if (field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT)
 	{
 		CvUnit* pUnit = GET_PLAYER(field.eOwner).getUnit(field.iTargetID);
 		if (!pUnit || pUnit->isDelayedDeath() || !pUnit->plot())
-		{
-			field.eFight = OPERATIONAL_OFFER_DROPPED;
-			return;
-		}
+			return false;
 		field.iPlotIndex = pUnit->plot()->GetPlotIndex();
 		map<pair<int, int>, SOperationalThreatExposure>::const_iterator threat = turn.unitThreats.find(make_pair(static_cast<int>(field.eOwner), field.iTargetID));
 		const double fExposure = threat != turn.unitThreats.end() ? threat->second.fExposure : 0.0;
@@ -869,13 +1005,10 @@ void CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOpe
 	{
 		CvCity* pCity = GET_PLAYER(field.eOwner).getCity(field.iTargetID);
 		if (!pCity || pCity->getOwner() != turn.ePlayer)
-		{
-			field.eFight = OPERATIONAL_OFFER_DROPPED;
-			return;
-		}
+			return false;
 		const double fCityStake = turn.fCityScale > 0.0 ? CityValue(*pCity, turn.ePlayer) / turn.fCityScale : 0.0;
 		field.fLocalStrength = LocalCityStrength(turn.ePlayer, *pCity);
-		field.fEnemyStrength = EnemyCityStrength(turn, *pCity);
+		field.fEnemyStrength = EnemyCityStrength(turn, *pCity, &field.reinforce.countedUnits);
 		const double fBoth = field.fLocalStrength + field.fEnemyStrength;
 		const double fLocalShare = fBoth > 0.0 ? field.fLocalStrength / fBoth : 1.0;
 
@@ -897,10 +1030,7 @@ void CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOpe
 	{
 		CvCity* pCity = GET_PLAYER(field.eOwner).getCity(field.iTargetID);
 		if (!pCity || pCity->getOwner() != field.eOwner)
-		{
-			field.eFight = OPERATIONAL_OFFER_DROPPED;
-			return;
-		}
+			return false;
 		const double fCityStake = turn.fCityScale > 0.0 ? CityValue(*pCity, turn.ePlayer) / turn.fCityScale : 0.0;
 		stake.fSiege = afWeight[OPERATIONAL_WEIGHT_OCCUPATION] * fCityStake *
 			(turn.weights.afConstant[OPERATIONAL_CONSTANT_SIEGE_FLOOR] + DamageShare(pCity->getDamage(), pCity->GetMaxHitPoints()));
@@ -924,10 +1054,127 @@ void CvTacticalOperationalLoop::EstimateFight(const SOperationalTurn& turn, SOpe
 	}
 	field.stake = stake;
 	field.fEstimate = field.fTheater * stake.fStake;
+	return true;
+}
+
+// A city destination takes land units, and sea units too when it is coastal; a unit target takes its plot's domain.
+// Enemy centers count their strength first, so a gated offer still records L and T, and skip the roster when gated.
+void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field)
+{
+	SOperationalReinforce& reinforce = field.reinforce;
+	field.fReinforceEstimate = 0.0;
+	//start from an empty selection
+	vector<SOperationalCandidate> vCandidates;
+	SelectReinforcement(vCandidates, 0.0, 0.0, 0.0, false, reinforce);
+	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
+	if (!pTarget)
+		return;
+	const double fRatio = turn.weights.afConstant[OPERATIONAL_CONSTANT_STRENGTH_RATIO];
+	const bool bCityTarget = field.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT;
+	CvCity* pCity = bCityTarget ? pTarget->getPlotCity() : NULL;
+	if (bCityTarget && !pCity)
+		return;
+	const bool bLand = bCityTarget || !pTarget->isWater();
+	const bool bSea = bCityTarget ? pCity->isCoastal() : pTarget->isWater();
+
+	if (field.eCenter == OPERATIONAL_CENTER_OUR_CITY)
+	{
+		//EstimateFight just counted L and T, and our city's enemies
+		GatherReinforceCandidates(kTactical, field, *pTarget, bLand, bSea, vCandidates);
+		SelectReinforcement(vCandidates, field.fLocalStrength, field.fEnemyStrength, fRatio, false, reinforce);
+		const double fCityStake = turn.fCityScale > 0.0 ? CityValue(*pCity, turn.ePlayer) / turn.fCityScale : 0.0;
+		field.fReinforceEstimate = field.fTheater * turn.weights.afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * fCityStake * reinforce.fGain;
+		return;
+	}
+
+	bool bLocalCapturer = false;
+	const double fLocal = LocalStrength(turn.ePlayer, *pTarget, bLand, bSea, &bLocalCapturer);
+	reinforce.countedUnits.clear();
+	reinforce.countedCities.clear();
+	const double fEnemy = EnemyCenterStrength(turn.ePlayer, *pTarget, bLand, bSea, reinforce.countedUnits, reinforce.countedCities);
+	if (!field.bBorder || field.bWithdraw)
+	{
+		SelectReinforcement(vCandidates, fLocal, fEnemy, fRatio, false, reinforce);
+		return;
+	}
+	GatherReinforceCandidates(kTactical, field, *pTarget, bLand, bSea, vCandidates);
+	SelectReinforcement(vCandidates, fLocal, fEnemy, fRatio, pCity != NULL && !bLocalCapturer, reinforce);
+	//parity trim: no march that would arrive below even strength
+	if (reinforce.fArrivalRatio < 1.0)
+		return;
+	field.fReinforceEstimate = field.fTheater * field.stake.fStake * reinforce.fGain * reinforce.fOdds;
+}
+
+// Reads the tactical roster, as native recruitment does. The filters are those of CvTacticalAI::PlotReinforcementMoves
+// that need no pathfinding: the alternative-target filter waits for the readiness check. Changes: one-turn and recruit
+// range bounds by plain distance; destination dominance gates apply to enemy centers only; units covering a civilian
+// are left out without native's skip and processing; generals, admirals and civilian sappers fall to the combat test.
+void CvTacticalOperationalLoop::GatherReinforceCandidates(CvTacticalAI& kTactical, const SOperationalBattlefield& field, const CvPlot& kTarget,
+	bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates)
+{
+	vCandidates.clear();
+	const CvTacticalAnalysisMap* pZoneMap = kTactical.GetTacticalAnalysisMap();
+	const CvTacticalDominanceZone* pTargetZone = pZoneMap->GetZoneByIDWithoutRefresh(field.iZoneID);
+	const CvCity* pTargetCity = pTargetZone ? pTargetZone->GetZoneCity() : NULL;
+	const bool bOurCity = field.eCenter == OPERATIONAL_CENTER_OUR_CITY;
+	const bool bFriendlyTerritory = pTargetZone && pTargetZone->GetTerritoryType() == TACTICAL_TERRITORY_FRIENDLY;
+	const bool bEnemyDominated = !bOurCity && pTargetZone && pTargetZone->GetOverallDominanceFlag() == TACTICAL_DOMINANCE_ENEMY;
+	const int iRecruitRange = kTactical.GetRecruitRange();
+	for (list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end(); ++it)
+	{
+		CvUnit* pUnit = CityRecruit(kTactical, *it);
+		if (!pUnit || !pUnit->canUseNow() || !pUnit->IsCombatUnit() || field.reinforce.rejected.count(pUnit->GetID()) > 0)
+			continue;
+		if (!((bLand && pUnit->getDomainType() == DOMAIN_LAND) || (bSea && pUnit->getDomainType() == DOMAIN_SEA)))
+			continue;
+
+		//local units count in L; a held garrison stays search-only, so it joins only within the search's reach
+		const int iDistance = plotDistance(*pUnit->plot(), kTarget);
+		const bool bHeld = IsHeldGarrison(pUnit);
+		if (iDistance <= std::max(1, pUnit->baseMoves(false)) ||
+			iDistance > (bHeld ? std::min(iRecruitRange, static_cast<int>(TACTICAL_COMBAT_MAX_TARGET_DISTANCE)) : iRecruitRange))
+			continue;
+
+		// Carriers have special moves
+		if (pUnit->AI_getUnitAIType() == UNITAI_CARRIER_SEA)
+			continue;
+
+		// Do not move siege units into enemy dominated zones ... wait until we have some cover!
+		if (bEnemyDominated && pUnit->AI_getUnitAIType() == UNITAI_CITY_BOMBARD)
+			continue;
+
+		//conversely, don't leave generals out in the cold
+		if (pUnit->IsCoveringFriendlyCivilian())
+			continue;
+
+		// don't use near-dead units to attack ... misuse the flag here to be more careful when attacking
+		if (pUnit->shouldHeal(bFriendlyTerritory))
+			continue;
+
+		//we should not pull units from zones which need them
+		const CvTacticalDominanceZone* pUnitZone = pZoneMap->GetZoneByIDWithoutRefresh(pZoneMap->GetDominanceZoneIDWithoutRefresh(pUnit->plot()->GetPlotIndex()));
+		const bool bTargetZone = pUnitZone && (pUnitZone->GetZoneID() == field.iZoneID || (pTargetCity && pUnitZone->GetZoneCity() == pTargetCity));
+		if (pUnitZone && !bTargetZone)
+		{
+			if (pUnitZone->GetOverallDominanceFlag() != TACTICAL_DOMINANCE_FRIENDLY && pUnitZone->GetPosture() != TACTICAL_POSTURE_WITHDRAW)
+				if (!pUnit->plot()->isCity() || pUnit->plot()->getPlotCity()->isInDangerOfFalling() || pUnit->getDomainType() == DOMAIN_SEA)
+					if (!pUnit->isEmbarked()) //cannot fight if embarked, so we can take it!
+						continue;
+		}
+
+		SOperationalCandidate candidate;
+		candidate.iUnitID = pUnit->GetID();
+		candidate.fStrength = UnitStrength(*pUnit);
+		candidate.iTravelTurns = TravelTurns(iDistance, pUnit->baseMoves(false));
+		candidate.iJoinTurns = std::max(1, candidate.iTravelTurns - 1);
+		candidate.bCapturer = IsCapturer(*pUnit);
+		candidate.bHeldGarrison = bHeld;
+		vCandidates.push_back(candidate);
+	}
 }
 
 //------------------------------------------------------------------------------
-// our cities: strength and recruits
+// strength and our cities' recruits
 //------------------------------------------------------------------------------
 
 // Native strengths are scaled by 100 and already include the damage modifier; the HP share applies on top.
@@ -959,27 +1206,34 @@ double CvTacticalOperationalLoop::CityStrength(const CvCity& kCity)
 }
 
 // One turn is the unit's base moves in plots, at least 1.
-double CvTacticalOperationalLoop::LocalCityStrength(PlayerTypes ePlayer, const CvCity& kCity)
+double CvTacticalOperationalLoop::LocalStrength(PlayerTypes ePlayer, const CvPlot& kPlot, bool bLand, bool bSea, bool* pbCapturer)
 {
 	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
-	const CvPlot* pCityPlot = kCity.plot();
-	const bool bCoastal = kCity.isCoastal();
-	double fStrength = CityStrength(kCity);
+	double fStrength = 0.0;
 	int iLoop = 0;
 	for (CvUnit* pUnit = kPlayer.firstUnit(&iLoop); pUnit != NULL; pUnit = kPlayer.nextUnit(&iLoop))
 	{
 		if (pUnit->isDelayedDeath() || !pUnit->plot() || !(pUnit->IsCombatUnit() || pUnit->IsCanAttackRanged()))
 			continue;
-		if (pUnit->getDomainType() != DOMAIN_LAND && !(bCoastal && pUnit->getDomainType() == DOMAIN_SEA))
+		if (!((bLand && pUnit->getDomainType() == DOMAIN_LAND) || (bSea && pUnit->getDomainType() == DOMAIN_SEA)))
 			continue;
-		if (plotDistance(*pUnit->plot(), *pCityPlot) <= std::max(1, pUnit->baseMoves(false)))
-			fStrength += UnitStrength(*pUnit);
+		if (plotDistance(*pUnit->plot(), kPlot) > std::max(1, pUnit->baseMoves(false)))
+			continue;
+		fStrength += UnitStrength(*pUnit);
+		if (pbCapturer && IsCapturer(*pUnit))
+			*pbCapturer = true;
 	}
 	return fStrength;
 }
 
+// The city's own strength plus the units around it.
+double CvTacticalOperationalLoop::LocalCityStrength(PlayerTypes ePlayer, const CvCity& kCity)
+{
+	return CityStrength(kCity) + LocalStrength(ePlayer, *kCity.plot(), true, kCity.isCoastal());
+}
+
 // Native danger lists the visible enemy units that can attack the city plot; a unit on both lists counts once.
-double CvTacticalOperationalLoop::EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity)
+double CvTacticalOperationalLoop::EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity, set<pair<int, int> >* pCounted)
 {
 	set<pair<int, int> > counted;
 	double fStrength = 0.0;
@@ -1003,6 +1257,46 @@ double CvTacticalOperationalLoop::EnemyCityStrength(const SOperationalTurn& turn
 			continue;
 		if (counted.insert(make_pair(static_cast<int>(pUnit->getOwner()), pUnit->GetID())).second)
 			fStrength += UnitStrengthAgainstCity(*pUnit, kCity);
+	}
+	if (pCounted)
+		pCounted->swap(counted);
+	return fStrength;
+}
+
+// Each plot within 4 is read once: a hostile city adds its strength with at least 1 HP, which already counts its
+// garrison; other visible hostile units add their own strength.
+double CvTacticalOperationalLoop::EnemyCenterStrength(PlayerTypes ePlayer, const CvPlot& kTarget, bool bLand, bool bSea,
+	set<pair<int, int> >& countedUnits, set<pair<int, int> >& countedCities)
+{
+	countedUnits.clear();
+	countedCities.clear();
+	const TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+	double fStrength = 0.0;
+	for (int i = 0; i < RING_PLOTS[4]; i++)
+	{
+		const CvPlot* pPlot = iterateRingPlots(&kTarget, i);
+		if (!pPlot || !pPlot->isVisible(eTeam))
+			continue;
+		const CvCity* pCity = pPlot->getPlotCity();
+		const CvUnit* pGarrison = NULL;
+		if (pCity && GroundSide(ePlayer, pCity->getOwner()) == groundHoldsHostile && pCity->GetMaxHitPoints() > 0)
+		{
+			countedCities.insert(make_pair(static_cast<int>(pCity->getOwner()), pCity->GetID()));
+			fStrength += static_cast<double>(pCity->getStrengthValue()) * std::max(1, pCity->GetMaxHitPoints() - pCity->getDamage()) /
+				pCity->GetMaxHitPoints();
+			pGarrison = pCity->GetGarrisonedUnit();
+		}
+		for (int j = 0; j < pPlot->getNumUnits(); j++)
+		{
+			const CvUnit* pUnit = pPlot->getUnitByIndex(j);
+			if (!pUnit || pUnit == pGarrison || pUnit->isDelayedDeath() || pUnit->isInvisible(eTeam, false) ||
+				!(pUnit->IsCombatUnit() || pUnit->IsCanAttackRanged()) || GroundSide(ePlayer, pUnit->getOwner()) != groundHoldsHostile)
+				continue;
+			if (!((bLand && pUnit->getDomainType() == DOMAIN_LAND) || (bSea && pUnit->getDomainType() == DOMAIN_SEA)))
+				continue;
+			if (countedUnits.insert(make_pair(static_cast<int>(pUnit->getOwner()), pUnit->GetID())).second)
+				fStrength += UnitStrength(*pUnit);
+		}
 	}
 	return fStrength;
 }
@@ -1091,6 +1385,13 @@ void CvTacticalOperationalLoop::GatherCityDefenders(CvTacticalAI& kTactical, con
 bool CvTacticalOperationalLoop::CanCapture(const CvUnit& kUnit)
 {
 	return kUnit.IsCombatUnit() && kUnit.canMove() && !kUnit.isOutOfAttacks() && !kUnit.IsCanAttackRanged() && !kUnit.isNoCapture();
+}
+
+// CanCapture without this turn's moves and attacks, for a living land unit outside armies.
+bool CvTacticalOperationalLoop::IsCapturer(const CvUnit& kUnit)
+{
+	return !kUnit.isDelayedDeath() && kUnit.getDomainType() == DOMAIN_LAND && kUnit.getArmyID() == -1 && kUnit.IsCombatUnit() &&
+		!kUnit.IsCanAttackRanged() && !kUnit.isNoCapture();
 }
 
 // Fills a native target with the battlefield's type, plot and zone.
@@ -1374,6 +1675,113 @@ void CvTacticalOperationalLoop::MarkDispositions(const SOperationalEngagementRep
 	}
 }
 
+// The flood is native's reinforcement reach from PlotReinforcementMoves, run once per check. The alternative-target
+// filter is native's too, moved here because it floods each unit's own reach. Held garrisons need no march, but the
+// search must count them as near the target, or nothing would move them.
+eOperationalCheckResult CvTacticalOperationalLoop::CheckReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn,
+	SOperationalBattlefield& field)
+{
+	if (field.reinforce.bChecked)
+		return OPERATIONAL_CHECK_PASSED;
+	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
+	if (!pTarget)
+		return OPERATIONAL_CHECK_TARGET_GONE;
+
+	// do not set a player - that way we can traverse unrevealed plots and foreign territory
+	SPathFinderUserData data(NO_PLAYER, PT_ARMY_MIXED, NO_PLAYER, kTactical.GetRecruitRange());
+	const ReachablePlots relevantPlots = GC.GetStepFinder().GetPlotsInReach(pTarget, data);
+
+	//held garrisons join only through the search, so they need its own domain distance, flooded once per domain
+	map<int, ReachablePlots> searchPlots;
+	const double fBefore = field.fReinforceEstimate;
+	set<int> passed;
+	for (;;)
+	{
+		bool bRejected = false;
+		for (size_t i = 0; i < field.reinforce.vSelected.size(); i++)
+		{
+			const int iUnitID = field.reinforce.vSelected[i];
+			if (passed.count(iUnitID) > 0)
+				continue;
+			CvUnit* pUnit = kTactical.m_pPlayer->getUnit(iUnitID);
+			bool bReach = pUnit && pUnit->plot();
+			if (bReach && IsHeldGarrison(pUnit))
+			{
+				const int iDomain = pUnit->getDomainType();
+				if (searchPlots.find(iDomain) == searchPlots.end())
+					searchPlots[iDomain] = SearchReachPlots(kTactical.m_pPlayer->GetID(), pTarget, pUnit->getDomainType());
+				bReach = searchPlots[iDomain].find(pUnit->plot()->GetPlotIndex()) != searchPlots[iDomain].end();
+			}
+			else if (bReach)
+				bReach = relevantPlots.find(pUnit->plot()->GetPlotIndex()) != relevantPlots.end();
+			if (bReach && !IsHeldGarrison(pUnit))
+			{
+				//don't run away if there's other work to do (will eventually be handled by ExecuteAttackWithUnits)
+				vector<pair<CvPlot*, bool> > altTargets = TacticalAIHelpers::GetTargetsInRange(pUnit, false, false);
+				for (size_t j = 0; j < altTargets.size() && bReach; j++)
+					bReach = plotDistance(*altTargets[j].first, *pTarget) <= TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
+				bReach = bReach && CanMarch(kTactical, pUnit, pTarget);
+			}
+			if (bReach)
+				passed.insert(iUnitID);
+			else
+			{
+				field.reinforce.rejected.insert(iUnitID);
+				bRejected = true;
+			}
+		}
+		if (!bRejected)
+			break;
+		EstimateReinforce(kTactical, turn, field);
+	}
+	field.reinforce.bChecked = true;
+	if (field.reinforce.vSelected.empty())
+		return OPERATIONAL_CHECK_NO_REACHABLE;
+	if (field.fReinforceEstimate < fBefore)
+		return OPERATIONAL_CHECK_REDUCED;
+	return OPERATIONAL_CHECK_PASSED;
+}
+
+// The group is the checked selection still usable now. The move label is native's reinforcement label; at an enemy
+// center the target's owner is the counterpart, while our city has none, as in its fight.
+void CvTacticalOperationalLoop::ExecuteReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+	SOperationalCommandRecord& record)
+{
+	CvPlayer& kPlayer = *kTactical.m_pPlayer;
+	record.bSearchRan = false;
+	record.bMoved = false;
+	record.vSelected = field.reinforce.vSelected;
+	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
+	if (!pTarget)
+		return;
+	kTactical.m_CurrentMoveUnits.setCurrentTacticalMove(AI_TACTICAL_REINFORCE);
+
+	vector<CvUnit*> vUnits;
+	map<int, int> startPlots;
+	for (size_t i = 0; i < record.vSelected.size(); i++)
+	{
+		CvUnit* pUnit = kPlayer.getUnit(record.vSelected[i]);
+		if (!pUnit || !pUnit->plot())
+			continue;
+		startPlots[pUnit->GetID()] = pUnit->plot()->GetPlotIndex();
+		if (pUnit->canUseNow())
+			vUnits.push_back(pUnit);
+	}
+	if (vUnits.empty())
+		return;
+
+	SOperationalEngagementReport report;
+	record.bSearchRan = true;
+	PositionUnitsAroundTarget(kTactical, vUnits, pTarget, OPERATIONAL_KIND_REINFORCE,
+		field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? NO_PLAYER : field.eOwner, turn.aiMapped, turn.settings, report);
+
+	for (map<int, int>::const_iterator it = startPlots.begin(); it != startPlots.end() && !record.bMoved; ++it)
+	{
+		const CvUnit* pUnit = kPlayer.getUnit(it->first);
+		record.bMoved = !pUnit || pUnit->isDelayedDeath() || !pUnit->plot() || pUnit->plot()->GetPlotIndex() != it->second;
+	}
+}
+
 //------------------------------------------------------------------------------
 // overlap and wake
 //------------------------------------------------------------------------------
@@ -1397,6 +1805,19 @@ bool CvTacticalOperationalLoop::RetiresFight(const SOperationalBattlefield& exec
 	CvPlot* pExecuted = GC.getMap().plotByIndex(executed.iPlotIndex);
 	CvPlot* pCandidate = GC.getMap().plotByIndex(candidate.iPlotIndex);
 	return pExecuted && pCandidate && plotDistance(*pExecuted, *pCandidate) <= 2;
+}
+
+// The executed Reinforce's counted sets are from its last estimate, before it ran.
+bool CvTacticalOperationalLoop::RetiresReinforce(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate)
+{
+	if (candidate.iID == executed.iID || candidate.eCenter == OPERATIONAL_CENTER_OUR_CITY)
+		return false;
+	if (candidate.eReinforce != OPERATIONAL_OFFER_READY && candidate.eReinforce != OPERATIONAL_OFFER_INACTIVE)
+		return false;
+	const pair<int, int> key(static_cast<int>(candidate.eOwner), candidate.iTargetID);
+	const set<pair<int, int> >& counted = candidate.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? executed.reinforce.countedCities :
+		executed.reinforce.countedUnits;
+	return counted.find(key) != counted.end();
 }
 
 // Lists the visible living hostile units, the owner of each city battlefield's plot, ours included, and our living
@@ -1919,11 +2340,55 @@ struct PrOperationalSortCombatFirst
 	}
 };
 
-// Copy of CvTacticalAI::PositionUnitsAroundTarget. Changes: the search takes the given flavors and aggression; the
-// spotter and path moves skip held garrisons; a land unit's path move uses MOVEFLAG_SAFE_EMBARK_ONLY in place of
-// native's two MOVEFLAG_NO_EMBARK rules (no naval escort in the list, or a first turn ending outside a zone we dominate).
+// The path flags of native's far-out moves, with safe embark for land units.
+int CvTacticalOperationalLoop::MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget)
+{
+	int	iFlags = CvUnit::MOVEFLAG_NO_STOPNODES | CvUnit::MOVEFLAG_APPROX_TARGET_RING2;
+	if (kUnit.isNativeDomain(&kTarget)) //don't embark if we don't have to
+		iFlags |= CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN;
+	if (kUnit.IsCivilianUnit())
+		iFlags |= (CvUnit::MOVEFLAG_DONT_STACK_WITH_NEUTRAL | CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER);
+	//embark only where no turn ends at sea in danger
+	if (kUnit.getDomainType() == DOMAIN_LAND)
+		iFlags |= CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY;
+	return iFlags;
+}
+
+// Copy of one domain of TacticalAIHelpers::UpdatePlotDistanceToTarget, the distance the search and the positioning
+// copy use to tell near units from far ones. Change: the flood stops at TACTICAL_COMBAT_MAX_TARGET_DISTANCE.
+ReachablePlots CvTacticalOperationalLoop::SearchReachPlots(PlayerTypes ePlayer, CvPlot* pTarget, DomainTypes eDomain)
+{
+	const bool bSea = eDomain == DOMAIN_SEA;
+	SPathFinderUserData data(ePlayer, bSea ? PT_NAVAL_UNIT_SIMPLE : PT_LAND_UNIT_SIMPLE);
+	if (!bSea && !GET_PLAYER(ePlayer).CanEmbark())
+		data.iFlags |= CvUnit::MOVEFLAG_NO_EMBARK;
+	if (bSea && !GET_TEAM(GET_PLAYER(ePlayer).getTeam()).CanBuildOceanCrossingUnit())
+		data.iFlags |= CvUnit::MOVEFLAG_NO_OCEAN;
+	data.iMaxTurns = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
+	return GC.GetStepFinder().GetPlotsInReach(pTarget, data);
+}
+
+// Native's danger limit at the first stop: half the HP for attackers that are not siege units, otherwise no danger.
+bool CvTacticalOperationalLoop::CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget)
+{
+	if (!pUnit->GeneratePath(pTarget, MarchFlags(*pUnit, *pTarget), kTactical.GetRecruitRange()))
+		return false;
+
+	//we are not here to fight or flee, let other moves take over
+	int iDanger = pUnit->GetDanger(pUnit->GetPathEndFirstTurnPlot());
+	int iDangerLimit = (pUnit->IsCanAttack() && pUnit->AI_getUnitAIType()!=UNITAI_CITY_BOMBARD) ? pUnit->GetCurrHitPoints() / 2 : 0;
+	//generals and siege should not even be in fog danger
+	return iDanger <= iDangerLimit;
+}
+
+// Copy of CvTacticalAI::PositionUnitsAroundTarget. Changes: the search runs through ExecuteEngagement over the units
+// still usable after the spotter move, with the kind row, the geographic blend and aggression from RISK; the spotter
+// and path moves skip held garrisons; path moves go through CanMarch and MarchFlags, whose land units use
+// MOVEFLAG_SAFE_EMBARK_ONLY in place of native's two MOVEFLAG_NO_EMBARK rules (no naval escort in the list, or a first
+// turn ending outside a zone we dominate).
 bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
-	const STacticalFlavors& flavors, eAggressionLevel eAggLvl, SOperationalEngagementReport& report)
+	eOperationalKind eKind, PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
+	SOperationalEngagementReport& report)
 {
 	//try to improve visibility. however, if the target is too far away this may fail ... in that case we chance it
 	vector<CvUnit*> vSpotters;
@@ -1933,10 +2398,12 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	kTactical.ExecuteSpotterMove(vSpotters, pTarget);
 
 	//first round: in case there are enemies around, do a combat simulation
-	report.flavors = flavors;
-	report.eAggLvl = eAggLvl;
-	vector<CvUnit*> vSimUnits = vUnits; //make a copy we can modify!
-	bool bTactSimSuccess = vSimUnits.empty() ? false : SearchAndExecute(kTactical.m_pPlayer->GetID(), vSimUnits, pTarget, eAggLvl, flavors, true, report);
+	vector<CvUnit*> vSimUnits; //make a copy we can modify!
+	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
+		if ((*it)->canUseNow())
+			vSimUnits.push_back(*it);
+	bool bTactSimSuccess = vSimUnits.empty() ? false : ExecuteEngagement(kTactical.m_pPlayer->GetID(), vSimUnits, pTarget, eKind, eCounterpart,
+		aiMapped, settings, true, report);
 
 	//sometimes tactsim cannot use all units, eg if they are too far out
 	vector<CvUnit*> farout;
@@ -1960,27 +2427,10 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	for (vector<CvUnit*>::const_iterator it = farout.begin(); it != farout.end(); ++it)
 	{
 		CvUnit* pUnit = *it;
-		int	iFlags = CvUnit::MOVEFLAG_NO_STOPNODES | CvUnit::MOVEFLAG_APPROX_TARGET_RING2;
-		if (pUnit->isNativeDomain(pTarget)) //don't embark if we don't have to
-			iFlags |= CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN;
-		if (pUnit->IsCivilianUnit())
-			iFlags |= (CvUnit::MOVEFLAG_DONT_STACK_WITH_NEUTRAL | CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER);
-		//embark only where no turn ends at sea in danger
-		if (pUnit->getDomainType() == DOMAIN_LAND)
-			iFlags |= CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY;
-
 		//since we know the unit was far out originally, this is guaranteed to be actual movement
-		if (!pUnit->GeneratePath(pTarget, iFlags, kTactical.GetRecruitRange()))
+		if (!CanMarch(kTactical, pUnit, pTarget))
 			continue;
-
-		//we are not here to fight or flee, let other moves take over
-		int iDanger = pUnit->GetDanger(pUnit->GetPathEndFirstTurnPlot());
-		int iDangerLimit = (pUnit->IsCanAttack() && pUnit->AI_getUnitAIType()!=UNITAI_CITY_BOMBARD) ? pUnit->GetCurrHitPoints() / 2 : 0;
-		//generals and siege should not even be in fog danger
-		if (iDanger > iDangerLimit)
-			continue;
-
-		kTactical.ExecuteMoveToPlot(pUnit, pTarget, true, iFlags);
+		kTactical.ExecuteMoveToPlot(pUnit, pTarget, true, MarchFlags(*pUnit, *pTarget));
 	}
 
 	//third round: if the unit is in an army (no tactical moves) and did not move yet, move it to safety now

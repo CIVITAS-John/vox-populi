@@ -33,14 +33,13 @@ const char* const OPERATIONAL_FLAVOR_SLOPE_NAMES[] =
 };
 typedef char OperationalSlopeNamesMatchSlots[(sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES) / sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES[0]) == STacticalFlavors::NUM_SLOTS) ? 1 : -1];
 
-// Floors, point constants and the readiness failure limit.
+// Floors, the Reinforce strength ratio r and the readiness failure limit.
 const OperationalConstant OPERATIONAL_CONSTANT[] =
 {
 	{ "floor.theater",          0.2 },
 	{ "floor.siege",            0.2 },
 	{ "floor.prize",            0.6 },
-	{ "point.safeBar",          2.0 / 3.0 },
-	{ "point.capitalPremium",   1.0 },
+	{ "reinforce.strengthRatio", 2.0 },
 	{ "readiness.maxFailures",  3.0 },
 };
 typedef char OperationalConstantRowsMatchConstants[(sizeof(OPERATIONAL_CONSTANT) / sizeof(OPERATIONAL_CONSTANT[0]) == NUM_OPERATIONAL_CONSTANTS) ? 1 : -1];

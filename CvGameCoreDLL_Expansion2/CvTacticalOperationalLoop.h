@@ -2,7 +2,7 @@
 	Vox Deorum: the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP). With the flag on, a non-barbarian player's
 	ProcessDominanceZones hands its turn to this file's copy, which runs a global loop of battlefields in place of
 	the zone posture routines and the reinforcement sweep. The loop runs fights on enemy units, enemy cities and our own
-	cities. This file holds the settings and their accessor, the posture and kind flavor rows, the mapped military flavors, the
+	cities, and a Reinforce at each of them that marches distant units in. This file holds the settings and their accessor, the posture and kind flavor rows, the mapped military flavors, the
 	geographic blend, aggression from RISK, the loop's battlefields and offers, and the copies of the native
 	functions the loop changes. Each copy names its native original. Include after CvTacticalAI.h.
 	------------------------------------------------------------------------------------------------------- */
@@ -211,7 +211,55 @@ struct SOperationalStake
 		fStake(0.0) {}
 };
 
-// One battlefield of the turn and its fight offer
+// One incoming Reinforce candidate: a unit of ours beyond one turn of the destination and within recruit range
+struct SOperationalCandidate
+{
+	int iUnitID;
+	double fStrength;    // full strength str(u)
+	int iTravelTurns;    // tau: plain distance over moves, at least 1
+	int iJoinTurns;      // j: tau - 1, at least 1
+	bool bCapturer;      // a land melee combat unit outside armies that may capture cities, whether or not it can act now
+	bool bHeldGarrison;  // joins the destination's search only; it takes no path move
+
+	// Creates an empty candidate.
+	SOperationalCandidate() : iUnitID(-1), fStrength(0.0), iTravelTurns(1), iJoinTurns(1), bCapturer(false), bHeldGarrison(false) {}
+};
+
+// One battlefield's Reinforce: strength tallies, the nearest-first selection, its score and the turn's rejections
+struct SOperationalReinforce
+{
+	double fLocal;               // L
+	double fEnemy;               // T
+	double fNeed;                // H_need = max(0, rT - L)
+	vector<int> vSelected;       // selected unit IDs, nearest first, any capture-role unit last
+	double fSelectedStrength;    // full strength of the selection
+	double fHelp;                // H: selected strength over join turns
+	double fRoleHelp;            // H_role: the appended capturer's discounted strength, or 0
+	int iRoleUnit;               // the capturer appended for the capture role, or -1
+	bool bMissingRole;           // an enemy city needs a capturer and no local unit or candidate is one
+	double fGain;                // g
+	double fArrivalRatio;        // rho = (L + selected strength) / T
+	double fOdds;                // a = min(1, rho / r)
+	set<pair<int, int> > countedUnits;   // the enemy units counted in T, by (owner, ID)
+	set<pair<int, int> > countedCities;  // the enemy cities counted in T, by (owner, ID)
+	set<int> rejected;           // units that failed a reach check this turn
+	bool bChecked;               // the selection passed its reach checks since the last command
+
+	// Creates an empty Reinforce.
+	SOperationalReinforce() : fLocal(0.0), fEnemy(0.0), fNeed(0.0), fSelectedStrength(0.0), fHelp(0.0), fRoleHelp(0.0), iRoleUnit(-1),
+		bMissingRole(false), fGain(0.0), fArrivalRatio(0.0), fOdds(0.0), bChecked(false) {}
+};
+
+// The turns a unit needs for a plain distance at its moves per turn: max(1, ceil(distance / moves)).
+int TravelTurns(int iDistance, int iMoves);
+// Selects Reinforce candidates nearest first (join turns, travel turns, unit ID) until their full strength meets
+// max(0, rT - L). When bNeedCapturer is set and no selected unit can capture, appends the nearest capturer as the role
+// unit, or marks the role missing. Then scores the selection: help, gain capped at r / (1 + r), arrival ratio and
+// odds; all three are 0 when T is not positive. Keeps the output's counted sets, rejections and check flag.
+void SelectReinforcement(const vector<SOperationalCandidate>& candidates, double fLocal, double fEnemy, double fRatio, bool bNeedCapturer,
+	SOperationalReinforce& out);
+
+// One battlefield of the turn, its fight offer and its Reinforce offer
 struct SOperationalBattlefield
 {
 	int iID;                      // index in the turn's list
@@ -231,12 +279,17 @@ struct SOperationalBattlefield
 	double fLocalStrength;        // own city: our strength L around it, from the last estimate
 	double fEnemyStrength;        // own city: the enemy strength T against it, from the last estimate
 	bool bHasEndangered;          // own city: it had an endangered recruit at the last estimate
+	bool bBorder;                 // fixed: the zone is ours or neighbors one of ours
+	bool bWithdraw;               // fixed: the zone's posture is Withdraw
+	eOperationalOfferState eReinforce;
+	double fReinforceEstimate;    // theater times the Reinforce stake
+	SOperationalReinforce reinforce;
 
 	// Creates a ready battlefield with no target.
 	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), eOwner(NO_PLAYER),
 		iTargetID(-1), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
 		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), fLocalStrength(0.0), fEnemyStrength(0.0),
-		bHasEndangered(false) {}
+		bHasEndangered(false), bBorder(false), bWithdraw(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0) {}
 };
 
 // One player-turn of the loop: settings, weights, the fixed scales, the threat maps and the battlefields
@@ -289,7 +342,9 @@ enum eOperationalCheckResult
 	OPERATIONAL_CHECK_NO_DAMAGE,    // the recruits would deal no expected damage
 	OPERATIONAL_CHECK_NO_CAPTURER,  // the city is at 1 HP or less and no recruit can capture it
 	OPERATIONAL_CHECK_NO_DEFENDERS, // own city: no local defender and no endangered recruit can still act
-	OPERATIONAL_CHECK_NO_NEARBY_ENEMY  // own city: no visible enemy within 5 plots and no endangered recruit
+	OPERATIONAL_CHECK_NO_NEARBY_ENEMY, // own city: no visible enemy within 5 plots and no endangered recruit
+	OPERATIONAL_CHECK_NO_REACHABLE,    // Reinforce: no selected unit passed its reach checks
+	OPERATIONAL_CHECK_REDUCED          // Reinforce: reach checks shrank the selection and lowered its estimate
 };
 
 // One readiness check and its result
@@ -297,6 +352,7 @@ struct SOperationalCheckRecord
 {
 	int iBattlefield;
 	eOperationalCheckResult eResult;
+	bool bReinforce;  // the battlefield's Reinforce was checked, not its fight
 };
 
 // One executed command, for the records
@@ -307,15 +363,18 @@ struct SOperationalCommandRecord
 	int iPlotIndex;
 	eOperationalKind eKind;
 	PlayerTypes eOwner;
-	double fEstimate;           // the estimated priority the fight ran at; its readiness check passes or fails only
+	double fEstimate;           // the estimated priority the offer ran at, after any reach checks
 	int iFailuresBefore;
 	bool bSearchRan;            // the search ran with at least one unit, so overlapping fights retire
-	vector<int> vRetired;       // battlefields this command retired
+	vector<int> vRetired;       // battlefields whose fight this command retired
 	vector<pair<int, bool> > vEndangered;  // endangered recruits by unit ID, and whether the search placed them
+	vector<int> vSelected;      // Reinforce: the checked selection by unit ID
+	bool bMoved;                // Reinforce: a selected unit changed plot or died
+	vector<int> vRetiredReinforce;  // battlefields whose Reinforce this command retired
 
 	// Creates an empty record.
 	SOperationalCommandRecord() : iCommand(-1), iBattlefield(-1), iPlotIndex(-1), eKind(OPERATIONAL_KIND_UNIT_FIGHT),
-		eOwner(NO_PLAYER), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false) {}
+		eOwner(NO_PLAYER), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false) {}
 };
 
 // One player-turn's minimal records: commands, readiness checks, skipped offers and whether the command cap stopped it
@@ -337,9 +396,9 @@ public:
 	// Copy of CvTacticalAI::ProcessDominanceZones for a non-barbarian player: global high priority; the zone loop runs
 	// emergency purchases only; the command loop; deferred garrisons; global mid and low priority; the review.
 	static void ProcessDominanceZones(CvTacticalAI& kTactical);
-	// Runs the turn's commands: builds the battlefields from the target snapshot, estimates every fight, then checks the
-	// top ready fight and executes it until none is ready or maxCommands commands ran. pRecord, when given, receives the
-	// minimal records; otherwise they go to the tactical log when AI logging is on.
+	// Runs the turn's commands: builds the battlefields from the target snapshot, estimates every fight and Reinforce,
+	// then checks the top ready offer and executes it until none is ready or maxCommands commands ran. pRecord, when
+	// given, receives the minimal records; otherwise they go to the tactical log when AI logging is on.
 	static void RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord = NULL);
 
 	// Resolves the turn's weights and computes our army's value Z_U, our cities' value Z_C, the ground base B and the
@@ -348,14 +407,25 @@ public:
 	// Rebuilds each enemy unit's and city's share of our units' exposure, our endangered units, each city's approach
 	// list and each battlefield's bCanAttackOurUnits.
 	static void BuildThreats(SOperationalTurn& turn);
-	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground and
-	// near-city flag, then one per city of ours.
+	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground,
+	// near-city flag and zone gates, then one per city of ours.
 	static void BuildBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
+	// True when the zone is ours or neighbors one of ours, read from our own analysis map.
+	static bool IsBorderZone(CvTacticalAI& kTactical, const CvTacticalDominanceZone& kZone);
 	// Appends our city's battlefield: its land zone, or its water zone without one, and its theater.
 	static void AddOwnCityBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, CvCity& kCity);
-	// Estimates one fight as theater times stake on the current board, or drops it when its target died or its city
-	// changed owner.
-	static void EstimateFight(const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Estimates one fight as theater times stake on the current board. Returns false, with the estimate 0, when its
+	// target died or its city changed owner. An own-city fight also records our city's counted enemies for its Reinforce.
+	static bool EstimateFight(const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Estimates one Reinforce from its strength tallies and nearest-first selection on plain distance: at our city
+	// theater x w_C x S_c x g; at an enemy center theater x V x g x a, which is 0 outside border zones, in Withdraw zones
+	// and below parity. Reads the fight's current stake, so it runs after EstimateFight.
+	static void EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// The Reinforce candidates for a destination by the cheap filters: available units outside armies, beyond one turn
+	// and within recruit range, in the destination's domains, with native's carrier, healing, siege, donor-zone and
+	// civilian-cover filters, minus the battlefield's rejections. A held garrison qualifies within the search's reach.
+	static void GatherReinforceCandidates(CvTacticalAI& kTactical, const SOperationalBattlefield& field, const CvPlot& kTarget,
+		bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates);
 	// Our unit's strength: native maximum attack strength, or ranged strength for a ranged unit, times its HP share.
 	static double UnitStrength(const CvUnit& kUnit);
 	// An enemy unit's strength against our city: its quick attack or ranged strength against the city plot, times its HP
@@ -363,12 +433,21 @@ public:
 	static double UnitStrengthAgainstCity(const CvUnit& kUnit, const CvCity& kCity);
 	// A city's strength: its strength value times its HP share.
 	static double CityStrength(const CvCity& kCity);
-	// Our local strength L around our city: the city plus our land combat units within one turn by plain distance, and
-	// sea units at a coastal city. Spent and army units count; aircraft do not.
+	// Our local strength L around a plot: our combat units within one turn by plain distance in the given domains. Spent
+	// and army units count; aircraft do not. pbCapturer, when given, is set when one of them is a capturer.
+	static double LocalStrength(PlayerTypes ePlayer, const CvPlot& kPlot, bool bLand, bool bSea, bool* pbCapturer = NULL);
+	// Our local strength L around our city: the city plus LocalStrength over land, and sea at a coastal city.
 	static double LocalCityStrength(PlayerTypes ePlayer, const CvCity& kCity);
 	// The enemy strength T against our city: its approach list together with the visible units native danger says can
-	// attack it next turn, each once.
-	static double EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity);
+	// attack it next turn, each once. pCounted, when given, receives the counted units.
+	static double EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity, set<pair<int, int> >* pCounted = NULL);
+	// The enemy strength T at an enemy center: visible hostile non-air combat units within 4 plots in the given domains,
+	// plus hostile cities within 4 plots at no less than 1 HP. A counted city's garrison is part of its strength.
+	static double EnemyCenterStrength(PlayerTypes ePlayer, const CvPlot& kTarget, bool bLand, bool bSea,
+		set<pair<int, int> >& countedUnits, set<pair<int, int> >& countedCities);
+	// True for a unit that can capture a city on a later turn: a land melee combat unit outside armies that may enter
+	// cities, whether or not it has moves or attacks left.
+	static bool IsCapturer(const CvUnit& kUnit);
 	// The roster unit with this ID when a city fight can recruit it: usable by the tactical AI, outside armies and on
 	// the map. NULL otherwise.
 	static CvUnit* CityRecruit(CvTacticalAI& kTactical, int iUnitID);
@@ -396,11 +475,30 @@ public:
 		SOperationalCommandRecord& record);
 	// Marks each endangered recruit in the record placed or free from the engagement's executed rows.
 	static void MarkDispositions(const SOperationalEngagementReport& report, SOperationalCommandRecord& record);
+	// The Reinforce's readiness check, with no orders issued: one step-finder flood from the destination, then for each
+	// selected unit that is not a held garrison the flood, native's alternative-target filter and a march path with a
+	// safe enough first stop. Failures join the turn's rejections and the selection is made again until every selected
+	// unit passed. A selection checked since the last command passes at once.
+	static eOperationalCheckResult CheckReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// True when the positioning copy's path move can take the unit toward the target this turn: a path within recruit
+	// range with safe embark, and danger at its first-turn stop within native's limit. Generates the unit's path.
+	static bool CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget);
+	// The positioning copy's path flags for a unit marching toward the target.
+	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget);
+	// Plots within the search's near distance of the target for one domain, measured as the search measures it.
+	static ReachablePlots SearchReachPlots(PlayerTypes ePlayer, CvPlot* pTarget, DomainTypes eDomain);
+	// Runs the checked Reinforce selection through the positioning copy with the Reinforce kind row. Fills the record's
+	// selection, search flag and whether a selected unit moved.
+	static void ExecuteReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		SOperationalCommandRecord& record);
 
 	// The fight row of the overlap rule: an enemy-unit fight that ran its search retires an unexecuted enemy-unit fight
 	// within 2 plots of its target in a compatible zone, unless that fight's target can attack our units or stands near
 	// our city. City fights, ours included, neither retire nor get retired.
 	static bool RetiresFight(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate);
+	// The Reinforce row of the overlap rule: a Reinforce that moved a unit retires the open Reinforce of every other enemy
+	// battlefield whose target it counted in T. Our city's Reinforce is never retired. The caller checks the move.
+	static bool RetiresReinforce(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate);
 	// Records the board facts the wake rule compares before and after a command.
 	static void SnapshotBoard(const SOperationalTurn& turn, SOperationalBoard& board);
 	// Compares two snapshots into the changes a command made.
@@ -462,10 +560,12 @@ public:
 		PlayerTypes eCounterpart, int iOperationID, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
 		const OperationalSettings& settings, int& iRepresentativeZone);
 
-	// Copy of CvTacticalAI::PositionUnitsAroundTarget with given flavors and aggression in place of AL_LOW and the search
-	// intent. The spotter and path moves skip held garrisons, and land units take path moves with the safe-embark flag.
-	static bool PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
-		const STacticalFlavors& flavors, eAggressionLevel eAggLvl, SOperationalEngagementReport& report);
+	// Copy of CvTacticalAI::PositionUnitsAroundTarget with the loop's engagement in place of AL_LOW and the search intent:
+	// the geometry, blend and aggression follow the spotter move. The spotter and path moves skip held garrisons, and
+	// path moves go through CanMarch.
+	static bool PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
+		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
+		SOperationalEngagementReport& report);
 	// Copy of the unit overload of CvDangerPlotContents::GetDanger: the same total, and each enemy unit's and city's damage
 	// as it adds them up. A total that is not a sum (a civilian that can be captured, a unit in our city) lists no threats.
 	static int GetDangerByThreat(CvDangerPlotContents& kContents, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage,
