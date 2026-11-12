@@ -515,6 +515,9 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 	SOperationalTurnRecord localRecord;
 	SOperationalTurnRecord& record = pRecord ? *pRecord : localRecord;
 	const bool bLog = !pRecord && GC.getLogging() && GC.getAILogging();
+	if (bLog)
+		kTactical.LogTacticalMessage(CvString::format("Operational loop scales: army %.0f (typical unit %.0f), cities %.1f, ground base %.1f",
+			turn.fArmyScale, turn.fTypicalUnitWorth, turn.fCityScale, turn.fGroundBase));
 	const int iMaxFailures = std::max(1, static_cast<int>(turn.weights.afConstant[OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES]));
 	int iCommands = 0;
 	for (;;)
@@ -728,7 +731,9 @@ void CvTacticalOperationalLoop::BuildTurn(CvTacticalAI& kTactical, SOperationalT
 		if (pUnit->getDomainType() == DOMAIN_LAND || pUnit->getDomainType() == DOMAIN_SEA)
 			turn.iStrikeScan = std::max(turn.iStrikeScan, pUnit->baseMoves(false) * 4);
 	}
-	turn.fArmyScale = ReferenceScale(fArmy, TypicalUnitBaseWorth(ePlayer), gradeUnitScaleFloorUnits);
+	double fGoldPerWorth = 0.0;
+	ReferenceUnitScales(kPlayer, turn.fTypicalUnitWorth, fGoldPerWorth);
+	turn.fArmyScale = ReferenceScale(fArmy, turn.fTypicalUnitWorth, gradeUnitScaleFloorUnits);
 
 	//Z_C: our cities, or without one the mean city of the players at war with us
 	double fOwnCities = 0.0;
@@ -2068,40 +2073,6 @@ CvDangerPlotContents& CvTacticalOperationalLoop::DangerContents(PlayerTypes ePla
 //------------------------------------------------------------------------------
 // host seams: the simulator defines its own
 //------------------------------------------------------------------------------
-
-// Averages the base worth of the military unit types any of our cities could buy with gold. A type counts when a
-// non-puppet city can train it and holds no investment in it; the check skips the gold on hand, the purchase cooldown,
-// resistance, placement and building purchase requirements, so it reads which types are available, not affordable.
-// The building counts are built once, as the capture's purchase rows build them.
-double CvTacticalOperationalLoop::TypicalUnitBaseWorth(PlayerTypes ePlayer)
-{
-	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
-	std::vector<int> buildingCounts(GC.getNumBuildingInfos(), 0);
-	int iLoop = 0;
-	for (const CvCity* pCity = kPlayer.firstCity(&iLoop); pCity != NULL; pCity = kPlayer.nextCity(&iLoop))
-	{
-		const std::vector<BuildingTypes>& buildings = pCity->GetCityBuildings()->GetAllBuildingsHere();
-		for (size_t i = 0; i < buildings.size(); i++)
-			buildingCounts[buildings[i]]++;
-	}
-	double fTotal = 0.0;
-	int iTypes = 0;
-	for (int iUnit = 0; iUnit < GC.getNumUnitInfos(); iUnit++)
-	{
-		const UnitTypes eUnit = static_cast<UnitTypes>(iUnit);
-		CvUnitEntry* pInfo = GC.getUnitInfo(eUnit);
-		if (!pInfo || (pInfo->GetCombat() <= 0 && pInfo->GetRangedCombat() <= 0))
-			continue;
-		bool bBuyable = false;
-		for (CvCity* pCity = kPlayer.firstCity(&iLoop); pCity != NULL && !bBuyable; pCity = kPlayer.nextCity(&iLoop))
-			bBuyable = pCity->IsCanPurchase(buildingCounts, false, true, eUnit, NO_BUILDING, NO_PROJECT, YIELD_GOLD);
-		if (!bBuyable)
-			continue;
-		fTotal += UnitBaseWorth(pInfo->GetPower(), pInfo->GetProductionCost());
-		iTypes++;
-	}
-	return iTypes > 0 ? fTotal / iTypes : 0.0;
-}
 
 // Reads the revealed resource's usage for GroundWeight's resource and bonus flags.
 double CvTacticalOperationalLoop::GroundPlotWeight(PlayerTypes ePlayer, const CvPlot& kPlot)

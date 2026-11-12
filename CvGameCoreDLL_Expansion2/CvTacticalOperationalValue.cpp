@@ -119,6 +119,97 @@ double ReferenceScale(double fTotal, double fTypical, double fFloorCount)
 	return std::max(fTotal, fFloorCount * fTypical);
 }
 
+// Adds the per-era cost for each era after the first and scales by the game speed.
+double UnitRuleCost(const CvUnitEntry& kUnitEntry, int iEra)
+{
+	if (kUnitEntry.GetProductionCost() <= 0)
+		return 0.0;
+	double fCost = kUnitEntry.GetProductionCost();
+	if (kUnitEntry.GetProductionCostPerEra() != 0 && iEra - 1 > 0)
+		fCost += kUnitEntry.GetProductionCostPerEra() * (iEra - 1);
+	return fCost * GC.getGame().getGameSpeedInfo().getTrainPercent() / 100.0;
+}
+
+// Follows GetPurchaseCostFromProduction and the unit steps of GetPurchaseCost, without rounding.
+double UnitRulePrice(const CvUnitEntry& kUnitEntry, int iEra)
+{
+	const double fCost = UnitRuleCost(kUnitEntry, iEra);
+	const int iModifier = kUnitEntry.GetHurryCostModifier();
+	if (fCost <= 0.0 || iModifier == -1)
+		return 0.0;
+	double fPrice = pow(fCost * /*30*/ GD_INT_GET(GOLD_PURCHASE_GOLD_PER_PRODUCTION),
+		static_cast<double>(/*0.75 in CP, 0.68 in VP*/ GD_FLOAT_GET(HURRY_GOLD_PRODUCTION_EXPONENT)));
+	fPrice *= GC.getGame().getGameSpeedInfo().getHurryPercent() / 100.0;
+	fPrice *= std::max(0, 100 + iModifier) / 100.0;
+	if (MOD_BALANCE_PURCHASE_COST_ADJUSTMENTS)
+		fPrice *= 0.8;
+	return fPrice;
+}
+
+// Walks the unit classes in order, keeps the player's unlocked military types, then sorts and deduplicates them.
+// Each class maps through the civilization's unit table as GetSpecificUnitType does, but without its policy class
+// replacement, so adopting a policy cannot swap a class's type for a policy unit that the filter below drops.
+void ReferenceUnitTypes(const CvPlayer& kPlayer, std::vector<UnitTypes>& aeTypes)
+{
+	aeTypes.clear();
+	const CvTeam& kTeam = GET_TEAM(kPlayer.getTeam());
+	const int iEra = kPlayer.GetCurrentEra();
+	const CvCivilizationInfo* pCivilization = GC.getCivilizationInfo(kPlayer.getCivilizationType());
+	for (int iClass = 0; iClass < GC.getNumUnitClassInfos(); iClass++)
+	{
+		const CvUnitClassInfo* pClass = GC.getUnitClassInfo(static_cast<UnitClassTypes>(iClass));
+		if (!pClass)
+			continue;
+		const UnitTypes eUnit = static_cast<UnitTypes>(pCivilization ? pCivilization->getCivilizationUnits(iClass) : pClass->getDefaultUnitIndex());
+		const CvUnitEntry* pInfo = eUnit == NO_UNIT ? NULL : GC.getUnitInfo(eUnit);
+		if (!pInfo || (pInfo->GetCombat() <= 0 && pInfo->GetRangedCombat() <= 0))
+			continue;
+		if (pInfo->IsMinorCivGift() || pInfo->GetPolicyType() != NO_POLICY)
+			continue;
+		const int iPrereq = pInfo->GetPrereqAndTech();
+		if (iPrereq != NO_TECH && !kTeam.GetTeamTechs()->HasTech(static_cast<TechTypes>(iPrereq)))
+			continue;
+		const int iObsolete = pInfo->GetObsoleteTech();
+		if (iObsolete != NO_TECH && kTeam.GetTeamTechs()->HasTech(static_cast<TechTypes>(iObsolete)))
+			continue;
+		if (UnitRuleCost(*pInfo, iEra) > 0.0)
+			aeTypes.push_back(eUnit);
+	}
+	std::sort(aeTypes.begin(), aeTypes.end());
+	aeTypes.erase(std::unique(aeTypes.begin(), aeTypes.end()), aeTypes.end());
+}
+
+// Sums base worth over all reference types for the mean, and price and base worth over the priced ones for the rate.
+void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double& fGoldPerWorth)
+{
+	fTypicalWorth = 0.0;
+	fGoldPerWorth = 0.0;
+	std::vector<UnitTypes> aeTypes;
+	ReferenceUnitTypes(kPlayer, aeTypes);
+	const int iEra = kPlayer.GetCurrentEra();
+	double fWorthTotal = 0.0;
+	double fPricedWorth = 0.0;
+	double fPriceTotal = 0.0;
+	for (size_t i = 0; i < aeTypes.size(); i++)
+	{
+		const CvUnitEntry* pInfo = GC.getUnitInfo(aeTypes[i]);
+		if (!pInfo)
+			continue;
+		const double fWorth = UnitBaseWorth(pInfo->GetPower(), pInfo->GetProductionCost());
+		fWorthTotal += fWorth;
+		const double fPrice = UnitRulePrice(*pInfo, iEra);
+		if (fPrice > 0.0)
+		{
+			fPriceTotal += fPrice;
+			fPricedWorth += fWorth;
+		}
+	}
+	if (!aeTypes.empty())
+		fTypicalWorth = fWorthTotal / aeTypes.size();
+	if (fPricedWorth > 0.0)
+		fGoldPerWorth = fPriceTotal / fPricedWorth;
+}
+
 // Credits the discounted gain of the upgrade, never a loss.
 double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount)
 {

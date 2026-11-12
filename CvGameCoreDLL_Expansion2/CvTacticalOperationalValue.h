@@ -1,10 +1,10 @@
 /*	-------------------------------------------------------------------------------------------------------
 	Vox Deorum: the value pieces the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP) shares with the
 	simulator's outcome grade: unit worth and value at damage, exposure, city value, plot defense and ground
-	weight, the flavor weight curve, the reference scales Z_U and Z_C, the upgrade premium, and the ground base and
-	per-plot ground score. The grade calls the extracted copy of these functions, so the loop's priorities and the
-	grade measure units, cities and ground the same way. The pure functions take numbers; the adapters read them
-	from native types.
+	weight, the flavor weight curve, the reference scales Z_U and Z_C, the reference unit types with their rule cost
+	and rule price, the upgrade premium, and the ground base and per-plot ground score. The grade calls the extracted
+	copy of these functions, so the loop's priorities and the grade measure units, cities and ground the same way.
+	The pure functions take numbers; the adapters read them from native types.
 	------------------------------------------------------------------------------------------------------- */
 #pragma once
 
@@ -14,6 +14,7 @@
 class CvUnitEntry;
 class CvCity;
 class CvPlot;
+class CvPlayer;
 
 // The value floor k: the share of its worth a unit keeps at 0 HP, so it is lost only when the unit dies or is captured.
 // Damage loses the rest in proportion to the health lost. Changing it changes the grade and bumps its version.
@@ -38,7 +39,7 @@ const double groundCreditShare = 0.5;
 const double groundCreditFloor = 1.0;
 // The share of a ready upgrade's value gain a unit is credited with before it upgrades.
 const double gradeUpgradeDiscount = 0.5;
-// The floor of our army's value Z_U, in typical gold-buyable military units.
+// The floor of our army's value Z_U, in typical reference military units.
 const double gradeUnitScaleFloorUnits = 3.0;
 // The floor of our cities' value Z_C, in our mean city.
 const double gradeCityScaleFloorCities = 3.0;
@@ -80,6 +81,24 @@ double FlavorWeight(double fBase, double fSlope, int iFlavor, bool bReversed);
 // Returns a reference scale: the total, or fFloorCount typical items when that is larger. Our army's value Z_U and
 // our cities' value Z_C both use it.
 double ReferenceScale(double fTotal, double fTypical, double fFloorCount);
+// Returns a unit type's rule production cost at an era: the static cost, plus the cost per era for each era after
+// the first, times the game speed train percent. Instance, built-count, trait and difficulty terms are left out.
+// Returns 0 when the static cost is 0 or less.
+double UnitRuleCost(const CvUnitEntry& kUnitEntry, int iEra);
+// Returns a unit type's rule price in gold at an era: the rule cost through the native gold purchase curve
+// (CvCity::GetPurchaseCostFromProduction and CvCity::GetPurchaseCost) with the game speed hurry percent, the type's
+// hurry cost modifier and the flat purchase cost cut, but no player, city or policy modifier. Returns 0 for a type
+// without a rule cost or one that cannot be bought (hurry cost modifier -1).
+double UnitRulePrice(const CvUnitEntry& kUnitEntry, int iEra);
+// Fills the player's reference military types: for every unit class, the civilization's own unit type (before policy
+// class replacements) when it has combat
+// or ranged combat, its prerequisite tech is known, its obsolete tech is not, and it has a rule cost. City-state gift
+// units and policy-unlocked units are left out, so policies do not move the list. Supply, gold, cities and resources
+// do not count. The list is sorted and holds each type once.
+void ReferenceUnitTypes(const CvPlayer& kPlayer, std::vector<UnitTypes>& aeTypes);
+// Sets the typical unit worth (the mean base worth of the reference types) and the gold per unit of worth (the sum of
+// their rule prices over the sum of their base worths, among the types with a price). Each is 0 without a basis.
+void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double& fGoldPerWorth);
 // Returns the share fDiscount of a ready upgrade's base worth gain, or 0 when the upgrade is worth less.
 double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount);
 // Returns the ground base B: groundUnitWeight per military unit plus the land weight.

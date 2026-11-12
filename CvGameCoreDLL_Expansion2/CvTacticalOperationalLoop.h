@@ -300,6 +300,7 @@ struct SOperationalTurn
 	OperationalWeights weights;
 	int aiMapped[STacticalFlavors::NUM_SLOTS];
 	double fArmyScale;   // Z_U, fixed for the turn
+	double fTypicalUnitWorth;  // the mean base worth of our reference military types, Z_U's floor unit
 	double fCityScale;   // Z_C, fixed for the turn
 	double fGroundBase;  // B, fixed for the turn
 	// each enemy unit's and city's share of our units' exposure, keyed by (owner, ID): rebuilt after each command
@@ -314,7 +315,7 @@ struct SOperationalTurn
 	vector<SOperationalBattlefield> battlefields;
 
 	// Creates an empty turn.
-	SOperationalTurn() : ePlayer(NO_PLAYER), fArmyScale(0.0), fCityScale(0.0), fGroundBase(0.0), iStrikeScan(0) {}
+	SOperationalTurn() : ePlayer(NO_PLAYER), fArmyScale(0.0), fTypicalUnitWorth(0.0), fCityScale(0.0), fGroundBase(0.0), iStrikeScan(0) {}
 };
 
 // The board facts a command can change that the wake rule reads
@@ -532,8 +533,6 @@ public:
 	static bool CanCapture(const CvUnit& kUnit);
 
 	// Host seams. The DLL defines them in this file; the simulator defines its own and does not extract these.
-	// The mean base worth of the military unit types the player can buy with gold now, or 0 when there are none.
-	static double TypicalUnitBaseWorth(PlayerTypes ePlayer);
 	// A plot's ground weight with the resources the player's team has revealed.
 	static double GroundPlotWeight(PlayerTypes ePlayer, const CvPlot& kPlot);
 	// Opens and closes one command's work: the simulator records the command's effects in the battlefield's zone.
