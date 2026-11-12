@@ -1,9 +1,10 @@
 /*	-------------------------------------------------------------------------------------------------------
 	Vox Deorum: the value pieces the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP) shares with the
 	simulator's outcome grade: unit worth and value at damage, exposure, city value, plot defense and ground
-	weight, and the flavor weight curve. The grade calls the extracted copy of these functions, so the loop's
-	priorities and the grade measure units, cities and ground the same way. The pure functions take numbers;
-	the adapters read them from native types.
+	weight, the flavor weight curve, the reference scales Z_U and Z_C, the upgrade premium, and the ground base and
+	per-plot ground score. The grade calls the extracted copy of these functions, so the loop's priorities and the
+	grade measure units, cities and ground the same way. The pure functions take numbers; the adapters read them
+	from native types.
 	------------------------------------------------------------------------------------------------------- */
 #pragma once
 
@@ -27,6 +28,24 @@ const double groundShallowWaterWeight = -0.2;
 const double groundImprovementWeight = 0.1;
 const double groundGreatPersonImprovementWeight = 0.25;
 const double groundBonusResourceWeight = 0.15;
+// The ground base B weighs each military unit at groundUnitWeight and adds the weight of our land.
+const double groundUnitWeight = 1.0;
+// The share of a plot's weight lost, or credited, when it is merely blockaded instead of occupied.
+const double groundBlockadeShare = 0.5;
+// A hostile plot credits groundCreditShare times its weight above groundCreditFloor, so plain hostile land credits
+// nothing.
+const double groundCreditShare = 0.5;
+const double groundCreditFloor = 1.0;
+// The share of a ready upgrade's value gain a unit is credited with before it upgrades.
+const double gradeUpgradeDiscount = 0.5;
+// The floor of our army's value Z_U, in typical gold-buyable military units.
+const double gradeUnitScaleFloorUnits = 3.0;
+// The floor of our cities' value Z_C, in our mean city.
+const double gradeCityScaleFloorCities = 3.0;
+// The side bits of who holds a plot: our side (ours or friendly), the hostile side, or a neutral.
+const unsigned int groundHoldsOurs = 1U;
+const unsigned int groundHoldsHostile = 2U;
+const unsigned int groundHoldsNeutral = 4U;
 
 // Returns a unit type's base worth B: its power times its production cost, each floored at 0.
 double UnitBaseWorth(int iPower, int iProductionCost);
@@ -58,5 +77,20 @@ double GroundWeight(const CvPlot& kPlot, int iImprovement, bool bPillaged, bool 
 // Returns the flavor weight curve base x 2^(slope x (flavor - 50) / 50). Reversed, it uses 50 - flavor, so a bold
 // player weighs its own losses less. Flavor 50 returns the base exactly.
 double FlavorWeight(double fBase, double fSlope, int iFlavor, bool bReversed);
+// Returns a reference scale: the total, or fFloorCount typical items when that is larger. Our army's value Z_U and
+// our cities' value Z_C both use it.
+double ReferenceScale(double fTotal, double fTypical, double fFloorCount);
+// Returns the share fDiscount of a ready upgrade's base worth gain, or 0 when the upgrade is worth less.
+double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount);
+// Returns the ground base B: groundUnitWeight per military unit plus the land weight.
+double GroundBase(unsigned int iUnits, double fLand);
+// Adds one plot to the ground score's two sums. Our plot (bOurs) is lost when a hostile holder stands on it, and
+// groundBlockadeShare of it when a hostile unit next to it blockades it and no holder of our side or a neutral stands
+// on it. A hostile plot without a city (bHostileNoCity) credits groundCreditShare times its weight above
+// groundCreditFloor when our side stands on it, and groundBlockadeShare of that when our side blockades it and no
+// hostile or neutral holder stands on it. iStand holds the side bits standing on the plot, iNearby the side bits
+// blockading from its neighbors.
+void AddGroundPlot(bool bOurs, bool bHostileNoCity, double fWeight, unsigned int iStand, unsigned int iNearby,
+	double& fLost, double& fCredit);
 
 #endif //CIV5_TACTICAL_OPERATIONAL_VALUE_H

@@ -344,6 +344,8 @@ void CvTacticalAI::CleanUp()
 {
 	m_AllTargets.clear();
 	m_ZoneTargets.clear();
+	// Vox Deorum: the operational loop's snapshot ends with the targets it copies.
+	m_OperationalTargets.clear();
 }
 
 /// Add a temporary focus of attention around a short-term target
@@ -746,6 +748,13 @@ void CvTacticalAI::FindTacticalTargets()
 
 	//Let's clean up our naval target list.
 	PrioritizeNavalTargetsAndAddToMainList();
+
+	// Vox Deorum: the operational loop keeps every scored target as a battlefield, before native drops the ones near a
+	// better one.
+	if (MOD_VOX_TACTICAL_OPERATIONAL_LOOP && !m_pPlayer->isBarbarian())
+		m_OperationalTargets = m_AllTargets;
+	else
+		m_OperationalTargets.clear();
 
 	// since the combat simulation considers a whole area, we don't need to attack for individual units
 	SortTargetListAndDropUselessTargets();

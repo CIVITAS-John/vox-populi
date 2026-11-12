@@ -80,6 +80,8 @@ struct CvDangerPlotContents
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 class CvDangerPlots
 {
+	// Vox Deorum: the operational loop splits a unit's danger by threat from the plot contents.
+	friend class CvTacticalOperationalLoop;
 public:
 	CvDangerPlots(void);
 	~CvDangerPlots(void);

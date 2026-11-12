@@ -1,7 +1,7 @@
 /*	-------------------------------------------------------------------------------------------------------
 	Vox Deorum: the operational loop's own constants (VOX_TACTICAL_OPERATIONAL_LOOP): the base weight and flavor
-	of each stake weight, a flavor slope per military flavor, and the floors, point constants and gate retry
-	factor. One table row per constant, so tuning edits one column. A row's name is its name in template
+	of each stake weight, a flavor slope per military flavor, and the floors, point constants and readiness
+	failure limit. One table row per constant, so tuning edits one column. A row's name is its name in template
 	overrides, records and the weight sweep. ResolveOperationalWeights turns the tables, a player's mapped flavors
 	and any overrides into the turn's weights. Include after CvTacticalAI.h.
 	------------------------------------------------------------------------------------------------------- */
@@ -23,14 +23,15 @@ enum eOperationalWeight
 	NUM_OPERATIONAL_WEIGHTS
 };
 
-// The floors, point constants and gate retry factor, in OPERATIONAL_CONSTANT row order
+// The floors, point constants and readiness failure limit, in OPERATIONAL_CONSTANT row order
 enum eOperationalConstant
 {
 	OPERATIONAL_CONSTANT_THEATER_FLOOR,
 	OPERATIONAL_CONSTANT_SIEGE_FLOOR,
+	OPERATIONAL_CONSTANT_PRIZE_FLOOR,
 	OPERATIONAL_CONSTANT_SAFE_BAR,
 	OPERATIONAL_CONSTANT_CAPITAL_PREMIUM,
-	OPERATIONAL_CONSTANT_RETRY_FACTOR,
+	OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES,
 	NUM_OPERATIONAL_CONSTANTS
 };
 

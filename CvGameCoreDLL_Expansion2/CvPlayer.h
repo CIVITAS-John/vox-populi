@@ -203,6 +203,8 @@ public:
 
 	// Vox Deorum: narrow capture read of the danger cache. Never refreshes.
 	const CvDangerPlots* GetDangerPlots() const { return m_pDangerPlots; }
+	// Vox Deorum: the operational loop rebuilds a dirty cache before it reads plot contents.
+	CvDangerPlots* GetDangerPlots() { return m_pDangerPlots; }
 
 	bool isHuman(IsHumanReason eIsHumanReason = OTHER_ISHUMAN_REASON) const;
 	bool isObserver() const;

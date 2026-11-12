@@ -516,6 +516,8 @@ private:
 
 	// Lists of targets for the turn
 	vector<CvTacticalTarget> m_AllTargets;
+	// Vox Deorum: the scored targets before SortTargetListAndDropUselessTargets, for the operational loop.
+	vector<CvTacticalTarget> m_OperationalTargets;
 	vector<CvTacticalTarget*> m_ZoneTargets; //pointers only!
 	vector<CvTacticalTarget> m_NavalBlockadePoints;
 

@@ -112,3 +112,42 @@ double FlavorWeight(double fBase, double fSlope, int iFlavor, bool bReversed)
 	const double fOffset = bReversed ? 50.0 - iFlavor : iFlavor - 50.0;
 	return fBase * pow(2.0, fSlope * fOffset / 50.0);
 }
+
+// Floors the total at fFloorCount typical items.
+double ReferenceScale(double fTotal, double fTypical, double fFloorCount)
+{
+	return std::max(fTotal, fFloorCount * fTypical);
+}
+
+// Credits the discounted gain of the upgrade, never a loss.
+double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount)
+{
+	return fDiscount * std::max(0.0, fBaseTarget - fBaseNow);
+}
+
+// Weighs each unit at groundUnitWeight and adds the land.
+double GroundBase(unsigned int iUnits, double fLand)
+{
+	return groundUnitWeight * iUnits + fLand;
+}
+
+// Adds the plot's loss to fLost or its credit to fCredit. The two sums stay apart so callers keep one summing order.
+void AddGroundPlot(bool bOurs, bool bHostileNoCity, double fWeight, unsigned int iStand, unsigned int iNearby,
+	double& fLost, double& fCredit)
+{
+	if (bOurs)
+	{
+		if ((iStand & groundHoldsHostile) != 0)
+			fLost += fWeight;
+		else if ((iNearby & groundHoldsHostile) != 0 && (iStand & (groundHoldsOurs | groundHoldsNeutral)) == 0)
+			fLost += groundBlockadeShare * fWeight;
+	}
+	else if (bHostileNoCity)
+	{
+		const double fValue = groundCreditShare * std::max(0.0, fWeight - groundCreditFloor);
+		if ((iStand & groundHoldsOurs) != 0)
+			fCredit += fValue;
+		else if ((iNearby & groundHoldsOurs) != 0 && (iStand & (groundHoldsHostile | groundHoldsNeutral)) == 0)
+			fCredit += groundBlockadeShare * fValue;
+	}
+}
