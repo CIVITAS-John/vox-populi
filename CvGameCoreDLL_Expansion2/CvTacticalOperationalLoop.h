@@ -1,8 +1,8 @@
 /*	-------------------------------------------------------------------------------------------------------
 	Vox Deorum: the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP). With the flag on, a non-barbarian player's
 	ProcessDominanceZones hands its turn to this file's copy, which runs a global loop of battlefields in place of
-	the zone posture routines and the reinforcement sweep. The loop runs fights on enemy units and enemy cities. This
-	file holds the settings and their accessor, the posture and kind flavor rows, the mapped military flavors, the
+	the zone posture routines and the reinforcement sweep. The loop runs fights on enemy units, enemy cities and our own
+	cities. This file holds the settings and their accessor, the posture and kind flavor rows, the mapped military flavors, the
 	geographic blend, aggression from RISK, the loop's battlefields and offers, and the copies of the native
 	functions the loop changes. Each copy names its native original. Include after CvTacticalAI.h.
 	------------------------------------------------------------------------------------------------------- */
@@ -24,6 +24,7 @@ enum eOperationalKind
 	OPERATIONAL_KIND_UNIT_FIGHT,
 	OPERATIONAL_KIND_CITY_FIGHT,
 	OPERATIONAL_KIND_REINFORCE,
+	OPERATIONAL_KIND_OWN_CITY_FIGHT,
 	NUM_OPERATIONAL_KINDS
 };
 
@@ -162,11 +163,12 @@ struct SOperationalEngagementReport
 	SOperationalEngagementReport() : iRepresentativeZone(-1), eAggLvl(AL_LOW), bSuccess(false) {}
 };
 
-// What a battlefield is built around. Own cities arrive in step 5b.
+// What a battlefield is built around
 enum eOperationalCenter
 {
 	OPERATIONAL_CENTER_ENEMY_UNIT,
-	OPERATIONAL_CENTER_ENEMY_CITY
+	OPERATIONAL_CENTER_ENEMY_CITY,
+	OPERATIONAL_CENTER_OUR_CITY
 };
 
 // Where an offer stands in the turn's queue
@@ -192,18 +194,21 @@ struct SOperationalThreatExposure
 };
 
 // The terms of one fight's stake before theater, each already weighted and scaled: a unit fight's prize, ground and
-// exposure share, or a city fight's siege, garrison prize and exposure share, and their sum
+// exposure share; a city fight's siege, garrison prize and exposure share; or an own-city fight's city pressure and
+// defensive exposure; and their sum
 struct SOperationalStake
 {
 	double fPrize;
 	double fGround;
-	double fExposure;
+	double fExposure;      // for an own-city fight, the endangered recruits' exposure
 	double fSiege;
 	double fGarrisonPrize;
+	double fCityPressure;  // the city's stake times the enemy's strength share
 	double fStake;
 
 	// Creates an empty stake.
-	SOperationalStake() : fPrize(0.0), fGround(0.0), fExposure(0.0), fSiege(0.0), fGarrisonPrize(0.0), fStake(0.0) {}
+	SOperationalStake() : fPrize(0.0), fGround(0.0), fExposure(0.0), fSiege(0.0), fGarrisonPrize(0.0), fCityPressure(0.0),
+		fStake(0.0) {}
 };
 
 // One battlefield of the turn and its fight offer
@@ -214,7 +219,7 @@ struct SOperationalBattlefield
 	int iPlotIndex;
 	int iZoneID;
 	PlayerTypes eOwner;           // the target's owner
-	int iTargetID;                // enemy unit ID or city ID: the identity for the turn
+	int iTargetID;                // enemy unit ID or city ID, or our city's ID: the identity for the turn
 	double fTheater;              // fixed for the turn
 	double fGround;               // fixed for the turn; unit targets only
 	bool bNearOurCity;            // fixed: within 3 plots of one of our cities
@@ -223,11 +228,15 @@ struct SOperationalBattlefield
 	double fEstimate;             // theater times stake
 	int iFailures;
 	SOperationalStake stake;
+	double fLocalStrength;        // own city: our strength L around it, from the last estimate
+	double fEnemyStrength;        // own city: the enemy strength T against it, from the last estimate
+	bool bHasEndangered;          // own city: it had an endangered recruit at the last estimate
 
 	// Creates a ready battlefield with no target.
 	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), eOwner(NO_PLAYER),
 		iTargetID(-1), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
-		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0) {}
+		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), fLocalStrength(0.0), fEnemyStrength(0.0),
+		bHasEndangered(false) {}
 };
 
 // One player-turn of the loop: settings, weights, the fixed scales, the threat maps and the battlefields
@@ -244,6 +253,11 @@ struct SOperationalTurn
 	map<pair<int, int>, SOperationalThreatExposure> unitThreats;
 	map<pair<int, int>, SOperationalThreatExposure> cityThreats;
 	int iStrikeScan;     // the largest baseMoves(false) x 4 among our land and sea units: native's striking distance
+	// each city of ours by ID, and the visible enemy combat units by (owner, ID) whose path to it, as the nearest of our
+	// cities, is at most twice their moves plus their range: rebuilt after each command
+	map<int, vector<pair<int, int> > > cityApproach;
+	// our units outside friendly cities that some enemy unit or city can damage next turn: rebuilt after each command
+	set<int> endangeredUnits;
 	vector<SOperationalBattlefield> battlefields;
 
 	// Creates an empty turn.
@@ -254,7 +268,7 @@ struct SOperationalTurn
 struct SOperationalBoard
 {
 	map<pair<int, int>, int> enemyUnitPlots;  // visible living enemy units by (owner, ID), and their plots
-	map<int, int> cityOwners;                 // each city battlefield's plot and its owner
+	map<int, int> cityOwners;                 // each city battlefield's plot and its owner, ours included
 	map<int, int> ourUnitPlots;               // our units by ID, and their plots
 };
 
@@ -273,7 +287,9 @@ enum eOperationalCheckResult
 	OPERATIONAL_CHECK_TARGET_GONE,  // no living enemy unit stands on a unit target's plot
 	OPERATIONAL_CHECK_NO_RECRUITS,  // no unit of ours that can still act is within striking distance
 	OPERATIONAL_CHECK_NO_DAMAGE,    // the recruits would deal no expected damage
-	OPERATIONAL_CHECK_NO_CAPTURER   // the city is at 1 HP or less and no recruit can capture it
+	OPERATIONAL_CHECK_NO_CAPTURER,  // the city is at 1 HP or less and no recruit can capture it
+	OPERATIONAL_CHECK_NO_DEFENDERS, // own city: no local defender and no endangered recruit can still act
+	OPERATIONAL_CHECK_NO_NEARBY_ENEMY  // own city: no visible enemy within 5 plots and no endangered recruit
 };
 
 // One readiness check and its result
@@ -329,27 +345,53 @@ public:
 	// Resolves the turn's weights and computes our army's value Z_U, our cities' value Z_C, the ground base B and the
 	// striking-distance scan.
 	static void BuildTurn(CvTacticalAI& kTactical, SOperationalTurn& turn);
-	// Rebuilds each enemy unit's and city's share of our units' exposure, and each battlefield's bCanAttackOurUnits.
+	// Rebuilds each enemy unit's and city's share of our units' exposure, our endangered units, each city's approach
+	// list and each battlefield's bCanAttackOurUnits.
 	static void BuildThreats(SOperationalTurn& turn);
 	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground and
-	// near-city flag.
+	// near-city flag, then one per city of ours.
 	static void BuildBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
+	// Appends our city's battlefield: its land zone, or its water zone without one, and its theater.
+	static void AddOwnCityBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, CvCity& kCity);
 	// Estimates one fight as theater times stake on the current board, or drops it when its target died or its city
 	// changed owner.
 	static void EstimateFight(const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Our unit's strength: native maximum attack strength, or ranged strength for a ranged unit, times its HP share.
+	static double UnitStrength(const CvUnit& kUnit);
+	// An enemy unit's strength against our city: its quick attack or ranged strength against the city plot, times its HP
+	// share.
+	static double UnitStrengthAgainstCity(const CvUnit& kUnit, const CvCity& kCity);
+	// A city's strength: its strength value times its HP share.
+	static double CityStrength(const CvCity& kCity);
+	// Our local strength L around our city: the city plus our land combat units within one turn by plain distance, and
+	// sea units at a coastal city. Spent and army units count; aircraft do not.
+	static double LocalCityStrength(PlayerTypes ePlayer, const CvCity& kCity);
+	// The enemy strength T against our city: its approach list together with the visible units native danger says can
+	// attack it next turn, each once.
+	static double EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity);
+	// Our city fight's recruits from the tactical roster: local defenders within one turn, the held garrison, aircraft in
+	// reach with their carriers under the air search, and the endangered units within 4 plots. Army units are left out.
+	static void GatherCityRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
+		vector<CvUnit*>& vDefenders, vector<CvUnit*>& vEndangered);
 	// Fills a native target with the battlefield's type, plot and zone, for native recruitment and damage estimates.
 	static CvTacticalTarget FightTarget(const SOperationalBattlefield& field, const CvPlot& kPlot);
-	// The fight's readiness check: native city strike and striking-distance recruitment, with no orders issued. Returns a
-	// pass or the first condition that failed.
-	static eOperationalCheckResult CheckFight(CvTacticalAI& kTactical, const SOperationalBattlefield& field);
+	// The fight's readiness check: native city strike and striking-distance recruitment, or for our city its defenders,
+	// endangered recruits and nearby enemies, with no orders issued. Returns a pass or the first condition that failed.
+	static eOperationalCheckResult CheckFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field);
 	// Copy of CvTacticalAI::ExecuteDestroyEnemyUnits and ExecuteAttackWithUnits for one fight, with endangered recruits
-	// and the loop's engagement. Fills the record's search flag and dispositions.
+	// and the loop's engagement. Fills the record's search flag and dispositions. Our cities go to ExecuteCityDefense.
 	static void ExecuteFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		SOperationalCommandRecord& record);
+	// Defends our city: one search over its recruits with the own-city kind row and the target distance ignored, so
+	// units may retreat. No city fire, spotter move, separate air attack or capture follow-up.
+	static void ExecuteCityDefense(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		SOperationalCommandRecord& record);
+	// Marks each endangered recruit in the record placed or free from the engagement's executed rows.
+	static void MarkDispositions(const SOperationalEngagementReport& report, SOperationalCommandRecord& record);
 
 	// The fight row of the overlap rule: an enemy-unit fight that ran its search retires an unexecuted enemy-unit fight
 	// within 2 plots of its target in a compatible zone, unless that fight's target can attack our units or stands near
-	// our city.
+	// our city. City fights, ours included, neither retire nor get retired.
 	static bool RetiresFight(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate);
 	// Records the board facts the wake rule compares before and after a command.
 	static void SnapshotBoard(const SOperationalTurn& turn, SOperationalBoard& board);
@@ -358,6 +400,8 @@ public:
 		SOperationalChanges& changes);
 	// True when a change can turn the waiting fight's failed check into a pass: an enemy change or capture within
 	// striking distance of its target, or a unit of ours that moved within its own striking distance and is available.
+	// An own-city fight wakes on an enemy change within 5 plots, an available unit of ours now within one turn, or an
+	// endangered recruit.
 	static bool WakesFight(PlayerTypes ePlayer, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		const SOperationalChanges& changes);
 
@@ -392,16 +436,18 @@ public:
 
 	// Copy of TacticalAIHelpers::FindAndExecuteBestUnitAssignments for one engagement: gathers the geometry first,
 	// blends the flavors over it with the kind row, derives aggression from RISK, then searches and executes.
+	// bTargetDistanceRelevant is native's search flag: false lets units end farther from the target than they started.
 	static bool ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
-		SOperationalEngagementReport& report);
-	// The retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments with given flavors and aggression: native
-	// FindBestUnitAssignments unchanged, up to four attempts, each recorded with the rows that ran.
+		bool bTargetDistanceRelevant, SOperationalEngagementReport& report);
+	// The retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments with given flavors, aggression and target
+	// distance flag: native FindBestUnitAssignments unchanged, up to four attempts, each recorded with the rows that ran.
 	static bool SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
-		const STacticalFlavors& flavors, SOperationalEngagementReport& report);
+		const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report);
 	// Copy of the plot gathering in TacticalAIHelpers::FindBestUnitAssignments: the search's plots for all units before
 	// the participant cap, without remote air bases, counted by zone. Zone 0, the unknown zone, is left out.
-	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, map<int, int>& zonePlots);
+	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, bool bTargetDistanceRelevant,
+		map<int, int>& zonePlots);
 	// The geographic blend over a search's zones: per zone the mapped flavors moved by the civ, operation and zone
 	// modifiers plus its posture row, blended by plot share, plus the kind row. RISK always counts as set.
 	static STacticalFlavors BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots, eOperationalKind eKind,
