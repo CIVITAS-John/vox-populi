@@ -872,8 +872,19 @@ void CvTacticalOperationalLoop::ExecuteFight(CvTacticalAI& kTactical, const SOpe
 	const bool bCity = field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY;
 
 	//UnitProcessed labels the units this fight finishes with the current move, which the garrison pass before the loop
-	//left set; a city fight takes native's city strike label and a unit fight its attrition label
-	kTactical.m_CurrentMoveUnits.setCurrentTacticalMove(bCity ? AI_TACTICAL_SURGICAL_STRIKE : AI_TACTICAL_ATTRITION);
+	//left set. The fight takes the label native's routine for its zone's posture sets; without a posture, a city fight
+	//takes the city strike label and a unit fight the attrition label.
+	static const AITacticalMove aePostureMoves[NUM_OPERATIONAL_POSTURES] =
+	{
+		AI_TACTICAL_MOVE_NONE, AI_TACTICAL_WITHDRAW, AI_TACTICAL_ATTRITION, AI_TACTICAL_FLANKATTACK, AI_TACTICAL_STEAMROLL,
+		AI_TACTICAL_SURGICAL_STRIKE, AI_TACTICAL_HEDGEHOG, AI_TACTICAL_COUNTERATTACK,
+	};
+	const CvTacticalDominanceZone* pZone = kTactical.GetTacticalAnalysisMap()->GetZoneByIDWithoutRefresh(field.iZoneID);
+	const int iPosture = pZone ? range((int)pZone->GetPosture(), 0, NUM_OPERATIONAL_POSTURES - 1) : (int)TACTICAL_POSTURE_NONE;
+	AITacticalMove eMove = aePostureMoves[iPosture];
+	if (eMove == AI_TACTICAL_MOVE_NONE)
+		eMove = bCity ? AI_TACTICAL_SURGICAL_STRIKE : AI_TACTICAL_ATTRITION;
+	kTactical.m_CurrentMoveUnits.setCurrentTacticalMove(eMove);
 
 	// Might be able to hit/kill with a city
 	if (!bCity)
