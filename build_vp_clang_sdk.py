@@ -396,7 +396,9 @@ def build_clang_cpp(cl: str, cl_args: str, build_dir: Path, log: typing.IO):
 def update_commit_id(log: typing.IO):
     print('updating commit id...')
     start_time = time.time()
-    cp = subprocess.run('update_commit_id.bat', capture_output=True)
+    # Use an absolute path so the lookup works even when NoDefaultCurrentDirectoryInExePath is set
+    update_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'update_commit_id.bat')
+    cp = subprocess.run(update_script, capture_output=True)
     log.write(str.encode(f'==== update_commit_id.bat ====\n'))
     log.write(cp.stdout)
     log.write(cp.stderr)
