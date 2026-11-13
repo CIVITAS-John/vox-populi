@@ -22317,7 +22317,7 @@ int CvUnit::DoAdjacentPlotDamage(CvPlot* pWhere, int iValue, const char* chTextK
 		for (int iJ = 0; iJ < pSplashPlot->getNumUnits(); iJ++)
 		{
 			CvUnit* pEnemyUnit = pSplashPlot->getUnitByIndex(iJ);
-			// Vox Deorum: delayed casualties can remain on the plot until combat cleanup; they cannot pay another kill yield.
+			// Delayed casualties remain on the plot until cleanup and must not grant kill rewards again.
 			if (pEnemyUnit != NULL && pEnemyUnit->isDelayedDeath())
 				continue;
 			//logically we should damage non-enemy units as well? but that is too complex to consider ... 
@@ -30298,7 +30298,7 @@ int CvUnit::ComputePath(const CvPlot* pToPlot, int iFlags, int iMaxTurns, bool b
 		pDestPlot = m_kLastPath.GetFinalPlot();
 	}
 
-	// Vox Deorum: the squad check below may already find the final path, no need to search again
+	// the squad check below may already find the final path, no need to search again
 	bool bHavePath = false;
 
 	// If no path exists but continue to closest plot flag is set try to move to an adjacent plot
@@ -30309,7 +30309,7 @@ int CvUnit::ComputePath(const CvPlot* pToPlot, int iFlags, int iMaxTurns, bool b
 
 		if ((iFlags & CvUnit::MOVEFLAG_CONTINUE_TO_CLOSEST_PLOT) && (!newPath || !CanStackUnitAtPlot(pToPlot)))
 		{
-			// Vox Deorum: the reroute search below overwrites newPath
+			// the reroute search below overwrites newPath
 			bHavePath = false;
 			const CvPlot* pTargetPlot = pToPlot;
 

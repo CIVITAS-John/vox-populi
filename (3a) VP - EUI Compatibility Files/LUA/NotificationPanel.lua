@@ -1171,8 +1171,6 @@ local g_civListInstanceToolTips = { -- the tooltip function names need to match 
 			end
 
 			local iOurWarWeariness = g_activePlayer:GetWarWearinessPercent(playerID);
-			-- Vox Deorum: was g_iAIPlayer, which is undefined in this file (pasted from
-			-- LeaderHeadRoot) and silently resolved to player 0.
 			local iWarDuration = g_activePlayer:GetWarDuration(playerID);
 			strWarInfo = strWarInfo .. '[NEWLINE]' .. Locale.ConvertTextKey("TXT_KEY_WAR_WEARINESS_US_PERCENT", iOurWarWeariness, iWarDuration);
 
