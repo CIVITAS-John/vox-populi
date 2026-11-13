@@ -2808,7 +2808,7 @@ inline bool VoxRlIsValidRequestHeaderRecord(const RequestHeaderRecord& row)
 {
     if (row.phase > 16) return false;
     if (row.targetPlotIndex < -1) return false;
-    if (row.searchIntent > 13) return false;
+    if (row.searchIntent > 16) return false;
     for (u32 index = 0; index < 5U; ++index)
         if (row.militaryFlavors[index] > 100) return false;
     return true;

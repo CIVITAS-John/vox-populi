@@ -59,6 +59,15 @@ const char* const OPERATIONAL_KIND_NAMES[] =
 };
 typedef char OperationalKindNamesMatchKinds[(sizeof(OPERATIONAL_KIND_NAMES) / sizeof(OPERATIONAL_KIND_NAMES[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
 
+// Vox Deorum: the search purpose each command kind's engagements carry, in kind order. Operational reinforcement shares
+// native's Reinforce purpose.
+static const SearchIntent OPERATIONAL_KIND_SEARCH_INTENTS[] =
+{
+	kSearchIntentOperationalUnitFight, kSearchIntentOperationalCityFight, kSearchIntentReinforce,
+	kSearchIntentOperationalOwnCityFight,
+};
+typedef char OperationalKindIntentsMatchKinds[(sizeof(OPERATIONAL_KIND_SEARCH_INTENTS) / sizeof(OPERATIONAL_KIND_SEARCH_INTENTS[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
+
 // The shipped mapping from VP flavors to the military flavors, one row per term.
 const SOperationalVpTerm OPERATIONAL_VP_TERMS[] =
 {
@@ -2114,14 +2123,16 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, eKind, eCounterpart, VoxRlCurrentOperationId(ePlayer),
 		aiMapped, settings, report.iRepresentativeZone);
 	report.eAggLvl = AggressionFromRisk(report.flavors.iFlavor[STacticalFlavors::RISK], settings);
-	return SearchAndExecute(ePlayer, vUnits, pTarget, report.eAggLvl, report.flavors, bTargetDistanceRelevant, report);
+	// Vox Deorum: retain the command's purpose independently of its resolved flavor blend.
+	return SearchAndExecute(ePlayer, vUnits, pTarget, report.eAggLvl, OPERATIONAL_KIND_SEARCH_INTENTS[eKind], report.flavors,
+		bTargetDistanceRelevant, report);
 }
 
 // Copy of the retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments. Changes: the flavors, aggression and
-// target distance flag are given, and each attempt is recorded with the rows that ran. Capture records the search
-// purpose as unknown.
+// target distance flag are given, and each attempt is recorded with the rows that ran.
+// Vox Deorum: capture retains the operational search purpose on every retry.
 bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
-	const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report)
+	SearchIntent eSearchIntent, const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report)
 {
 	int iCount = 0;
 	bool bSuccess = false;
@@ -2137,7 +2148,7 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 		vector<STacticalAssignment> vAssignments;
 		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
-			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, kSearchIntentUnknown, ePlayer,
+			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, eSearchIntent, ePlayer,
 				currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, bTargetDistanceRelevant, false, 0, flavors);
 		}
 		else

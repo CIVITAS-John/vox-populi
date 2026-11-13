@@ -12,6 +12,8 @@
 #define CIV5_TACTICAL_OPERATIONAL_LOOP_H
 
 #include "CvTacticalOperationalWeights.h"
+// Vox Deorum: the purpose carried by each operational search and capture.
+#include "VoxDeorumRL/schema/SearchIntent.h"
 
 struct CvDangerPlotContents;
 
@@ -548,7 +550,7 @@ public:
 	// The retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments with given flavors, aggression and target
 	// distance flag: native FindBestUnitAssignments unchanged, up to four attempts, each recorded with the rows that ran.
 	static bool SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
-		const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report);
+		SearchIntent eSearchIntent, const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report);
 	// Copy of the plot gathering in TacticalAIHelpers::FindBestUnitAssignments: the search's plots for all units before
 	// the participant cap, without remote air bases, counted by zone. Zone 0, the unknown zone, is left out.
 	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, bool bTargetDistanceRelevant,

@@ -73,6 +73,10 @@ const signed char TACTICAL_INTENT_FLAVOR_DEFAULTS[][STacticalFlavors::NUM_SLOTS]
 	/* ArmyContact           */ {  -10,   -10,    +15,      0,      +10 },
 	/* RangedOpportunity     */ {  -10,   -10,      0,      0,      -10 },
 	/* BarbarianAttack       */ {    0,     0,      0,      0,        0 },
+	// Vox Deorum: operational searches resolve their own posture and kind flavor rows.
+	/* OperationalUnitFight  */ {    0,     0,      0,      0,        0 },
+	/* OperationalCityFight  */ {    0,     0,      0,      0,        0 },
+	/* OperationalOwnCityFight */ {  0,     0,      0,      0,        0 },
 };
 
 // Vox Deorum: fails to compile when a SearchIntent is added or removed without a matching row

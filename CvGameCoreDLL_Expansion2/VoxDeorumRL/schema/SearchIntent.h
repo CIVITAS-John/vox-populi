@@ -23,7 +23,10 @@ enum SearchIntent
     kSearchIntentArmyContact = 11,
     kSearchIntentRangedOpportunity = 12,
     kSearchIntentBarbarianAttack = 13,
-    kSearchIntentCount = 14
+    kSearchIntentOperationalUnitFight = 14,
+    kSearchIntentOperationalCityFight = 15,
+    kSearchIntentOperationalOwnCityFight = 16,
+    kSearchIntentCount = 17
 };
 
 static const char* const kSearchIntentNames[kSearchIntentCount] =
@@ -41,7 +44,10 @@ static const char* const kSearchIntentNames[kSearchIntentCount] =
     "ClearCamp",
     "ArmyContact",
     "RangedOpportunity",
-    "BarbarianAttack"
+    "BarbarianAttack",
+    "OperationalUnitFight",
+    "OperationalCityFight",
+    "OperationalOwnCityFight"
 };
 
 // Returns a stable display name, treating unvalidated values as unknown.
