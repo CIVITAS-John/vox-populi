@@ -327,10 +327,11 @@ void BlendZoneFlavors(const vector<SOperationalZoneFlavors>& zones, const int (&
 	}
 }
 
-// Builds each known zone's vector from the native modifiers and the zone's posture row, then blends.
+// Blends the search flavors from the mapped values and the aggression risk from neutral 50 through the same zones,
+// tactical modifiers, posture rows and kind row.
 STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots, eOperationalKind eKind,
 	PlayerTypes eCounterpart, int iOperationID, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
-	const OperationalSettings& settings, int& iRepresentativeZone)
+	const OperationalSettings& settings, int& iRepresentativeZone, int& iAggressionRisk)
 {
 	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
 	CvTacticalAnalysisMap* pZoneMap = kPlayer.GetTacticalAI()->GetTacticalAnalysisMap();
@@ -346,7 +347,11 @@ STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes e
 			pOperationModifier = pOperation->GetTacticalFlavorModifiers();
 	}
 
+	int aiNeutral[STacticalFlavors::NUM_SLOTS];
+	for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
+		aiNeutral[iSlot] = 50;
 	vector<SOperationalZoneFlavors> zones;
+	vector<SOperationalZoneFlavors> neutralZones;
 	for (map<int, int>::const_iterator it = zonePlots.begin(); it != zonePlots.end(); ++it)
 	{
 		const CvTacticalDominanceZone* pZone = pZoneMap->GetZoneByIDWithoutRefresh(it->first);
@@ -355,18 +360,34 @@ STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes e
 		SOperationalZoneFlavors zone;
 		zone.iZoneID = it->first;
 		zone.iPlots = it->second;
+		SOperationalZoneFlavors neutralZone = zone;
 		int aiZone[STacticalFlavors::NUM_SLOTS];
+		int aiNeutralZone[STacticalFlavors::NUM_SLOTS];
 		for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
+		{
 			aiZone[iSlot] = aiMapped[iSlot];
+			aiNeutralZone[iSlot] = aiNeutral[iSlot];
+		}
 		const short* pZoneModifier = pZoneMap->HasZoneTacticalFlavorModifiers() ? pZoneMap->GetZoneTacticalFlavorModifiers(it->first) : NULL;
 		if (pCivModifier || pOperationModifier || pZoneModifier)
+		{
 			TacticalAIHelpers::ApplyFlavorModifiers(aiZone, pCivModifier, pOperationModifier, pZoneModifier, kSearchIntentUnknown, false);
+			TacticalAIHelpers::ApplyFlavorModifiers(aiNeutralZone, pCivModifier, pOperationModifier, pZoneModifier, kSearchIntentUnknown, false);
+		}
 		const int iPosture = range((int)pZone->GetPosture(), 0, NUM_OPERATIONAL_POSTURES - 1);
 		for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
+		{
 			zone.aiFlavor[iSlot] = aiZone[iSlot] + settings.aiPostureRows[iPosture][iSlot];
+			neutralZone.aiFlavor[iSlot] = aiNeutralZone[iSlot] + settings.aiPostureRows[iPosture][iSlot];
+		}
 		zones.push_back(zone);
+		neutralZones.push_back(neutralZone);
 	}
 
+	int aiAggression[STacticalFlavors::NUM_SLOTS];
+	int iNeutralRepresentative = -1;
+	BlendZoneFlavors(neutralZones, aiNeutral, settings.aiKindRows[eKind], aiAggression, iNeutralRepresentative);
+	iAggressionRisk = aiAggression[STacticalFlavors::RISK];
 	STacticalFlavors flavors;
 	BlendZoneFlavors(zones, aiMapped, settings.aiKindRows[eKind], flavors.iFlavor, iRepresentativeZone);
 	flavors.bRiskSet = true;
@@ -2121,8 +2142,8 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 		return false;
 	GatherSearchPlotZones(vUnits, pTarget, bTargetDistanceRelevant, report.zonePlots);
 	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, eKind, eCounterpart, VoxRlCurrentOperationId(ePlayer),
-		aiMapped, settings, report.iRepresentativeZone);
-	report.eAggLvl = AggressionFromRisk(report.flavors.iFlavor[STacticalFlavors::RISK], settings);
+		aiMapped, settings, report.iRepresentativeZone, report.iAggressionRisk);
+	report.eAggLvl = AggressionFromRisk(report.iAggressionRisk, settings);
 	// Vox Deorum: classify unit battles by the target zone, including friendly team territory.
 	SearchIntent eSearchIntent = OPERATIONAL_KIND_SEARCH_INTENTS[eKind];
 	if (eKind == OPERATIONAL_KIND_UNIT_FIGHT)

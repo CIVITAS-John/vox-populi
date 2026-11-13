@@ -42,7 +42,7 @@ struct OperationalSettings
 {
 	// most commands per player-turn
 	int iMaxCommands;
-	// lowest blended RISK for Medium, High and Braveheart aggression
+	// lowest neutral-based aggression risk for Medium, High and Braveheart aggression
 	int iAggressionMediumRisk;
 	int iAggressionHighRisk;
 	int iAggressionBraveheartRisk;
@@ -59,7 +59,7 @@ void GetDefaultOperationalSettings(OperationalSettings* pSettings);
 // Fills one player's settings: the defaults, which the simulator overrides by the player's role.
 void GetOperationalSettings(PlayerTypes ePlayer, OperationalSettings* pSettings);
 
-// Maps blended RISK to an aggression level by the settings' thresholds; below the Medium threshold is Low.
+// Maps aggression risk to an aggression level by the settings' thresholds; below the Medium threshold is Low.
 eAggressionLevel AggressionFromRisk(int iRisk, const OperationalSettings& settings);
 
 // The layer of a VP flavor a mapping term reads
@@ -157,12 +157,14 @@ struct SOperationalEngagementReport
 	map<int, int> zonePlots;
 	int iRepresentativeZone;
 	STacticalFlavors flavors;
+	// the neutral-based risk that eAggLvl was resolved from
+	int iAggressionRisk;
 	eAggressionLevel eAggLvl;
 	vector<SOperationalAttempt> attempts;
 	bool bSuccess;
 
 	// Creates an empty report.
-	SOperationalEngagementReport() : iRepresentativeZone(-1), eAggLvl(AL_LOW), bSuccess(false) {}
+	SOperationalEngagementReport() : iRepresentativeZone(-1), iAggressionRisk(50), eAggLvl(AL_LOW), bSuccess(false) {}
 };
 
 // What a battlefield is built around
@@ -555,11 +557,11 @@ public:
 	// the participant cap, without remote air bases, counted by zone. Zone 0, the unknown zone, is left out.
 	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, bool bTargetDistanceRelevant,
 		map<int, int>& zonePlots);
-	// The geographic blend over a search's zones: per zone the mapped flavors moved by the civ, operation and zone
-	// modifiers plus its posture row, blended by plot share, plus the kind row. RISK always counts as set.
+	// Blends the mapped search flavors and the neutral-based aggression risk over the same zones, with the civ,
+	// operation and zone modifiers, posture rows and the kind row. Search RISK always counts as set.
 	static STacticalFlavors BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots, eOperationalKind eKind,
 		PlayerTypes eCounterpart, int iOperationID, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
-		const OperationalSettings& settings, int& iRepresentativeZone);
+		const OperationalSettings& settings, int& iRepresentativeZone, int& iAggressionRisk);
 
 	// Copy of CvTacticalAI::PositionUnitsAroundTarget with the loop's engagement in place of AL_LOW and the search intent:
 	// the geometry, blend and aggression follow the spotter move. The spotter and path moves skip held garrisons, and
