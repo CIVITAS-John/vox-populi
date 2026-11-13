@@ -7,6 +7,9 @@
 
 // Identifies why the native tactical caller requested one search. Unknown is reserved
 // for synchronization requests and synthetic fixtures, and is not a live search intent.
+// BattleFriendly, BattleNeutral, and BattleEnemy split a unit fight by the territory of the
+// target tactical zone: our team's territory, neutral territory, or enemy territory.
+// City attacks and city defense have intents of their own.
 enum SearchIntent
 {
     kSearchIntentUnknown = 0,
@@ -23,10 +26,12 @@ enum SearchIntent
     kSearchIntentArmyContact = 11,
     kSearchIntentRangedOpportunity = 12,
     kSearchIntentBarbarianAttack = 13,
-    kSearchIntentOperationalUnitFight = 14,
-    kSearchIntentOperationalCityFight = 15,
-    kSearchIntentOperationalOwnCityFight = 16,
-    kSearchIntentCount = 17
+    kSearchIntentBattleFriendly = 14,
+    kSearchIntentCityAttack = 15,
+    kSearchIntentCityDefense = 16,
+    kSearchIntentBattleNeutral = 17,
+    kSearchIntentBattleEnemy = 18,
+    kSearchIntentCount = 19
 };
 
 static const char* const kSearchIntentNames[kSearchIntentCount] =
@@ -45,9 +50,11 @@ static const char* const kSearchIntentNames[kSearchIntentCount] =
     "ArmyContact",
     "RangedOpportunity",
     "BarbarianAttack",
-    "OperationalUnitFight",
-    "OperationalCityFight",
-    "OperationalOwnCityFight"
+    "BattleFriendly",
+    "CityAttack",
+    "CityDefense",
+    "BattleNeutral",
+    "BattleEnemy"
 };
 
 // Returns a stable display name, treating unvalidated values as unknown.

@@ -59,12 +59,12 @@ const char* const OPERATIONAL_KIND_NAMES[] =
 };
 typedef char OperationalKindNamesMatchKinds[(sizeof(OPERATIONAL_KIND_NAMES) / sizeof(OPERATIONAL_KIND_NAMES[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
 
-// Vox Deorum: the search purpose each command kind's engagements carry, in kind order. Operational reinforcement shares
-// native's Reinforce purpose.
+// Vox Deorum: default search purposes in command kind order. Unit battles refine BattleNeutral by target territory.
+// Operational reinforcement shares native's Reinforce purpose.
 static const SearchIntent OPERATIONAL_KIND_SEARCH_INTENTS[] =
 {
-	kSearchIntentOperationalUnitFight, kSearchIntentOperationalCityFight, kSearchIntentReinforce,
-	kSearchIntentOperationalOwnCityFight,
+	kSearchIntentBattleNeutral, kSearchIntentCityAttack, kSearchIntentReinforce,
+	kSearchIntentCityDefense,
 };
 typedef char OperationalKindIntentsMatchKinds[(sizeof(OPERATIONAL_KIND_SEARCH_INTENTS) / sizeof(OPERATIONAL_KIND_SEARCH_INTENTS[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
 
@@ -2123,8 +2123,19 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, eKind, eCounterpart, VoxRlCurrentOperationId(ePlayer),
 		aiMapped, settings, report.iRepresentativeZone);
 	report.eAggLvl = AggressionFromRisk(report.flavors.iFlavor[STacticalFlavors::RISK], settings);
-	// Vox Deorum: retain the command's purpose independently of its resolved flavor blend.
-	return SearchAndExecute(ePlayer, vUnits, pTarget, report.eAggLvl, OPERATIONAL_KIND_SEARCH_INTENTS[eKind], report.flavors,
+	// Vox Deorum: classify unit battles by the target zone, including friendly team territory.
+	SearchIntent eSearchIntent = OPERATIONAL_KIND_SEARCH_INTENTS[eKind];
+	if (eKind == OPERATIONAL_KIND_UNIT_FIGHT)
+	{
+		const CvTacticalAnalysisMap* pZoneMap = GET_PLAYER(ePlayer).GetTacticalAI()->GetTacticalAnalysisMap();
+		const CvTacticalDominanceZone* pZone = pZoneMap->GetZoneByIDWithoutRefresh(
+			pZoneMap->GetDominanceZoneIDWithoutRefresh(pTarget->GetPlotIndex()));
+		if (pZone && pZone->GetTerritoryType() == TACTICAL_TERRITORY_FRIENDLY)
+			eSearchIntent = kSearchIntentBattleFriendly;
+		else if (pZone && pZone->GetTerritoryType() == TACTICAL_TERRITORY_ENEMY)
+			eSearchIntent = kSearchIntentBattleEnemy;
+	}
+	return SearchAndExecute(ePlayer, vUnits, pTarget, report.eAggLvl, eSearchIntent, report.flavors,
 		bTargetDistanceRelevant, report);
 }
 
