@@ -23,11 +23,11 @@ enum eOperationalWeight
 	NUM_OPERATIONAL_WEIGHTS
 };
 
-// The floors, the Reinforce strength ratio and the readiness failure limit, in OPERATIONAL_CONSTANT row order
+// The floors, the city unit size, the Reinforce strength ratio and the readiness failure limit, in OPERATIONAL_CONSTANT row order
 enum eOperationalConstant
 {
 	OPERATIONAL_CONSTANT_THEATER_FLOOR,
-	OPERATIONAL_CONSTANT_SIEGE_FLOOR,
+	OPERATIONAL_CONSTANT_CITY_UNITS,
 	OPERATIONAL_CONSTANT_PRIZE_FLOOR,
 	OPERATIONAL_CONSTANT_STRENGTH_RATIO,
 	OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES,

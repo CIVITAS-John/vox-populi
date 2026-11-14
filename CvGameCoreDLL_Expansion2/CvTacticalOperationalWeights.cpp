@@ -33,11 +33,11 @@ const char* const OPERATIONAL_FLAVOR_SLOPE_NAMES[] =
 };
 typedef char OperationalSlopeNamesMatchSlots[(sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES) / sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES[0]) == STacticalFlavors::NUM_SLOTS) ? 1 : -1];
 
-// Floors, the Reinforce strength ratio r and the readiness failure limit.
+// Floors, the city unit size in typical units, the Reinforce strength ratio r and the readiness failure limit.
 const OperationalConstant OPERATIONAL_CONSTANT[] =
 {
 	{ "floor.theater",          0.2 },
-	{ "floor.siege",            0.2 },
+	{ "city.units",             3.0 },
 	{ "floor.prize",            0.6 },
 	{ "reinforce.strengthRatio", 2.0 },
 	{ "readiness.maxFailures",  3.0 },

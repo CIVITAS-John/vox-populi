@@ -5197,10 +5197,14 @@ int CvTacticalAI::GetRecruitRange() const
 }
 
 /// Estimates the damage we can apply to a target
-int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget)
+// Vox Deorum: piGarrisonDamage sums the garrison damage of the counted attacks in its own total, which unlike
+// iTotalGarrisonDamage is kept when a garrison dies.
+int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget, int* piGarrisonDamage)
 {
 	CvPlot* pTargetPlot = GC.getMap().plot(kTarget.GetTargetX(), kTarget.GetTargetY());
 
+	if (piGarrisonDamage)
+		*piGarrisonDamage = 0;
 	int rtnValue = 0;
 	int iMeleeCount = 0;
 	int iTotalGarrisonDamage = 0;
@@ -5268,6 +5272,10 @@ int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget)
 				}
 				if (iDamage + iGarrisonDamage > iSelfDamage || ((iDamage + iGarrisonDamage) * 2 > iSelfDamage && pAttacker->GetCurrHitPoints() - iSelfDamage > pAttacker->GetMaxHitPoints() / 2)) //exclude suicidal melee attacks
 				{
+					// Vox Deorum: count the garrison damage before the recalculation below overwrites it
+					if (piGarrisonDamage)
+						*piGarrisonDamage += iGarrisonDamage;
+
 					// If we did the previous calculation with the wrong garrisoned unit, we need to recompute the value assuming a garrison is present to ensure fair sorting
 					// TODO we should probably sort m_CurrentMoveUnits so the ranged units and strongest units are processed first, weak units can then be used to finish off the city or attack when the garrison is dead
 					int iNormalizedDamage = bNeedsRecalculation ? TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pCity, pAttacker, pAttacker->plot(), iSelfDamage, iGarrisonDamage, true) : iDamage;

@@ -489,7 +489,8 @@ private:
 
 	void FindAirUnitsToAirSweep(CvPlot* pTarget);
 
-	int ComputeTotalExpectedDamage(const CvTacticalTarget& target);
+	// Vox Deorum: piGarrisonDamage, when given, receives the garrison damage of every counted attack on a city target
+	int ComputeTotalExpectedDamage(const CvTacticalTarget& target, int* piGarrisonDamage = NULL);
 	int ComputeTotalExpectedCityBombardDamage(CvUnit* pTarget);
 	// Vox Deorum: pSourcePlot is the plot the attacker is assumed to fire from, NULL for its own
 	bool IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot* pTarget, int iMinDamage=0, const CvPlot* pSourcePlot=NULL);
