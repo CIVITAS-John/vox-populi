@@ -40,6 +40,70 @@
 
 using namespace CvLuaArgs;
 
+// Vox Deorum: Open a UTF-8 newspaper path for a read-only availability check.
+static HANDLE OpenNewspaperPath(const char* path, bool directory)
+{
+	wchar_t widePath[MAX_PATH];
+	if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, widePath, MAX_PATH))
+		return INVALID_HANDLE_VALUE;
+	// Require an absolute drive path; device and network paths are outside this local cache API.
+	if (wcslen(widePath) < 3 || widePath[1] != L':' || (widePath[2] != L'\\' && widePath[2] != L'/'))
+		return INVALID_HANDLE_VALUE;
+	return CreateFileW(widePath, directory ? 0 : GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+		directory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL, NULL);
+}
+
+// Vox Deorum: Verify cache confinement, readability, and the supported single-level DDS formats.
+int CvLuaGame::lIsNewspaperTextureAvailable(lua_State* L)
+{
+	const char* root = luaL_checkstring(L, 1);
+	const char* path = luaL_checkstring(L, 2);
+	const int width = luaL_checkint(L, 3);
+	const int height = luaL_checkint(L, 4);
+	bool valid = false;
+	HANDLE rootHandle = OpenNewspaperPath(root, true);
+	HANDLE fileHandle = OpenNewspaperPath(path, false);
+	if (rootHandle != INVALID_HANDLE_VALUE && fileHandle != INVALID_HANDLE_VALUE
+		&& width > 0 && width <= 4096 && height > 0 && height <= 4096)
+	{
+		wchar_t finalRoot[MAX_PATH], finalFile[MAX_PATH];
+		DWORD rootLength = GetFinalPathNameByHandleW(rootHandle, finalRoot, MAX_PATH, FILE_NAME_NORMALIZED);
+		DWORD fileLength = GetFinalPathNameByHandleW(fileHandle, finalFile, MAX_PATH, FILE_NAME_NORMALIZED);
+		if (rootLength > 0 && rootLength < MAX_PATH && fileLength > rootLength && fileLength < MAX_PATH)
+		{
+			while (rootLength > 0 && finalRoot[rootLength - 1] == L'\\') --rootLength;
+			const bool contained = _wcsnicmp(finalRoot, finalFile, rootLength) == 0 && finalFile[rootLength] == L'\\';
+			const bool ddsExtension = fileLength >= 4 && _wcsicmp(finalFile + fileLength - 4, L".dds") == 0;
+			DWORD header[32], readBytes = 0;
+			LARGE_INTEGER fileSize;
+			if (contained && ddsExtension && GetFileSizeEx(fileHandle, &fileSize)
+				&& ReadFile(fileHandle, header, sizeof(header), &readBytes, NULL) && readBytes == sizeof(header))
+			{
+				const bool bc1 = header[20] == 4 && header[21] == 0x31545844;
+				const bool bgra = header[20] == 0x41 && header[21] == 0 && header[22] == 32
+					&& header[23] == 0x00ff0000 && header[24] == 0x0000ff00
+					&& header[25] == 0x000000ff && header[26] == 0xff000000;
+				const LONGLONG payload = bc1 ? ((width + 3) / 4) * ((height + 3) / 4) * 8 : width * height * 4;
+				// Vox Deorum: Match the converter's pitch, linear-size, and single-mip checks.
+				const bool validSize = (header[2] & 0x80008) != 0
+					&& (!(header[2] & 0x80000) || header[5] == payload)
+					&& (!(header[2] & 8) || !bgra || header[5] == (DWORD)(width * 4));
+				valid = header[0] == 0x20534444 && header[1] == 124 && header[19] == 32
+					&& header[3] == (DWORD)height && header[4] == (DWORD)width
+					&& (header[2] & 0x1007) == 0x1007 && header[6] <= 1 && header[7] <= 1
+					&& header[27] == 0x1000 && header[28] == 0 && (bc1 || bgra)
+					&& (!(header[2] & 0x20000) || header[7] == 1)
+					&& validSize && fileSize.QuadPart == 128 + payload;
+			}
+		}
+	}
+	if (fileHandle != INVALID_HANDLE_VALUE) CloseHandle(fileHandle);
+	if (rootHandle != INVALID_HANDLE_VALUE) CloseHandle(rootHandle);
+	lua_pushboolean(L, valid);
+	return 1;
+}
+
 //------------------------------------------------------------------------------
 const char* CvLuaGame::GetInstanceName()
 {
@@ -54,6 +118,8 @@ CvGame* CvLuaGame::GetInstance(lua_State* L, int idx)
 //------------------------------------------------------------------------------
 void CvLuaGame::RegisterMembers(lua_State* L)
 {
+	// Vox Deorum: A read-only check avoids modal engine errors for missing newspaper images.
+	Method(IsNewspaperTextureAvailable);
 	Method(CanHandleAction);
 	Method(HandleAction);
 	Method(UpdateScore);

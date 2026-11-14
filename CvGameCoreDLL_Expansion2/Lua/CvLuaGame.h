@@ -508,6 +508,8 @@ protected:
 	static int lWriteCSV(lua_State* L);
 
 	static int lIsPitbossHost(lua_State* L);
+	// Vox Deorum: Check a generated newspaper texture under the viewer's configured cache root.
+	static int lIsNewspaperTextureAvailable(lua_State* L);
 	static int lIsHost(lua_State* L);
 	static int lGetTimeStringForYear(lua_State* L);
 
