@@ -39,7 +39,7 @@ const OperationalConstant OPERATIONAL_CONSTANT[] =
 	{ "floor.theater",          0.2 },
 	{ "city.units",             3.0 },
 	{ "floor.prize",            0.6 },
-	{ "reinforce.strengthRatio", 2.0 },
+	{ "reinforce.strengthRatio", 1.0 },
 	{ "readiness.maxFailures",  3.0 },
 };
 typedef char OperationalConstantRowsMatchConstants[(sizeof(OPERATIONAL_CONSTANT) / sizeof(OPERATIONAL_CONSTANT[0]) == NUM_OPERATIONAL_CONSTANTS) ? 1 : -1];
