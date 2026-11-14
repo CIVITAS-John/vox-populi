@@ -7523,6 +7523,17 @@ void CvBasePosition::UpdateScore(const STacticalAssignment& assignment)
 	UpdateScore(assignment.iUnitID, assignment.GetPlotScore(), assignment.GetOldPlotScore(), assignment.GetDamageDelta(), assignment.GetBonusScore());
 }
 
+// Total score of a completed position: (damage delta + bonus) * 10 + trade gain + the final plot score of each unit.
+// Computed on demand so every change to a component is reflected without a separate refresh.
+int CvBasePosition::getScoreTotal() const
+{
+	int iTotal = (iDamageDelta + iBonusScore) * 10 + iTradeGain;
+	const map<int, short>& plotScores_r = plotScores.read();
+	for (map<int, short>::const_iterator it = plotScores_r.begin(); it != plotScores_r.end(); ++it)
+		iTotal += it->second;
+	return iTotal;
+}
+
 void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore, int iDamageDelta_, int iBonusScore_)
 {
 	iScoreOverParent += iBonusScore_ + iPlotScore - iOldPlotScore + iDamageDelta_;
@@ -7531,30 +7542,16 @@ void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore,
 
 	const map<int, short>& plotScores_r = plotScores.read();
 
-	//update total score and check for old plot score
-	//total score is (iDamageDelta + iBonusScore) * 10 + sum(plotScores)
-	//score over parent is (iBonusScore + iDamageDelta + iPlotScore - sPreviousPlotScore)
-	// Vox Deorum: plus the plan's trade gain, which addAssignment keeps up to date
-	iTotalScore = (iDamageDelta + iBonusScore) * 10 + iTradeGain;
-	bool bFoundScore = false;
-	for (map<int, short>::const_iterator it = plotScores_r.begin(); it != plotScores_r.end(); ++it)
+	map<int, short>::const_iterator it = plotScores_r.find(iUnitId);
+	if (it != plotScores_r.end())
 	{
-		int iLoopUnitID = it->first;
 		short sPreviousPlotScore = it->second;
-
-		iTotalScore += sPreviousPlotScore;
-		if (iLoopUnitID == iUnitId)
-		{
-			bFoundScore = true;
-			iScoreOverParent -= sPreviousPlotScore;
-			if (iPlotScore != sPreviousPlotScore)
-			{
-				plotScores.write()[iUnitId] = iPlotScore;
-			}
-		}
+		iScoreOverParent -= sPreviousPlotScore;
+		if (iPlotScore != sPreviousPlotScore)
+			plotScores.write()[iUnitId] = iPlotScore;
 	}
 	//the unit didn't have a previous plot score, so we set it here
-	if (!bFoundScore && iPlotScore != 0)
+	else if (iPlotScore != 0)
 		plotScores.write()[iUnitId] = iPlotScore;
 }
 
@@ -10489,7 +10486,6 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 	SCargoCountSnapshot cargoSnapshot;
 
 	const vector<SUnitStats>& notQuiteFinishedUnits_r = notQuiteFinishedUnits.read();
-	const vector<SUnitStats>& availableUnits_r = availableUnits.read();
 
 	//only units which have exhausted their moves are in this array! if the sim was aborted, somebody else will hopefully pick up the pieces
 	for (size_t i=0; i < notQuiteFinishedUnits_r.size(); i++)
@@ -10545,15 +10541,6 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		}
 	}
 
-	//try to enforce some sort of sparsity, we should use only the minimum amount of units. 
-	//so give a bonus for unmoved units. especially important in earlyFinish situations with many units.
-	for (size_t i = 0; i < availableUnits_r.size(); i++)
-	{
-		const SUnitStats& unit = availableUnits_r[i];
-		if (unit.eLastAssignment == A_INITIAL)
-			plotScores.write()[unit.iUnitID] += isEarlyFinish() ? 123 : 45;
-	}
-
 	//scores look good and target was killed, we're done
 	//second chance: did we kill anything (offensive), heal a unit, or at least improve the arrangement of our units (defensive)?
 	//order is important here, need to add finish moves first!
@@ -10595,9 +10582,12 @@ bool CvTacticalPosition::isKillOrImprovedPosition() const
 	int iAfter = 0; //target distance change
 	int iAttacksNoMove = 0;
 	int iHealingUnits = 0;
+	bool bPillageHealing = false;
 	for (size_t i = nFirstInterestingAssignment; i < assignedMoves_r.size(); i++)
 	{
 		const STacticalAssignment& move = assignedMoves_r[i];
+		if (move.eAssignmentType == A_PILLAGE && move.iSelfDamage < 0)
+			bPillageHealing = true;
 		if (move.eAssignmentType == A_FINISH)
 		{
 			//compare final to initial and see whether we came closer to the ideal distance
@@ -10690,7 +10680,7 @@ bool CvTacticalPosition::isKillOrImprovedPosition() const
 		//staying in place and bombarding is fine!
 		//staying in place and healing is also progress TODO: should we check whether we are healing more than we are taking damage?
 		//note that retreating a damaged unit counts as positive because it should be MS_THIRDLINE
-		return (iNegative < iPositive) || (iNegative == iPositive && (bMovingTowardsTarget || iAttacksNoMove > 0 || iHealingUnits > 1 || (iHealingUnits == root->GetNumAvailableUnits())));
+		return (iNegative < iPositive) || (iNegative == iPositive && (bMovingTowardsTarget || iAttacksNoMove > 0 || iHealingUnits > 1 || (iHealingUnits == root->GetNumAvailableUnits()) || bPillageHealing));
 	}
 	else
 	{
@@ -11000,7 +10990,6 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
-	iTotalScore = 0;
 	iScoreOverParent = 0; 
 	parentPosition = NULL;
 	iGeneration = 0;
@@ -11049,7 +11038,6 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	nFirstInterestingAssignment = parent.nFirstInterestingAssignment;
 	iBonusScore = parent.iBonusScore;
 	iDamageDelta = parent.iDamageDelta;
-	iTotalScore = parent.iTotalScore;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = parent.iTradeGain;

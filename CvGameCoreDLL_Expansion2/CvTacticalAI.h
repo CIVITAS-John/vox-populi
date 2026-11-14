@@ -1232,12 +1232,11 @@ protected:
 	SCoWField<map<int, short>> plotScores; // not additive (only the final plot value is included in the total evaluation)
 	int iDamageDelta; //damage dealt - damage received
 	int iBonusScore; // additive
-	int iTotalScore; // sum of all above
 	//for heap sorting (included all moves made in the last generation)
 	int iScoreOverParent;
 	// Vox Deorum: the air sweep ranking values of the last generation's moves. Orders the heap, never scores a plan.
 	int iRankBonusOverParent;
-	// Vox Deorum: the trade score the plan gained over the root (VOX_TACTICAL_TRADE_SEARCH), part of iTotalScore
+	// Vox Deorum: the trade score the plan gained over the root (VOX_TACTICAL_TRADE_SEARCH), part of getScoreTotal
 	int iTradeGain;
 
 	//moves already assigned to get into this position (complete, mostly redundant with parent)
@@ -1322,8 +1321,8 @@ public:
 		// second tie-breaker: lower ID first
 		bool operator()(const CvBasePosition* lhs, const CvBasePosition* rhs) const
 		{
-			int iLhsScore = lhs->iTotalScore;
-			int iRhsScore = rhs->iTotalScore;
+			int iLhsScore = lhs->getScoreTotal();
+			int iRhsScore = rhs->getScoreTotal();
 			if (iLhsScore != iRhsScore)
 				return iLhsScore > iRhsScore;
 			if (lhs->GetNumAssignments() != rhs->GetNumAssignments())
@@ -1367,7 +1366,7 @@ public:
 
 	int getGeneration() const { return iGeneration; }
 	PlayerTypes getPlayer() const { return ePlayer; }
-	int getScoreTotal() const { return iTotalScore; }
+	int getScoreTotal() const;
 	int getScoreLastRound() const { return iScoreOverParent; }
 	// Vox Deorum: the last round's score plus the ranking values of its air sweeps
 	int getRankScoreLastRound() const { return iScoreOverParent + iRankBonusOverParent; }
