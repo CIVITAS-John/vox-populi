@@ -582,6 +582,8 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 		kTactical.LogTacticalMessage(CvString::format("Operational loop scales: Z_T %.0f, Z_C %.1f, C %.4f",
 			turn.fTypicalUnitWorth, turn.fCityScale, turn.fCityUnit));
 	const int iMaxFailures = std::max(1, static_cast<int>(turn.weights.afConstant[OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES]));
+	// Vox Deorum: native hosts rank offers directly without copying battlefield observations.
+	const bool bProvider = HasOperationalProvider();
 	int iCommands = 0;
 	for (;;)
 	{
@@ -590,12 +592,16 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 		choice.request.identity.iCommand = iCommands;
 		for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
 			choice.request.aiMapped[iSlot] = turn.aiMapped[iSlot];
-		for (std::list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end(); ++it)
+		if (bProvider)
 		{
-			CvUnit* pUnit = kTactical.m_pPlayer->getUnit(*it);
-			if (pUnit && pUnit->canUseNow())
-				choice.request.vAvailable.push_back(pUnit->GetID());
+			for (std::list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end(); ++it)
+			{
+				CvUnit* pUnit = kTactical.m_pPlayer->getUnit(*it);
+				if (pUnit && pUnit->canUseNow())
+					choice.request.vAvailable.push_back(pUnit->GetID());
+			}
 		}
+		int iNative = -1;
 		for (size_t i = 0; i < turn.battlefields.size(); i++)
 		{
 			const SOperationalBattlefield& field = turn.battlefields[i];
@@ -603,14 +609,22 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			{
 				if ((iOffer ? field.eReinforce : field.eFight) != OPERATIONAL_OFFER_READY)
 					continue;
-				SOperationalSelectableOffer offer;
-				offer.iOffer = static_cast<int>(i) * 2 + iOffer;
-				offer.field = field;
-				offer.bReinforce = iOffer == 1;
-				choice.request.offers.push_back(offer);
+				if (iNative < 0 || OfferOutranks(iOffer ? field.fReinforceEstimate : field.fEstimate,
+					OfferRank(field.eCenter, iOffer == 1), field.iPlotIndex,
+					iNative % 2 ? turn.battlefields[iNative / 2].fReinforceEstimate : turn.battlefields[iNative / 2].fEstimate,
+					OfferRank(turn.battlefields[iNative / 2].eCenter, iNative % 2 != 0), turn.battlefields[iNative / 2].iPlotIndex))
+					iNative = static_cast<int>(i) * 2 + iOffer;
+				if (bProvider)
+				{
+					SOperationalSelectableOffer offer;
+					offer.iOffer = static_cast<int>(i) * 2 + iOffer;
+					offer.field = field;
+					offer.bReinforce = iOffer == 1;
+					choice.request.offers.push_back(offer);
+				}
 			}
 		}
-		if (choice.request.offers.empty())
+		if (iNative < 0)
 			break;
 		if (iCommands >= turn.settings.iMaxCommands)
 		{
@@ -619,9 +633,9 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				kTactical.LogTacticalMessage(CvString::format("Operational loop stopped at the command cap of %d", turn.settings.iMaxCommands));
 			break;
 		}
-		choice.request.iNative = NativeCommandChoice(choice.request);
-		choice.iRequested = ChooseCommand(choice.request);
-		choice.bInvalid = true;
+		choice.request.iNative = iNative;
+		choice.iRequested = bProvider ? ChooseCommand(choice.request) : iNative;
+		choice.bInvalid = bProvider;
 		for (size_t i = 0; i < choice.request.offers.size(); i++)
 			if (choice.request.offers[i].iOffer == choice.iRequested)
 				choice.bInvalid = false;
@@ -2224,8 +2238,9 @@ void CvTacticalOperationalLoop::ExecuteReinforce(CvTacticalAI& kTactical, const 
 	for (size_t i = 0; i < vUnits.size(); i++)
 		startPlots[vUnits[i]->GetID()] = vUnits[i]->plot()->GetPlotIndex();
 
-	// Vox Deorum: the native spotter's air-recon fallback must also stay inside admission.
-	FilterRecruits(kTactical, vUnits);
+	// Vox Deorum: restrict air recon only for an explicit subset; native admission keeps gathered sweep units.
+	if (record.admission.eResult == OPERATIONAL_ADMISSION_SUBSET)
+		FilterRecruits(kTactical, vUnits);
 	SOperationalEngagementReport& report = record.engagement;
 	record.bSearchRan = true;
 	PositionUnitsAroundTarget(kTactical, vUnits, pTarget, OPERATIONAL_KIND_REINFORCE,
@@ -2636,8 +2651,17 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 	request.reinforce = field.reinforce;
 	for (size_t i = 0; i < vUnits.size(); i++)
 		request.vNative.push_back(vUnits[i]->GetID());
-	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
+	// Vox Deorum: retain computed native admission facts without repeating strength, reach or search setup.
+	decision.vEffective = request.vNative;
 	const bool bReinforce = record.eKind == OPERATIONAL_KIND_REINFORCE;
+	if (bReinforce)
+		decision.effectiveReinforce = field.reinforce;
+	if (!HasAdmission())
+	{
+		decision.eResult = vUnits.empty() ? OPERATIONAL_ADMISSION_NO_ELIGIBLE : OPERATIONAL_ADMISSION_ABSENT;
+		return !vUnits.empty();
+	}
+	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
 	if (bReinforce)
 	{
 		const CvCity* pCity = pTarget->getPlotCity();
@@ -2657,7 +2681,6 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 	GatherSearchPlotZones(vUnits, pTarget, record.eKind != OPERATIONAL_KIND_OWN_CITY_FIGHT, request.preliminaryZones);
 	const bool bCallback = AdmitCommand(request, decision.requested);
 	decision.eResult = bCallback ? OPERATIONAL_ADMISSION_NATIVE : OPERATIONAL_ADMISSION_ABSENT;
-	decision.vEffective = request.vNative;
 	if (bCallback && !decision.requested.bUseNative)
 	{
 		set<int> unique;
@@ -2701,7 +2724,6 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 	}
 	if (bReinforce)
 	{
-		decision.effectiveReinforce = field.reinforce;
 		if (decision.eResult == OPERATIONAL_ADMISSION_SUBSET || decision.eResult == OPERATIONAL_ADMISSION_REFUSED)
 		{
 			SOperationalLocalSet local;
@@ -2742,6 +2764,12 @@ void CvTacticalOperationalLoop::FilterRecruits(CvTacticalAI& kTactical, const ve
 
 // Vox Deorum: DLL decisions already carry the shared loop's synchronous revision.
 void CvTacticalOperationalLoop::StampDecision(SOperationalDecisionIdentity& /*identity*/) {}
+
+// Vox Deorum: the DLL has no supplied operational provider.
+bool CvTacticalOperationalLoop::HasOperationalProvider() { return false; }
+
+// Vox Deorum: the DLL keeps native admission without building an unused observation.
+bool CvTacticalOperationalLoop::HasAdmission() { return false; }
 
 // Vox Deorum: the DLL always uses the shared native command decoder.
 int CvTacticalOperationalLoop::ChooseCommand(const SOperationalChoiceRequest& request)

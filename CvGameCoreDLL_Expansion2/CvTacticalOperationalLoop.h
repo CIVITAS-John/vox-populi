@@ -770,6 +770,10 @@ public:
 	// Host seams. The DLL defines them in this file; the simulator defines its own and does not extract these.
 	// Vox Deorum: host identity, choice, optional admission and final flavor seams; DLL replies are always native.
 	static void StampDecision(SOperationalDecisionIdentity& identity);
+	// Vox Deorum: reports whether the host needs operational observations.
+	static bool HasOperationalProvider();
+	// Vox Deorum: reports admission capability before building candidates or geometry.
+	static bool HasAdmission();
 	// Vox Deorum: returns a current offer identity.
 	static int ChooseCommand(const SOperationalChoiceRequest& request);
 	// Vox Deorum: returns false when the provider has no admission capability.
