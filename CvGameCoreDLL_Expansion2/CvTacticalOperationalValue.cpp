@@ -7,6 +7,18 @@
 #include "CvUnitClasses.h"
 #include "LintFree.h"
 
+// Vox Deorum: maps risk to our expected roll in units of 1/200 of the random damage range.
+int OurRollPer200(int iRisk)
+{
+	return iRisk;
+}
+
+// Vox Deorum: maps risk to the enemy's expected roll in units of 1/200 of the random damage range.
+int EnemyRollPer200(int iRisk)
+{
+	return 200 - iRisk;
+}
+
 // Returns power times production cost, each floored at 0.
 double UnitBaseWorth(int iPower, int iProductionCost)
 {
@@ -49,6 +61,49 @@ double UnitExposure(double fWorth, int iDamage, int iMaxHitPoints, int iIncoming
 	if (iIncomingDamage >= iMaxHitPoints - iDamage)
 		return ValueAtDamage(fWorth, iDamage, iMaxHitPoints);
 	return fWorth * (1.0 - unitKillShare) * iIncomingDamage / iMaxHitPoints;
+}
+
+// Vox Deorum: values enemy damage by the same retained and health shares as our units' exposure.
+double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fDamage)
+{
+	if (fMaximum <= 0.0 || fRemaining <= 0.0 || fDamage <= 0.0)
+		return 0.0;
+	if (fDamage >= fRemaining)
+		return fWorth * (unitKillShare + (1.0 - unitKillShare) * std::min(1.0, fRemaining / fMaximum));
+	return fWorth * (1.0 - unitKillShare) * fDamage / fMaximum;
+}
+
+// Vox Deorum: uses a strength ratio to keep the powers bounded for large native strength tallies.
+double StrengthShare(double fLocal, double fEnemy, double fSteepness)
+{
+	if (fEnemy <= 0.0)
+		return 1.0;
+	if (fLocal <= 0.0)
+		return 0.0;
+	if (fLocal <= fEnemy)
+	{
+		const double fRatio = pow(fLocal / fEnemy, fSteepness);
+		return fRatio / (1.0 + fRatio);
+	}
+	return 1.0 / (1.0 + pow(fEnemy / fLocal, fSteepness));
+}
+
+// Vox Deorum: combines strength pressure and city damage as the complement of both safety shares.
+double TheaterContest(double fPressure, double fDamageLevel)
+{
+	return 1.0 - (1.0 - fPressure) * (1.0 - fDamageLevel);
+}
+
+// Vox Deorum: scales contested city importance into the room above the theater floor.
+double TheaterMultiplier(double fFloor, double fImportance, double fContest)
+{
+	return fFloor + (1.0 - fFloor) * fImportance * fContest;
+}
+
+// Vox Deorum: measures the strength share added by arriving help.
+double StrengthSwing(double fShare, double fProjectedShare)
+{
+	return fProjectedShare - fShare;
 }
 
 // Uses population when the economic value is not positive.
@@ -111,12 +166,6 @@ double FlavorWeight(double fBase, double fSlope, int iFlavor, bool bReversed)
 {
 	const double fOffset = bReversed ? 50.0 - iFlavor : iFlavor - 50.0;
 	return fBase * pow(2.0, fSlope * fOffset / 50.0);
-}
-
-// Floors the total at fFloorCount typical items.
-double ReferenceScale(double fTotal, double fTypical, double fFloorCount)
-{
-	return std::max(fTotal, fFloorCount * fTypical);
 }
 
 // Adds the per-era cost for each era after the first and scales by the game speed.
@@ -214,12 +263,6 @@ void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double&
 double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount)
 {
 	return fDiscount * std::max(0.0, fBaseTarget - fBaseNow);
-}
-
-// Weighs each unit at groundUnitWeight and adds the land.
-double GroundBase(unsigned int iUnits, double fLand)
-{
-	return groundUnitWeight * iUnits + fLand;
 }
 
 // Gives our plot and a hostile city their whole weight, other hostile land the share of its weight above the floor

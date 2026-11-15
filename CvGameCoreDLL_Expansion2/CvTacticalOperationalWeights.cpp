@@ -17,7 +17,7 @@ const OperationalWeight OPERATIONAL_WEIGHT[] =
 	{ "weight.attrition",      1.0,   STacticalFlavors::ATTRITION,     FLAVOR_SCALE_UP },
 	{ "weight.occupation",     1.0,   STacticalFlavors::OCCUPATION,    FLAVOR_SCALE_UP },
 	{ "weight.holdCity",       1.0,   STacticalFlavors::HOLD_CITY,     FLAVOR_SCALE_UP },
-	{ "weight.holdGround",     1.0,   STacticalFlavors::HOLD_GROUND,   FLAVOR_SCALE_UP },
+	{ "weight.holdGround",     0.05,  STacticalFlavors::HOLD_GROUND,   FLAVOR_SCALE_UP },
 	{ "weight.risk",           1.0,   STacticalFlavors::RISK,          FLAVOR_SCALE_DOWN },
 };
 typedef char OperationalWeightRowsMatchWeights[(sizeof(OPERATIONAL_WEIGHT) / sizeof(OPERATIONAL_WEIGHT[0]) == NUM_OPERATIONAL_WEIGHTS) ? 1 : -1];
@@ -33,12 +33,12 @@ const char* const OPERATIONAL_FLAVOR_SLOPE_NAMES[] =
 };
 typedef char OperationalSlopeNamesMatchSlots[(sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES) / sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES[0]) == STacticalFlavors::NUM_SLOTS) ? 1 : -1];
 
-// Floors, the city unit size in typical units, the Reinforce strength ratio r and the readiness failure limit.
+// The theater floor and exponent, city allowance in typical units, Reinforce strength ratio and readiness failure limit.
 const OperationalConstant OPERATIONAL_CONSTANT[] =
 {
 	{ "floor.theater",          0.2 },
+	{ "theater.steepness",       2.0 },
 	{ "city.units",             3.0 },
-	{ "floor.prize",            0.6 },
 	{ "reinforce.strengthRatio", 1.0 },
 	{ "readiness.maxFailures",  3.0 },
 };

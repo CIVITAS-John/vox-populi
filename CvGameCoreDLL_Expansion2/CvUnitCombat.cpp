@@ -3053,6 +3053,9 @@ bool CvUnitCombat::ParadropIntercept(CvUnit& paraUnit, CvPlot& dropPlot)
 	return paraUnit.IsDead();
 }
 
+// Vox Deorum: scoped expected roll per 200 for operational estimates; 100 is the native average.
+int operationalExpectedRollPer200 = 100;
+
 //result is times 100
 int CvUnitCombat::DoDamageMath(int iAttackerStrength100, int iDefenderStrength100, int iDefaultDamage100, int iMaxRandomDamage100, bool bIncludeRand, const CvSeeder& randomSeed, int iModifierPercent)
 {
@@ -3067,7 +3070,9 @@ int CvUnitCombat::DoDamageMath(int iAttackerStrength100, int iDefenderStrength10
 	else
 	{
 		//just use the expected value of the random roll
-		iDamage += iMaxRandomDamage100 / 2;
+		// Vox Deorum: rolls are 0..200; iMaxRandomDamage100 <= INT_MAX / 200 (10,737,418) keeps the product in int.
+		// Vox Deorum: native random damage ranges are far below that bound; 100 preserves native integer division by 2.
+		iDamage += iMaxRandomDamage100 * operationalExpectedRollPer200 / 200;
 	}
 
 	// Calculations performed to dampen amount of damage by units that are close in strength

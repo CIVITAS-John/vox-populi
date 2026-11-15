@@ -143,6 +143,16 @@ struct SOperationalThreatDamage
 	int iDamage;
 };
 
+// Vox Deorum: one city's standard danger result and its per-threat contributions for the current estimate pass.
+struct SOperationalCityDanger
+{
+	int iTotal;
+	vector<SOperationalThreatDamage> threats;
+
+	// Vox Deorum: creates an empty city danger result.
+	SOperationalCityDanger() : iTotal(0) {}
+};
+
 // One search attempt of an engagement: its plan, how many rows ran, and whether it ran to the end
 struct SOperationalAttempt
 {
@@ -197,32 +207,32 @@ struct SOperationalThreatExposure
 	SOperationalThreatExposure() : fExposure(0.0) {}
 };
 
-// The terms of one fight's stake before theater, each already weighted and scaled: a unit fight's prize, ground and
-// exposure share; an enemy-city fight's city progress, garrison term and exposure share; or an own-city fight's city
-// progress and defensive exposure; their sum; and the shares behind the city terms
+// Weighted fight terms in typical units, their sum, and the damage, relief and fall shares behind them.
 struct SOperationalStake
 {
-	double fPrize;
+	double fDestruction;
+	double fExposure;
 	double fGround;
-	double fExposure;       // for an own-city fight, the endangered recruits' exposure
-	double fCityProgress;   // the weighted city unit times the fall share
-	double fGarrison;       // the weighted garrison prize times the garrison damage share
-	double fFallShare;      // f_att at an enemy city, f_def at ours
-	double fGarrisonShare;  // f_g at an enemy city
+	double fRelief;
+	double fCityProgress;  // city progress at an enemy city, city danger at ours
+	double fGarrison;
+	double fDamageShare;   // k_t at a unit target
+	double fReliefShare;   // a_t at a unit target
+	double fFallShare;     // f_att at an enemy city, f_def at ours or the unit target's zone city
 	double fStake;
 
 	// Creates an empty stake.
-	SOperationalStake() : fPrize(0.0), fGround(0.0), fExposure(0.0), fCityProgress(0.0), fGarrison(0.0), fFallShare(0.0),
-		fGarrisonShare(0.0), fStake(0.0) {}
+	SOperationalStake() : fDestruction(0.0), fExposure(0.0), fGround(0.0), fRelief(0.0), fCityProgress(0.0),
+		fGarrison(0.0), fDamageShare(0.0), fReliefShare(0.0), fFallShare(0.0), fStake(0.0) {}
 };
 
 // Our units that can take part at a battlefield's center this turn, by plain distance: combat units in the battlefield's
-// domains within their strike reach, and aircraft whose range reaches the center from their base
+// domains within their strike reach, ranged units across domains, and aircraft whose range reaches the center from their base
 struct SOperationalLocalSet
 {
 	bool bLand;                 // the battlefield takes land units
 	bool bSea;                  // the battlefield takes sea units
-	vector<CvUnit*> vStrength;  // strength filter: land and sea units, spent units and army members included
+	vector<CvUnit*> vStrength;  // strength filter: in-domain land and sea units, spent units and army members included
 	vector<CvUnit*> vDamage;    // damage filter: recruitable units outside armies that can still attack, aircraft included, by ascending ID
 	bool bCapturer;             // a strength-filter unit passes IsCapturer
 	bool bCanCapture;           // a damage-filter unit passes CanCapture
@@ -254,8 +264,6 @@ struct SOperationalCityDamage
 // The attack fall share f_att: 1 when the city damage reaches the remaining HP and a capturer is at hand, otherwise
 // max(0, min(damage, R - 1) - heal) / R, with R at least 1.
 double AttackFallShare(double fCityDamage, int iHeal, int iRemaining, bool bCapture);
-// The garrison damage share f_g: 0 without a living garrison, 1 when the city falls, otherwise min(1, damage / G).
-double GarrisonShare(double fGarrisonDamage, int iGarrisonHealth, bool bCityFalls);
 // The queue rank that breaks equal estimates: our cities' fights 0, enemy cities' fights 1, enemy units' fights 2 and
 // Reinforce 3.
 int OfferRank(eOperationalCenter eCenter, bool bReinforce);
@@ -288,14 +296,9 @@ struct SOperationalReinforce
 	double fRoleHelp;            // H_role: the appended capturer's discounted strength, or 0
 	int iRoleUnit;               // the capturer appended for the capture role, or -1
 	bool bMissingRole;           // an enemy city needs a capturer and no local unit or candidate is one
-	double fGain;                // g
-	double fArrivalRatio;        // rho = (L + selected strength) / T
-	double fOdds;                // a = min(1, rho / r)
-	int iExtended;               // units the damage extension added at the end of the selection
-	double fBaseFall;            // f_att with the projection's capture rule, where a spent local capturer counts
-	double fBaseGarrison;        // f_g with the projection's capture rule
-	double fProjectedFall;       // f_att+: the attack fall share once the selection has joined, at an enemy city
-	double fProjectedGarrison;   // f_g+: the garrison damage share once the selection has joined, at an enemy city
+	double fShare;               // s: our current strength share
+	double fShareWithHelp;       // s+: our strength share with discounted help
+	double fSwing;               // s+ - s
 	set<pair<int, int> > countedUnits;   // the enemy units counted in T, by (owner, ID)
 	set<pair<int, int> > countedCities;  // the enemy cities counted in T, by (owner, ID)
 	set<int> rejected;           // units that failed a reach check this turn
@@ -303,21 +306,16 @@ struct SOperationalReinforce
 
 	// Creates an empty Reinforce.
 	SOperationalReinforce() : fLocal(0.0), fEnemy(0.0), fNeed(0.0), fSelectedStrength(0.0), fHelp(0.0), fRoleHelp(0.0), iRoleUnit(-1),
-		bMissingRole(false), fGain(0.0), fArrivalRatio(0.0), fOdds(0.0), iExtended(0), fBaseFall(0.0), fBaseGarrison(0.0),
-		fProjectedFall(0.0), fProjectedGarrison(0.0), bChecked(false) {}
+		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), bChecked(false) {}
 };
 
 // The turns a unit needs for a plain distance at its moves per turn: max(1, ceil(distance / moves)).
 int TravelTurns(int iDistance, int iMoves);
-// Selects Reinforce candidates nearest first (join turns, travel turns, unit ID) until their full strength meets
-// max(0, rT - L). When bNeedCapturer is set and no selected unit can capture, appends the nearest capturer as the role
-// unit, or marks the role missing. Then scores the selection with ScoreReinforcement. Clears the projected shares and
-// the extension count, and keeps the output's counted sets, rejections and check flag.
+// Vox Deorum: selects Reinforce candidates nearest first (join turns, travel turns, unit ID) until their full strength
+// meets max(0, rT - L), storing the supplied L and T in out. When bNeedCapturer is set and no selected unit can capture, appends the
+// nearest capturer as the role unit, or marks the role missing. Keeps strength shares, counted sets, rejections and check flag.
 void SelectReinforcement(const vector<SOperationalCandidate>& candidates, double fLocal, double fEnemy, double fRatio, bool bNeedCapturer,
 	SOperationalReinforce& out);
-// Scores a selection from its tallies, help and role help: gain capped at r / (1 + r), arrival ratio and odds; all
-// three are 0 when T is not positive.
-void ScoreReinforcement(double fRatio, SOperationalReinforce& out);
 
 // One battlefield of the turn, its fight offer and its Reinforce offer
 struct SOperationalBattlefield
@@ -326,9 +324,11 @@ struct SOperationalBattlefield
 	eOperationalCenter eCenter;
 	int iPlotIndex;
 	int iZoneID;
+	int iZoneCityPlot;             // unit target: zone city plot, fixed for the turn, or -1
 	PlayerTypes eOwner;           // the target's owner
 	int iTargetID;                // enemy unit ID or city ID, or our city's ID: the identity for the turn
-	double fTheater;              // fixed for the turn
+	double fImportance;           // city centers only: city value / Z_C, capped at 1, fixed for the turn
+	double fTheater;              // refreshed from the zone city at each estimate pass
 	double fGround;               // fixed for the turn; unit targets only
 	bool bNearOurCity;            // fixed: within 3 plots of one of our cities
 	bool bCanAttackOurUnits;      // rebuilt with the threat maps after each command
@@ -336,20 +336,25 @@ struct SOperationalBattlefield
 	double fEstimate;             // theater times stake
 	int iFailures;
 	SOperationalStake stake;
-	double fLocalStrength;        // own city: our strength L around it, from the last estimate
-	double fEnemyStrength;        // own city: the enemy strength T against it, from the last estimate
 	bool bHasEndangered;          // own city: it had an endangered recruit at the last estimate
 	bool bBorder;                 // fixed: the zone is ours or neighbors one of ours
 	bool bWithdraw;               // fixed: the zone's posture is Withdraw
 	eOperationalOfferState eReinforce;
-	double fReinforceEstimate;    // theater times the Reinforce stake
+	double fReinforceEstimate;    // fight priority times strength swing
 	SOperationalReinforce reinforce;
 
 	// Creates a ready battlefield with no target.
-	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), eOwner(NO_PLAYER),
-		iTargetID(-1), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
-		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), fLocalStrength(0.0), fEnemyStrength(0.0),
+	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), iZoneCityPlot(-1), eOwner(NO_PLAYER),
+		iTargetID(-1), fImportance(0.0), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
+		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0),
 		bHasEndangered(false), bBorder(false), bWithdraw(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0) {}
+};
+
+// Vox Deorum: city results shared during one estimate pass, indexed by city plot.
+struct SOperationalEstimateCache
+{
+	map<int, double> cityTheaters;
+	map<int, SOperationalCityDanger> cityDanger;
 };
 
 // One player-turn of the loop: settings, weights, the fixed scales, the threat maps and the battlefields
@@ -359,11 +364,9 @@ struct SOperationalTurn
 	OperationalSettings settings;
 	OperationalWeights weights;
 	int aiMapped[STacticalFlavors::NUM_SLOTS];
-	double fArmyScale;   // Z_U, fixed for the turn
-	double fTypicalUnitWorth;  // the mean base worth of our reference military types, Z_U's floor unit
-	double fCityUnit;    // C = city.units x typical unit worth / Z_U, fixed for the turn
+	double fTypicalUnitWorth;  // Z_T: mean base worth of our reference military types
+	double fCityUnit;    // C = city.units, fixed for the turn
 	double fCityScale;   // Z_C, fixed for the turn
-	double fGroundBase;  // B, fixed for the turn
 	// each enemy unit's and city's share of our units' exposure, keyed by (owner, ID): rebuilt after each command
 	map<pair<int, int>, SOperationalThreatExposure> unitThreats;
 	map<pair<int, int>, SOperationalThreatExposure> cityThreats;
@@ -371,12 +374,12 @@ struct SOperationalTurn
 	// each city of ours by ID, and the visible enemy combat units by (owner, ID) whose path to it, as the nearest of our
 	// cities, is at most twice their moves plus their range: rebuilt after each command
 	map<int, vector<pair<int, int> > > cityApproach;
-	// our units outside friendly cities that some enemy unit or city can damage next turn: rebuilt after each command
-	set<int> endangeredUnits;
+	// our units outside friendly cities with a positive threat entry, by ID and whole danger: rebuilt after each command
+	map<int, int> endangeredUnits;
 	vector<SOperationalBattlefield> battlefields;
 
 	// Creates an empty turn.
-	SOperationalTurn() : ePlayer(NO_PLAYER), fArmyScale(0.0), fTypicalUnitWorth(0.0), fCityUnit(0.0), fCityScale(0.0), fGroundBase(0.0),
+	SOperationalTurn() : ePlayer(NO_PLAYER), fTypicalUnitWorth(0.0), fCityUnit(0.0), fCityScale(0.0),
 		iStrikeScan(0) {}
 };
 
@@ -464,8 +467,7 @@ public:
 	// given, receives the minimal records; otherwise they go to the tactical log when AI logging is on.
 	static void RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord = NULL);
 
-	// Resolves the turn's weights and computes our army's value Z_U, our cities' value Z_C, the ground base B and the
-	// striking-distance scan.
+	// Resolves the turn's weights, typical unit worth Z_T, best city value Z_C, city allowance C and striking-distance scan.
 	static void BuildTurn(CvTacticalAI& kTactical, SOperationalTurn& turn);
 	// Rebuilds each enemy unit's and city's share of our units' exposure, our endangered units, each city's approach
 	// list and each battlefield's bCanAttackOurUnits.
@@ -477,46 +479,37 @@ public:
 	static bool IsBorderZone(CvTacticalAI& kTactical, const CvTacticalDominanceZone& kZone);
 	// Appends our city's battlefield: its land zone, or its water zone without one, and its theater.
 	static void AddOwnCityBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, CvCity& kCity);
-	// Estimates one battlefield's offers on the current board: finds its center, gathers the local set once, then runs
-	// EstimateFight and, when bReinforce is set, EstimateReinforce on the same scan. Returns false, with the fight
-	// estimate 0, when its target died or its city changed owner.
-	static bool EstimateBattlefield(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field, bool bReinforce);
+	// Vox Deorum: estimates cities before units with one fresh cache, then updates open offers and wakes waiting fights.
+	static void EstimateOffers(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalChanges* pChanges);
+	// Vox Deorum: gathers one local set, computes theater, and optionally computes stake and both open offers.
+	// Returns false when the target died or its city changed owner. Closed cities need only their theater.
+	static bool EstimateBattlefield(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache,
+		SOperationalBattlefield& field, bool bStake, bool bReinforce);
+	// Vox Deorum: tallies L, T and share for cities or open Reinforce, then computes the city's theater or inherits it.
+	static void EstimateTheater(const SOperationalTurn& turn, const SOperationalEstimateCache& cache, const CvPlot& kPlot,
+		const SOperationalLocalSet& local, SOperationalBattlefield& field, bool bReinforce);
 	// The battlefield's center plot: a surviving target unit's current plot, which it records, or the city plot. NULL when
 	// the target unit or city is gone.
 	static CvPlot* BattlefieldPlot(SOperationalBattlefield& field);
-	// Estimates one fight as theater times stake from the local set. Enemy unit: prize, ground and exposure. Enemy city:
-	// w_O x C x f_att + w_A x garrison prize / Z_U x f_g + exposure, from the local damage simulation it leaves in damage.
-	// Our city: w_C x C x f_def + defensive exposure, and it records L, T and our city's counted enemies for its
-	// Reinforce. Returns false, with the estimate 0, when its target died or its city changed owner.
-	static bool EstimateFight(const SOperationalTurn& turn, const SOperationalLocalSet& local, SOperationalBattlefield& field,
-		SOperationalCityDamage& damage);
-	// Estimates one Reinforce from its strength tallies and nearest-first selection on plain distance: at our city
-	// theater x w_C x C x g; at an enemy unit theater x V x g x a; at an enemy city theater x (w_O x C x (f_att+ - f_att) +
-	// w_A x garrison prize / Z_U x (f_g+ - f_g)) x a after the damage extension, with f_att and f_g taken as the base
-	// shares, so a spent local capturer earns the march nothing. An enemy center is 0 outside border
-	// zones, in Withdraw zones and below parity. Reads the fight's stake and damage simulation, so it runs after
-	// EstimateFight on the same local set.
+	// Values local destruction, exposure, ground and city relief at a unit, city progress and garrison destruction at
+	// an enemy city, or city danger and endangered recruits at ours. Uses the battlefield's shared theater.
+	static bool EstimateFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache, const SOperationalLocalSet& local,
+		const CvCity* pZoneCity, SOperationalBattlefield& field);
+	// Vox Deorum: selects incoming help, computes its rise in strength share and multiplies by the fight priority.
+	// Enemy centers require a border zone, a posture other than Withdraw and full selected strength covering need.
 	static void EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
-		const SOperationalCityDamage& damage, SOperationalBattlefield& field);
-	// Records the base shares: the fight's local damage under the projection's capture rule. Continues the fight's damage
-	// simulation with the selected units in selection order, each hit divided by its join turns, into the projected shares.
-	// When the base fall share is below 1 and the selection raises neither share above its base, walks the remaining
-	// candidates nearest first and adds each whose counted attack damages the city or its garrison, until a share rises; if
-	// none does, the added units are dropped. Rescores a selection it extends.
-	static void ProjectCityShares(CvTacticalAI& kTactical, const CvCity& kCity, const SOperationalLocalSet& local,
-		const SOperationalCityDamage& damage, const vector<SOperationalCandidate>& vCandidates, double fRatio,
-		SOperationalReinforce& reinforce);
+		SOperationalBattlefield& field);
 	// The Reinforce candidates for a destination by the cheap filters: available units outside armies, beyond their
 	// strike reach and within recruit range, in the destination's domains, with native's carrier, healing, siege,
-	// donor-zone and civilian-cover filters, minus the battlefield's rejections. A held garrison qualifies within the
-	// search's reach.
+	// donor-zone and civilian-cover filters, minus the battlefield's rejections. Enemy-city candidates must also pass
+	// CanStrikeCity. A held garrison qualifies within the search's reach.
 	static void GatherReinforceCandidates(CvTacticalAI& kTactical, const SOperationalBattlefield& field, const CvPlot& kTarget,
 		bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates);
 	// A unit's strike reach in plots: its base moves, at least 1, plus its range when it attacks at range.
 	static int StrikeReach(const CvUnit& kUnit);
-	// Gathers our local set around a center in the given domains, with its strength and damage filters.
+	// Gathers our local set around a center in the given domains; bDamage also gathers the damage filter.
 	static void GatherLocalSet(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kPlot, bool bLand, bool bSea,
-		SOperationalLocalSet& local);
+		SOperationalLocalSet& local, bool bDamage = true);
 	// Whether native recruitment would take this unit against the city: no capture prohibition, and for a ranged unit an
 	// attack from its plot that meets native's minimum expected damage.
 	static bool CanStrikeCity(CvTacticalAI& kTactical, CvUnit& kUnit, const CvCity& kCity);
@@ -525,11 +518,19 @@ public:
 	// Starts a damage simulation against the city: its garrison and health, remaining HP and expected heal.
 	static void StartCityDamage(const CvCity& kCity, SOperationalCityDamage& damage);
 	// Copy of one city attack in CvTacticalAI::ComputeTotalExpectedDamage: simulates the attacker from its current plot on
-	// top of the damage so far and applies the suicide test. A counted attack returns true with its city damage and its
-	// damage to the starting garrison, adds them to the totals and replaces a garrison predicted to die. A rejected attack
+	// top of the damage so far and applies the suicide test. A counted attack adds city damage and damage to the starting
+	// garrison to the totals and replaces a garrison predicted to die. A rejected attack
 	// leaves the simulation unchanged.
-	static bool SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, SOperationalCityDamage& damage, int& iCityDamage,
-		int& iGarrisonDamage);
+	static void SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, SOperationalCityDamage& damage, int iRisk);
+	// Vox Deorum: copies the unit case of ComputeTotalExpectedDamage. Differences: target damage uses our roll,
+	// self damage uses the enemy roll, and quick estimates avoid interceptor searches inside a roll scope.
+	static void SimulateUnitAttack(const CvUnit& kTarget, const CvUnit& kAttacker, int& iTotalDamage, int& iMeleeCount, int iRisk);
+	// Available city fire first, then the damage-filter units in ascending ID, at the mapped damage rolls.
+	static int LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk);
+	// Enemy unit damage valued without a ready-upgrade premium.
+	static double DestroyedUnitValue(const CvUnit& kUnit, double fDamage);
+	// Uncached unit danger at the enemy roll, including city-fall danger to a garrison.
+	static int UnitDanger(const SOperationalTurn& turn, const CvUnit& kUnit);
 	// Our unit's strength: native maximum attack strength, or ranged strength for a ranged unit, times its HP share.
 	static double UnitStrength(const CvUnit& kUnit);
 	// An enemy unit's strength against our city: its quick attack or ranged strength against the city plot, times its HP
@@ -544,8 +545,9 @@ public:
 	// The enemy strength T against our city: its approach list together with the visible units native danger says can
 	// attack it next turn, each once. pCounted, when given, receives the counted units.
 	static double EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity, set<pair<int, int> >* pCounted = NULL);
-	// The enemy strength T at an enemy center: visible hostile non-air combat units within 4 plots in the given domains,
-	// plus hostile cities within 4 plots at no less than 1 HP. A counted city's garrison is part of its strength.
+	// Vox Deorum: enemy strength T includes visible hostile non-air combat units within 4 plots in the given domains,
+	// visible hostile cities within 4 plots at no less than 1 HP, and a revealed center city even in fog.
+	// A counted city's garrison is part of its strength; units in fog stay excluded.
 	static double EnemyCenterStrength(PlayerTypes ePlayer, const CvPlot& kTarget, bool bLand, bool bSea,
 		set<pair<int, int> >& countedUnits, set<pair<int, int> >& countedCities);
 	// True for a unit that can capture a city on a later turn: a land melee combat unit outside armies that may enter
@@ -555,9 +557,9 @@ public:
 	// the map. NULL otherwise.
 	static CvUnit* CityRecruit(CvTacticalAI& kTactical, int iUnitID);
 	// Our city fight's endangered recruits from the tactical roster: non-air units within 4 plots on the turn's
-	// endangered list or in a friendly city in danger. Cheap enough for every estimate.
+	// endangered list or in a friendly city in danger. Returns their computed dangers when requested.
 	static void GatherCityEndangered(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
-		vector<CvUnit*>& vEndangered);
+		vector<CvUnit*>& vEndangered, map<int, int>* pDangers = NULL);
 	// Our city fight's defenders from the tactical roster, leaving out the given endangered recruits: local units within
 	// strike reach, the held garrison, and aircraft in reach with their carriers under the air search. Resets the air caches
 	// and paths carrier reach, so only readiness and execution call it.
@@ -617,19 +619,16 @@ public:
 
 	// Our unit's worth as the grade counts it: base worth with the level premium, plus a ready upgrade's premium.
 	static double OurUnitWorth(const CvUnit& kUnit);
-	// An enemy unit's prize: its worth times the prize floor plus the rest in proportion to its damage share.
-	static double UnitPrize(const CvUnit& kUnit, double fPrizeFloor);
 	// The ground side bit of another player as the grade's sides read it: ours or friendly, hostile, neutral, or 0 for no
 	// player.
 	static unsigned int GroundSide(PlayerTypes eUs, PlayerTypes eOther);
 	// The side bits standing on a plot and blockading from it, as the grade marks them, leaving out pSkip.
 	static void PlotPresence(const CvPlot& kPlot, PlayerTypes eUs, const CvUnit* pSkip, unsigned int& iStand,
 		unsigned int& iBlock);
-	// The ground score of the owned plots among a target plot and its neighbors on its landmass, leaving out pSkip, before
-	// dividing by the base.
+	// The ground score of the owned plots among a target plot and its neighbors on its landmass, leaving out pSkip, in plot weight.
 	static double GroundAround(PlayerTypes eUs, const CvPlot& kTarget, const CvUnit* pSkip);
-	// A unit target's ground term: the ground score with the target less the score without it, over the ground base.
-	static double TargetGround(PlayerTypes eUs, const CvPlot& kTarget, const CvUnit* pTarget, double fGroundBase);
+	// A unit target's ground term: the ground score with the target less the score without it, in plot weight.
+	static double TargetGround(PlayerTypes eUs, const CvPlot& kTarget, const CvUnit* pTarget);
 	// The player's danger contents for one plot, after rebuilding a dirty cache as CvPlayer::GetPlotDanger does.
 	static CvDangerPlotContents& DangerContents(PlayerTypes ePlayer, const CvPlot& kPlot);
 	// True for a unit that can capture a city: a melee combat unit with moves and an attack left that may enter cities.
@@ -668,10 +667,16 @@ public:
 	static bool PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 		SOperationalEngagementReport& report);
-	// Copy of the unit overload of CvDangerPlotContents::GetDanger: the same total, and each enemy unit's and city's damage
-	// as it adds them up. A total that is not a sum (a civilian that can be captured, a unit in our city) lists no threats.
+	// Copy of the unit overload of CvDangerPlotContents::GetDanger, with enemy-roll damage and per-threat contributions.
+	// A falling city destroys its garrison at f_def's threshold. Capturable civilians and units in cities list no threats.
 	static int GetDangerByThreat(CvDangerPlotContents& kContents, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage,
-		int iExtraDamage, AirActionType eAirAction, vector<SOperationalThreatDamage>& threats);
+		int iExtraDamage, AirActionType eAirAction, vector<SOperationalThreatDamage>& threats, int iRisk);
+
+	// Copy of the city overload of CvDangerPlotContents::GetDanger with optional per-attacker damage and scoped enemy rolls.
+	static int GetCityDangerByThreat(CvDangerPlotContents& kContents, const CvCity* pCity, const CvUnit* pPretendGarrison,
+		const SUnitIDValueContainer& extraUnitDamage, int iExtraSelfDamage, vector<SOperationalThreatDamage>* pThreats, int iRisk);
+	// Vox Deorum: computes standard city danger once per city plot per estimate pass, including per-threat damage.
+	static const SOperationalCityDanger& CachedCityDanger(const SOperationalTurn& turn, SOperationalEstimateCache& cache, const CvCity& kCity);
 
 	// True for a city's garrison the garrison pass left to zone work: only a search may move it.
 	static bool IsHeldGarrison(const CvUnit* pUnit);

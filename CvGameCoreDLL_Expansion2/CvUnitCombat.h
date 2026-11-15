@@ -13,6 +13,9 @@
 #include "CvUnit.h"
 #include "CvPlot.h"
 
+// Vox Deorum: expected roll per 200 for operational projections, restored to the native average after each scope.
+extern int operationalExpectedRollPer200;
+
 // Combat controller for CvUnits
 class CvUnitCombat
 {
