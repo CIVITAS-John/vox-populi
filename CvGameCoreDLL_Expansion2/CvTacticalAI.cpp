@@ -13818,7 +13818,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	openPositionsHeap.clear();
 	completedPositions.clear();
 	size_t iUsedPositions = 0;
-	// A candidate rejected only for lack of progress sets the lowest score an accepted plan may have.
+	// A candidate rejected only for lack of progress sets the score threshold an accepted plan must reach.
 	int iBestNoProgressScore = INT_MIN;
 
 	//don't need to call make_heap for a single element
@@ -13912,7 +13912,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		CvTacticalPosition* pBestPosition = *std::min_element(completedPositions.begin(), completedPositions.end(), CvTacticalPosition::PrPositionSortArrayTotalScore());
 
 		// Compare before support placement; a declined search leaves its participants available.
-		if (pBestPosition->getScoreTotal() >= iBestNoProgressScore)
+		// No progress rejection leaves no floor, and otherwise the plan must reach 80% of the highest rejected score.
+		if (iBestNoProgressScore == INT_MIN || pBestPosition->getScoreTotal() >= 0.8 * iBestNoProgressScore)
 		{
 			if (pBestPosition->HasSupport(DOMAIN_LAND) || pBestPosition->HasSupport(DOMAIN_SEA) || pBestPosition->HasCitySupport())
 				TacticalAIHelpers::AddSupportMoves(*pBestPosition, ourUnits);
