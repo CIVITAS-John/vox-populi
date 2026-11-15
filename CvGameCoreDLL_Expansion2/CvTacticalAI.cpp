@@ -10165,7 +10165,7 @@ struct PrIsMoveForUnit
 
 bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPerUnit, CvTactPosStorage& storage,
 	vector<CvTacticalPosition*>& openPositionsHeap, vector<CvTacticalPosition*>& completedPositions, const PrPositionSortHeapGeneration& heapSort,
-	const vector<const CvUnit*>& ourUnits)
+	const vector<const CvUnit*>& ourUnits, int* piBestNoProgressScore)
 {
 	/*
 	abstract:
@@ -10340,7 +10340,7 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 				if (bHasGeneral || bHasAdmiral || bHasSiegetower)
 					bSuccess = TacticalAIHelpers::AddSupportMoves(*pNewChild, ourUnits, true);
 
-				if (bSuccess && pNewChild->addFinishMovesIfAcceptable(pNewChild->isEarlyFinish(), iProblemUnit))
+				if (bSuccess && pNewChild->addFinishMovesIfAcceptable(pNewChild->isEarlyFinish(), iProblemUnit, piBestNoProgressScore))
 				{
 					//good case, we're done
 					completedPositions.push_back(pNewChild);
@@ -10476,7 +10476,7 @@ bool CvTacticalPosition::isEarlyFinish(bool bExtraKill) const
 //see if all the plots where our units would end their turn are acceptable
 //this is a deferred check because in the beginning it's not clear how many enemy units we can eliminate
 // Vox Deorum: shares one tracked-cargo snapshot across the final scoring pass
-bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBadUnitID)
+bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBadUnitID, int* piBestNoProgressScore)
 { 
 	//we allow some "bad" units depending on context
 	int iUnitLossThreshold = gDefaultUnitLossThreshold + nKilledEnemies;
@@ -10554,6 +10554,8 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 	}
 
 	//do not clear notQuiteFinishedUnits for better debugging
+	if (piBestNoProgressScore)
+		*piBestNoProgressScore = max(*piBestNoProgressScore, getScoreTotal());
 	return false;
 }
 
@@ -13816,6 +13818,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	openPositionsHeap.clear();
 	completedPositions.clear();
 	size_t iUsedPositions = 0;
+	// A candidate rejected only for lack of progress sets the lowest score an accepted plan may have.
+	int iBestNoProgressScore = INT_MIN;
 
 	//don't need to call make_heap for a single element
 	openPositionsHeap.push_back(initialPosition);
@@ -13848,7 +13852,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		int iMaxChoicesPerUnitNow = heapSort.bDepthFirst ? 2 : iMaxChoicesPerUnit;
 
 		//here the magic happens!
-		current->makeNextAssignments(iMaxBranchesNow, iMaxChoicesPerUnitNow, gTactPosStorage, openPositionsHeap, completedPositions, heapSort, ourUnits);
+		current->makeNextAssignments(iMaxBranchesNow, iMaxChoicesPerUnitNow, gTactPosStorage, openPositionsHeap, completedPositions, heapSort, ourUnits, &iBestNoProgressScore);
 
 		int iOldPauseCount = iUsedPositions / 500;
 		iUsedPositions += current->getChildren().size();
@@ -13907,9 +13911,13 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		//min_element returns the first of several equally good positions, same as the front after a stable sort
 		CvTacticalPosition* pBestPosition = *std::min_element(completedPositions.begin(), completedPositions.end(), CvTacticalPosition::PrPositionSortArrayTotalScore());
 
-		if (pBestPosition->HasSupport(DOMAIN_LAND) || pBestPosition->HasSupport(DOMAIN_SEA) || pBestPosition->HasCitySupport())
-			TacticalAIHelpers::AddSupportMoves(*pBestPosition, ourUnits);
-		result = pBestPosition->getAssignments();
+		// Compare before support placement; a declined search leaves its participants available.
+		if (pBestPosition->getScoreTotal() >= iBestNoProgressScore)
+		{
+			if (pBestPosition->HasSupport(DOMAIN_LAND) || pBestPosition->HasSupport(DOMAIN_SEA) || pBestPosition->HasCitySupport())
+				TacticalAIHelpers::AddSupportMoves(*pBestPosition, ourUnits);
+			result = pBestPosition->getAssignments();
+		}
 	}
 
 	if(GC.getLogging() && GC.getAILogging())

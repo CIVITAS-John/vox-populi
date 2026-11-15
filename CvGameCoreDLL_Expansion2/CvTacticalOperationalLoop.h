@@ -161,22 +161,6 @@ struct SOperationalAttempt
 	bool bCompleted;
 };
 
-// What one engagement did: its geometry, flavors, aggression and attempts
-struct SOperationalEngagementReport
-{
-	map<int, int> zonePlots;
-	int iRepresentativeZone;
-	STacticalFlavors flavors;
-	// the neutral-based risk that eAggLvl was resolved from
-	int iAggressionRisk;
-	eAggressionLevel eAggLvl;
-	vector<SOperationalAttempt> attempts;
-	bool bSuccess;
-
-	// Creates an empty report.
-	SOperationalEngagementReport() : iRepresentativeZone(-1), iAggressionRisk(50), eAggLvl(AL_LOW), bSuccess(false) {}
-};
-
 // What a battlefield is built around
 enum eOperationalCenter
 {
@@ -194,7 +178,8 @@ enum eOperationalOfferState
 	OPERATIONAL_OFFER_SKIPPED,   // failed readiness.maxFailures checks; out for the turn
 	OPERATIONAL_OFFER_RETIRED,   // an overlapping executed fight covered it; out for the turn
 	OPERATIONAL_OFFER_EXECUTED,  // ran as a command
-	OPERATIONAL_OFFER_DROPPED    // its target died or its city changed owner
+	OPERATIONAL_OFFER_DROPPED,   // its target died or its city changed owner
+	OPERATIONAL_OFFER_REFUSED    // an explicit empty admission consumed only this offer
 };
 
 // One enemy threat's share of our units' exposure, and the units of ours it can attack next turn
@@ -377,10 +362,139 @@ struct SOperationalTurn
 	// our units outside friendly cities with a positive threat entry, by ID and whole danger: rebuilt after each command
 	map<int, int> endangeredUnits;
 	vector<SOperationalBattlefield> battlefields;
+	mutable unsigned int iNextDecision;
+	mutable unsigned int iStateRevision;
 
 	// Creates an empty turn.
 	SOperationalTurn() : ePlayer(NO_PLAYER), fTypicalUnitWorth(0.0), fCityUnit(0.0), fCityScale(0.0),
-		iStrikeScan(0) {}
+		iStrikeScan(0), iNextDecision(0), iStateRevision(0) {}
+};
+
+// Vox Deorum: identifies a synchronous callback and the state it reads. Hosts may supply branch identities.
+struct SOperationalDecisionIdentity
+{
+	unsigned int iDecision;
+	unsigned int iRevision;
+	PlayerTypes ePlayer;
+	int iCommand;
+	int iBattlefield;
+	eOperationalKind eKind;
+	int iTargetPlot;
+	// Vox Deorum: creates an unbound decision.
+	SOperationalDecisionIdentity() : iDecision(0), iRevision(0), ePlayer(NO_PLAYER), iCommand(-1), iBattlefield(-1),
+		eKind(OPERATIONAL_KIND_UNIT_FIGHT), iTargetPlot(-1) {}
+};
+
+// Vox Deorum: one selectable identity, with the native estimate and permitted command forces.
+struct SOperationalSelectableOffer
+{
+	int iOffer; // battlefield * 2, plus one for Reinforce
+	SOperationalBattlefield field;
+	bool bReinforce;
+	// Vox Deorum: creates an invalid offer identity.
+	SOperationalSelectableOffer() : iOffer(-1), bReinforce(false) {}
+};
+
+// Vox Deorum: command choice over the current queue, in build order, with the exact native proposal.
+struct SOperationalChoiceRequest
+{
+	SOperationalDecisionIdentity identity;
+	vector<SOperationalSelectableOffer> offers;
+	vector<int> vAvailable;
+	int aiMapped[STacticalFlavors::NUM_SLOTS];
+	int iNative;
+	// Vox Deorum: creates an empty queue with neutral mapped flavors.
+	SOperationalChoiceRequest() : iNative(-1)
+	{
+		for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
+			aiMapped[iSlot] = 50;
+	}
+};
+
+// Vox Deorum: distinguishes native admission, refusal, empty eligibility and invalid replies.
+enum eOperationalAdmissionResult
+{
+	OPERATIONAL_ADMISSION_ABSENT,
+	OPERATIONAL_ADMISSION_NATIVE,
+	OPERATIONAL_ADMISSION_SUBSET,
+	OPERATIONAL_ADMISSION_REFUSED,
+	OPERATIONAL_ADMISSION_NO_ELIGIBLE,
+	OPERATIONAL_ADMISSION_INVALID
+};
+
+// Vox Deorum: admission before any participant acts; geometry describes the native proposal.
+struct SOperationalAdmissionRequest
+{
+	SOperationalDecisionIdentity identity;
+	vector<SOperationalCandidate> candidates;
+	vector<int> vNative;
+	map<int, int> preliminaryZones;
+	SOperationalReinforce reinforce;
+};
+
+// Vox Deorum: use native admission or an explicit subset, including an explicit refusal.
+struct SOperationalAdmissionReply
+{
+	bool bUseNative;
+	vector<int> vUnits;
+	// Vox Deorum: defaults to the native proposal.
+	SOperationalAdmissionReply() : bUseNative(true) {}
+};
+
+// Vox Deorum: retains decision inputs and outputs without repeating reach or strength queries for records.
+struct SOperationalAdmissionDecision
+{
+	SOperationalAdmissionRequest request;
+	SOperationalAdmissionReply requested;
+	eOperationalAdmissionResult eResult;
+	vector<int> vEffective;
+	vector<int> vFailedReach;
+	SOperationalReinforce effectiveReinforce;
+	// Vox Deorum: starts with no optional callback.
+	SOperationalAdmissionDecision() : eResult(OPERATIONAL_ADMISSION_ABSENT) {}
+};
+
+// Vox Deorum: final geometry and native search vector after spotting and greedy air, with separate aggression.
+struct SOperationalFlavorRequest
+{
+	SOperationalDecisionIdentity identity;
+	vector<int> vUnits;
+	map<int, int> finalZones;
+	int iRepresentativeZone;
+	STacticalFlavors native;
+	int iAggressionRisk;
+	// Vox Deorum: no-search commands carry an empty geometry and neutral aggression.
+	SOperationalFlavorRequest() : iRepresentativeZone(-1), iAggressionRisk(50) {}
+};
+
+// Vox Deorum: keeps choice values separate so records can copy them without running the decoder again.
+struct SOperationalChoiceDecision
+{
+	SOperationalChoiceRequest request;
+	int iRequested;
+	int iEffective;
+	bool bInvalid;
+	// Vox Deorum: creates a decision with no selected offer.
+	SOperationalChoiceDecision() : iRequested(-1), iEffective(-1), bInvalid(false) {}
+};
+
+// What one engagement did: its geometry, flavors, aggression and attempts
+struct SOperationalEngagementReport
+{
+	map<int, int> zonePlots;
+	int iRepresentativeZone;
+	STacticalFlavors flavors;
+	// the neutral-based risk that eAggLvl was resolved from
+	int iAggressionRisk;
+	eAggressionLevel eAggLvl;
+	vector<SOperationalAttempt> attempts;
+	bool bSuccess;
+	SOperationalFlavorRequest flavorRequest;
+	STacticalFlavors requestedFlavors;
+	bool bInvalidFlavors;
+
+	// Creates an empty report.
+	SOperationalEngagementReport() : iRepresentativeZone(-1), iAggressionRisk(50), eAggLvl(AL_LOW), bSuccess(false), bInvalidFlavors(false) {}
 };
 
 // The board facts a command can change that the wake rule reads
@@ -431,6 +545,8 @@ struct SOperationalCommandRecord
 	PlayerTypes eOwner;
 	double fEstimate;           // the estimated priority the offer ran at, after any reach checks
 	int iFailuresBefore;
+	SOperationalAdmissionDecision admission;
+	SOperationalEngagementReport engagement;
 	bool bSearchRan;            // the search ran with at least one unit, so overlapping fights retire
 	vector<int> vRetired;       // battlefields whose fight this command retired
 	vector<pair<int, bool> > vEndangered;  // endangered recruits by unit ID, and whether the search placed them
@@ -447,6 +563,7 @@ struct SOperationalCommandRecord
 struct SOperationalTurnRecord
 {
 	vector<SOperationalCommandRecord> commands;
+	vector<SOperationalChoiceDecision> choices;
 	vector<SOperationalCheckRecord> checks;
 	vector<int> vSkipped;
 	bool bCommandCap;
@@ -634,7 +751,31 @@ public:
 	// True for a unit that can capture a city: a melee combat unit with moves and an attack left that may enter cities.
 	static bool CanCapture(const CvUnit& kUnit);
 
+	// Vox Deorum: constructs and stamps a callback identity on the current synchronous state.
+	static SOperationalDecisionIdentity DecisionIdentity(const SOperationalTurn& turn, const SOperationalCommandRecord* pCommand);
+	// Vox Deorum: exactly reproduces the original OfferOutranks scan, including stable build-order ties.
+	static int NativeCommandChoice(const SOperationalChoiceRequest& request);
+	// Vox Deorum: applies optional admission once, validating membership and extra Reinforce reach before any action.
+	static bool AdmitParticipants(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		vector<CvUnit*>& vUnits, SOperationalCommandRecord& record);
+	// Vox Deorum: the common Reinforce reach test for checked proposals and provider additions.
+	static bool ReinforceReach(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget,
+		const ReachablePlots& relevantPlots, map<int, ReachablePlots>& searchPlots);
+	// Vox Deorum: recomputes admitted strength, help, swing and capture role without changing command priority.
+	static void AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, bool bNeedCapturer,
+		const vector<int>& vAdmitted, double fSteepness, SOperationalReinforce& out);
+	// Vox Deorum: restricts native air or landing recruitment to the already admitted group.
+	static void FilterRecruits(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits);
+
 	// Host seams. The DLL defines them in this file; the simulator defines its own and does not extract these.
+	// Vox Deorum: host identity, choice, optional admission and final flavor seams; DLL replies are always native.
+	static void StampDecision(SOperationalDecisionIdentity& identity);
+	// Vox Deorum: returns a current offer identity.
+	static int ChooseCommand(const SOperationalChoiceRequest& request);
+	// Vox Deorum: returns false when the provider has no admission capability.
+	static bool AdmitCommand(const SOperationalAdmissionRequest& request, SOperationalAdmissionReply& reply);
+	// Vox Deorum: returns the final search vector, already resolved by native when unchanged.
+	static STacticalFlavors ChooseSearchFlavors(const SOperationalFlavorRequest& request);
 	// A plot's ground weight with the resources the player's team has revealed.
 	static double GroundPlotWeight(PlayerTypes ePlayer, const CvPlot& kPlot);
 	// Opens and closes one command's work: the simulator records the command's effects in the battlefield's zone.
@@ -646,7 +787,8 @@ public:
 	// bTargetDistanceRelevant is native's search flag: false lets units end farther from the target than they started.
 	static bool ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
-		bool bTargetDistanceRelevant, SOperationalEngagementReport& report);
+		bool bTargetDistanceRelevant, SOperationalEngagementReport& report, const SOperationalTurn* pTurn = NULL,
+		SOperationalCommandRecord* pCommand = NULL);
 	// The retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments with given flavors, aggression and target
 	// distance flag: native FindBestUnitAssignments unchanged, up to four attempts, each recorded with the rows that ran.
 	static bool SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
@@ -666,7 +808,7 @@ public:
 	// path moves go through CanMarch.
 	static bool PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
-		SOperationalEngagementReport& report);
+		SOperationalEngagementReport& report, const SOperationalTurn* pTurn = NULL, SOperationalCommandRecord* pCommand = NULL);
 	// Copy of the unit overload of CvDangerPlotContents::GetDanger, with enemy-roll damage and per-threat contributions.
 	// A falling city destroys its garrison at f_def's threshold. Capturable civilians and units in cities list no threats.
 	static int GetDangerByThreat(CvDangerPlotContents& kContents, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage,
