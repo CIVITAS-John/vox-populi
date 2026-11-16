@@ -18,6 +18,8 @@
 #include "CvTypes.h"
 #include "VoxDeorumRL/VoxRlCapture.h"
 #include <math.h>
+// Vox Deorum: the host clock uses the same performance counter as cvStopWatch.
+#include "cvStopWatch.h"
 #include "LintFree.h"
 
 namespace
@@ -506,6 +508,31 @@ bool OfferOutranks(double fEstimate, int iRank, int iPlotIndex, double fBest, in
 	return iPlotIndex < iBestPlotIndex;
 }
 
+// Vox Deorum: orders two offers identically in selection and diagnostic ready ranks.
+bool OperationalOfferBefore(const SOperationalBattlefield& field, bool bReinforce, int iOffer,
+	const SOperationalBattlefield& best, bool bBestReinforce, int iBest)
+{
+	const double estimate = bReinforce ? field.fReinforceEstimate : field.fEstimate;
+	const double bestEstimate = bBestReinforce ? best.fReinforceEstimate : best.fEstimate;
+	const int rank = OfferRank(field.eCenter, bReinforce), bestRank = OfferRank(best.eCenter, bBestReinforce);
+	if (estimate == bestEstimate && rank == bestRank && field.iPlotIndex == best.iPlotIndex)
+		return iOffer < iBest;
+	return OfferOutranks(estimate, rank, field.iPlotIndex, bestEstimate, bestRank, best.iPlotIndex);
+}
+
+// Vox Deorum: sorts only ready offer identities without copying battlefields.
+struct PrOperationalOfferBefore
+{
+	const vector<SOperationalBattlefield>& fields;
+	// Vox Deorum: borrows the current turn's queue for this sort.
+	PrOperationalOfferBefore(const vector<SOperationalBattlefield>& value) : fields(value) {}
+	// Vox Deorum: applies the selection order, including full ties.
+	bool operator()(int i, int j) const
+	{
+		return OperationalOfferBefore(fields[i / 2], i % 2 != 0, i, fields[j / 2], j % 2 != 0, j);
+	}
+};
+
 // Bombardment alone leaves a city at 1 HP, where it can still heal, so damage past R - 1 needs a capturer.
 double AttackFallShare(double fCityDamage, int iHeal, int iRemaining, bool bCapture)
 {
@@ -565,203 +592,400 @@ void CvTacticalOperationalLoop::ProcessDominanceZones(CvTacticalAI& kTactical)
 	kTactical.ReviewUnassignedUnits();
 }
 
+// Vox Deorum: finalizes the whole call after turn scratch storage has been reclaimed.
+struct SOperationalLoopScope
+{
+	SOperationalPerformance& timing;
+	SOperationalTurnRecord* pRecord;
+	SOperationalPerformance* pPerformance;
+	CvTacticalAI& tactical;
+	unsigned long long startNs;
+	bool bTiming;
+	// Vox Deorum: retains the counters that outlive the working turn.
+	SOperationalLoopScope(SOperationalPerformance& t, SOperationalTurnRecord* r, SOperationalPerformance* p, CvTacticalAI& ai, unsigned long long start, bool enabled) :
+		timing(t), pRecord(r), pPerformance(p), tactical(ai), startNs(start), bTiming(enabled) {}
+	// Vox Deorum: includes teardown in whole-call time and emits the no-capture timing line once per pass.
+	~SOperationalLoopScope()
+	{
+		timing.totalNs = bTiming ? CvTacticalOperationalLoop::ClockNs() - startNs : 0;
+		const long long remainder = static_cast<long long>(timing.totalNs) - static_cast<long long>(timing.setupNs +
+			timing.estimateNs + timing.selectNs + timing.readinessNs + timing.executeNs + timing.retireNs + timing.recordNs);
+		ASSERT(remainder >= 0, "Operational stages exceed whole-loop time");
+		timing.otherNs = remainder > 0 ? static_cast<unsigned long long>(remainder) : 0;
+		if (pRecord) pRecord->performance = timing;
+		if (pPerformance) *pPerformance = timing;
+		if (!pRecord && GC.getLogging() && GC.getAILogging())
+			tactical.LogTacticalMessage(CvString::format("command loop finished in %.0f ms: %d commands, %d checks, %d estimates (%.0f ms), %d searches (%.0f ms)",
+				timing.totalNs / 1000000.0, (int)timing.commands, (int)timing.checks,
+				(int)timing.estimates, timing.estimateNs / 1000000.0,
+				(int)timing.engagements, timing.searchNs / 1000000.0));
+	}
+};
+
+// Vox Deorum: closes host command work on both normal return and unwinding.
+struct SOperationalCommandScope
+{
+	CvTacticalAI& tactical;
+	// Vox Deorum: opens one command's host work entry.
+	SOperationalCommandScope(CvTacticalAI& ai, int command, int zone) : tactical(ai)
+	{ CvTacticalOperationalLoop::BeginCommand(tactical, command, zone); }
+	// Vox Deorum: retains committed effects when command execution stops.
+	~SOperationalCommandScope() { CvTacticalOperationalLoop::EndCommand(tactical); }
+};
+
 // Picks the top ready offer, checks it, executes it on a pass, retires the offers it covered, then estimates every
 // open offer again and wakes waiting fights on helpful changes.
-void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord)
+void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord, SOperationalPerformance* pPerformance, bool bTotalOnly)
 {
+	const bool bTiming = pRecord || pPerformance || (GC.getLogging() && GC.getAILogging());
+	const unsigned long long startNs = bTiming ? ClockNs() : 0;
+	SOperationalPerformance timing;
+	SOperationalLoopScope closure(timing, pRecord, pPerformance, kTactical, startNs, bTiming);
 	SOperationalTurn turn;
-	BuildTurn(kTactical, turn);
-	BuildBattlefields(kTactical, turn);
-	BuildThreats(turn);
-	EstimateOffers(kTactical, turn, NULL);
-
-	SOperationalTurnRecord localRecord;
-	SOperationalTurnRecord& record = pRecord ? *pRecord : localRecord;
-	const bool bLog = !pRecord && GC.getLogging() && GC.getAILogging();
-	if (bLog)
-		kTactical.LogTacticalMessage(CvString::format("Operational loop scales: Z_T %.0f, Z_C %.1f, C %.4f",
-			turn.fTypicalUnitWorth, turn.fCityScale, turn.fCityUnit));
-	const int iMaxFailures = std::max(1, static_cast<int>(turn.weights.afConstant[OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES]));
-	// Vox Deorum: native hosts rank offers directly without copying battlefield observations.
-	const bool bProvider = HasOperationalProvider();
-	int iCommands = 0;
-	for (;;)
+	turn.bTiming = bTiming && !bTotalOnly;
+	try
 	{
-		SOperationalChoiceDecision choice;
-		choice.request.identity = DecisionIdentity(turn, NULL);
-		choice.request.identity.iCommand = iCommands;
-		for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
-			choice.request.aiMapped[iSlot] = turn.aiMapped[iSlot];
-		if (bProvider)
 		{
-			for (std::list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end(); ++it)
-			{
-				CvUnit* pUnit = kTactical.m_pPlayer->getUnit(*it);
-				if (pUnit && pUnit->canUseNow())
-					choice.request.vAvailable.push_back(pUnit->GetID());
-			}
+			SOperationalTimer timer(turn.bTiming ? &turn.performance.setupNs : NULL);
+			BuildTurn(kTactical, turn);
+			BuildBattlefields(kTactical, turn);
+			BuildThreats(turn);
 		}
-		int iNative = -1;
-		for (size_t i = 0; i < turn.battlefields.size(); i++)
+		if (pRecord)
 		{
-			const SOperationalBattlefield& field = turn.battlefields[i];
-			for (int iOffer = 0; iOffer < 2; iOffer++)
+			SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+			*pRecord = SOperationalTurnRecord();
+			pRecord->bRan = true;
+			pRecord->settings = turn.settings;
+			GetDefaultOperationalSettings(&pRecord->defaults);
+			pRecord->weights = turn.weights;
+			for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++)
+				pRecord->aiMapped[i] = turn.aiMapped[i];
+			pRecord->fTypicalUnitWorth = turn.fTypicalUnitWorth;
+			pRecord->fCityScale = turn.fCityScale;
+			pRecord->fCityUnit = turn.fCityUnit;
+		}
+		{
+			SOperationalTimer timer(turn.bTiming ? &turn.performance.estimateNs : NULL);
+			EstimateOffers(kTactical, turn, NULL);
+		}
+		if (pRecord)
+			RecordStep(turn, *pRecord);
+
+		SOperationalTurnRecord localRecord;
+		SOperationalTurnRecord& record = pRecord ? *pRecord : localRecord;
+		const bool bLog = !pRecord && GC.getLogging() && GC.getAILogging();
+		if (bLog)
+			kTactical.LogTacticalMessage(CvString::format("Operational step 0 scales: Z_T %.0f, Z_C %.1f, C %.4f", turn.fTypicalUnitWorth,
+														  turn.fCityScale, turn.fCityUnit));
+		const int iMaxFailures = std::max(1, static_cast<int>(turn.weights.afConstant[OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES]));
+		// Vox Deorum: native hosts rank offers directly without copying battlefield observations.
+		const bool bProvider = HasOperationalProvider();
+		const bool bPermittedMenu = bProvider && UsesPermittedMenu();
+		int iCommands = 0;
+		for (;;)
+		{
+			if (IsHostStopped())
 			{
-				if ((iOffer ? field.eReinforce : field.eFight) != OPERATIONAL_OFFER_READY)
-					continue;
-				if (iNative < 0 || OfferOutranks(iOffer ? field.fReinforceEstimate : field.fEstimate,
-					OfferRank(field.eCenter, iOffer == 1), field.iPlotIndex,
-					iNative % 2 ? turn.battlefields[iNative / 2].fReinforceEstimate : turn.battlefields[iNative / 2].fEstimate,
-					OfferRank(turn.battlefields[iNative / 2].eCenter, iNative % 2 != 0), turn.battlefields[iNative / 2].iPlotIndex))
-					iNative = static_cast<int>(i) * 2 + iOffer;
+				if (pRecord) record.steps.back().szEnd = "stopped";
+				break;
+			}
+			SOperationalChoiceDecision choice;
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.selectNs : NULL, &turn.performance.recordNs);
+				choice.request.identity = DecisionIdentity(turn, NULL);
+				choice.request.identity.iCommand = iCommands;
+				choice.request.identity.iStep = iCommands;
+				for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
+					choice.request.aiMapped[iSlot] = turn.aiMapped[iSlot];
 				if (bProvider)
 				{
-					SOperationalSelectableOffer offer;
-					offer.iOffer = static_cast<int>(i) * 2 + iOffer;
-					offer.field = field;
-					offer.bReinforce = iOffer == 1;
-					choice.request.offers.push_back(offer);
+					for (std::list<int>::const_iterator it = kTactical.m_CurrentTurnUnits.begin(); it != kTactical.m_CurrentTurnUnits.end();
+						 ++it)
+					{
+						CvUnit* pUnit = kTactical.m_pPlayer->getUnit(*it);
+						if (pUnit && pUnit->canUseNow())
+							choice.request.vAvailable.push_back(pUnit->GetID());
+					}
+				}
+				int iNative = -1;
+				for (size_t i = 0; i < turn.battlefields.size(); i++)
+				{
+					const SOperationalBattlefield& field = turn.battlefields[i];
+					for (int iOffer = 0; iOffer < 2; iOffer++)
+					{
+						if ((iOffer ? field.eReinforce : field.eFight) != OPERATIONAL_OFFER_READY)
+							continue;
+						if (iNative < 0 ||
+							OperationalOfferBefore(field, iOffer == 1, static_cast<int>(i) * 2 + iOffer,
+								turn.battlefields[iNative / 2], iNative % 2 != 0, iNative))
+							iNative = static_cast<int>(i) * 2 + iOffer;
+						if (bProvider)
+						{
+							SOperationalSelectableOffer offer;
+							offer.iOffer = static_cast<int>(i) * 2 + iOffer;
+							offer.field = field;
+							offer.bReinforce = iOffer == 1;
+							choice.request.offers.push_back(offer);
+						}
+					}
+				}
+				if (bPermittedMenu) choice.request.battlefields = turn.battlefields;
+				if (iNative < 0 && !bPermittedMenu)
+				{
+					if (pRecord)
+						pRecord->steps.back().szEnd = "noReadyOffer";
+					break;
+				}
+				if (iCommands >= turn.settings.iMaxCommands)
+				{
+					record.bCommandCap = true;
+					if (pRecord)
+						pRecord->steps.back().szEnd = "commandCap";
+					if (bLog)
+						kTactical.LogTacticalMessage(
+							CvString::format("Operational step %d stopped at the command cap of %d", iCommands, turn.settings.iMaxCommands));
+					break;
+				}
+				choice.request.iNative = iNative;
+				{
+					SOperationalTimer providerTimer(turn.bTiming ? &turn.performance.choiceNs : NULL);
+					choice.iRequested = bProvider ? ChooseCommand(choice.request) : iNative;
+				}
+				choice.bInvalid = bProvider && !bPermittedMenu;
+				for (size_t i = 0; i < choice.request.offers.size(); i++)
+					if (choice.request.offers[i].iOffer == choice.iRequested)
+						choice.bInvalid = false;
+				choice.iEffective = choice.bInvalid ? choice.request.iNative : choice.iRequested;
+				if (pRecord)
+				{
+					SOperationalTimer recordTimer(turn.bTiming ? &turn.performance.recordNs : NULL);
+					record.choices.push_back(choice);
 				}
 			}
-		}
-		if (iNative < 0)
-			break;
-		if (iCommands >= turn.settings.iMaxCommands)
-		{
-			record.bCommandCap = true;
+			// Vox Deorum: a permitted objective can close without a native battlefield, or end its menu.
+			if (bPermittedMenu && choice.iEffective == -2) continue;
+			if (choice.iEffective < 0)
+			{
+				if (pRecord) record.steps.back().szEnd = "noReadyOffer";
+				break;
+			}
+			const int iBest = choice.iEffective / 2;
+			const bool bBestReinforce = choice.iEffective % 2 != 0;
+			const double fBest = bBestReinforce ? turn.battlefields[iBest].fReinforceEstimate : turn.battlefields[iBest].fEstimate;
+			SOperationalBattlefield& field = turn.battlefields[iBest];
+			SOperationalCheckRecord check;
+			check.iBattlefield = iBest;
+			check.iStep = iCommands;
+			check.bReinforce = bBestReinforce;
+			check.eBefore = bBestReinforce ? field.eReinforce : field.eFight;
+			check.fBefore = fBest;
+			const unsigned long long readinessBefore = turn.performance.readinessNs;
+			eOperationalCheckResult eResult;
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.readinessNs : NULL);
+				eResult = bBestReinforce ? CheckReinforce(kTactical, turn, field) : CheckFight(kTactical, turn, field);
+				turn.performance.checks++;
+			}
+			if (bProvider) ReportExecution(choice.iEffective, eResult, NULL);
+			check.eResult = eResult;
+			if (bBestReinforce && eResult != OPERATIONAL_CHECK_PASSED)
+				field.eReinforce = eResult == OPERATIONAL_CHECK_REDUCED && field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY
+																										  : OPERATIONAL_OFFER_INACTIVE;
+			else if (eResult != OPERATIONAL_CHECK_PASSED)
+			{
+				field.iFailures++;
+				field.eFight = field.iFailures >= iMaxFailures ? OPERATIONAL_OFFER_SKIPPED : OPERATIONAL_OFFER_WAITING;
+			}
+			check.eAfter = bBestReinforce ? field.eReinforce : field.eFight;
+			check.fAfter = bBestReinforce ? field.fReinforceEstimate : field.fEstimate;
+			if (pRecord)
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+				record.steps.back().readinessNs += turn.performance.readinessNs - readinessBefore;
+				SOperationalEvent event = {"check",		   iBest,		  static_cast<int>(record.checks.size()),
+										   bBestReinforce, check.eBefore, check.eAfter,
+										   check.fBefore,  check.fAfter};
+				record.steps.back().events.push_back(event);
+				record.checks.push_back(check);
+				if (check.eAfter == OPERATIONAL_OFFER_SKIPPED)
+				{
+					record.vSkipped.push_back(iBest);
+				}
+			}
 			if (bLog)
-				kTactical.LogTacticalMessage(CvString::format("Operational loop stopped at the command cap of %d", turn.settings.iMaxCommands));
-			break;
-		}
-		choice.request.iNative = iNative;
-		choice.iRequested = bProvider ? ChooseCommand(choice.request) : iNative;
-		choice.bInvalid = bProvider;
-		for (size_t i = 0; i < choice.request.offers.size(); i++)
-			if (choice.request.offers[i].iOffer == choice.iRequested)
-				choice.bInvalid = false;
-		choice.iEffective = choice.bInvalid ? choice.request.iNative : choice.iRequested;
-		record.choices.push_back(choice);
-		const int iBest = choice.iEffective / 2;
-		const bool bBestReinforce = choice.iEffective % 2 != 0;
-		const double fBest = bBestReinforce ? turn.battlefields[iBest].fReinforceEstimate : turn.battlefields[iBest].fEstimate;
-		SOperationalBattlefield& field = turn.battlefields[iBest];
-		const eOperationalCheckResult eResult = bBestReinforce ? CheckReinforce(kTactical, turn, field) : CheckFight(kTactical, turn, field);
-		SOperationalCheckRecord check = { iBest, eResult, bBestReinforce };
-		record.checks.push_back(check);
-		if (bLog)
-		{
-			static const char* const aszResults[] = { "passed", "failed: target gone", "failed: no recruits", "failed: no damage",
-				"failed: no capturer", "failed: no defenders", "failed: no nearby enemy", "failed: no reachable unit",
-				"reduced" };
-			if (bBestReinforce)
 			{
-				const SOperationalReinforce& reinforce = field.reinforce;
-				kTactical.LogTacticalMessage(CvString::format("Operational check of Reinforce %d at plot %d, estimate %.6f: %s; theater %.6f, stake %.6f, L %.0f, T %.0f, need %.0f, selected strength %.0f, help %.0f, share %.6f, share with help %.6f, swing %.6f, role unit %d, role help %.0f, missing role %d",
-					iBest, field.iPlotIndex, field.fReinforceEstimate, aszResults[eResult], field.fTheater, field.stake.fStake,
-					reinforce.fLocal, reinforce.fEnemy, reinforce.fNeed, reinforce.fSelectedStrength, reinforce.fHelp,
-					reinforce.fShare, reinforce.fShareWithHelp, reinforce.fSwing, reinforce.iRoleUnit, reinforce.fRoleHelp,
-					reinforce.bMissingRole ? 1 : 0));
+				static const char* const aszResults[] = {"passed",
+														 "failed: target gone",
+														 "failed: no recruits",
+														 "failed: no damage",
+														 "failed: no capturer",
+														 "failed: no defenders",
+														 "failed: no nearby enemy",
+														 "failed: no reachable unit",
+														 "reduced"};
+				if (bBestReinforce)
+				{
+					const SOperationalReinforce& reinforce = field.reinforce;
+					kTactical.LogTacticalMessage(CvString::format(
+						"Operational step %d check of Reinforce %d at plot %d, estimate %.6f: %s; theater %.6f, stake %.6f, L %.0f, T %.0f, "
+						"need %.0f, selected strength %.0f, help %.0f, share %.6f, share with help %.6f, swing %.6f, role unit %d, role help "
+						"%.0f, missing role %d",
+						iCommands, iBest, field.iPlotIndex, field.fReinforceEstimate, aszResults[eResult], field.fTheater, field.stake.fStake,
+						reinforce.fLocal, reinforce.fEnemy, reinforce.fNeed, reinforce.fSelectedStrength, reinforce.fHelp, reinforce.fShare,
+						reinforce.fShareWithHelp, reinforce.fSwing, reinforce.iRoleUnit, reinforce.fRoleHelp, reinforce.bMissingRole ? 1 : 0));
+				}
+				else
+					kTactical.LogTacticalMessage(CvString::format(
+						"Operational step %d check of fight %d at plot %d, estimate %.6f: %s; theater %.6f, destruction %.6f, exposure %.6f, "
+						"ground %.6f, relief %.6f, city progress %.6f, garrison %.6f",
+						iCommands, iBest, field.iPlotIndex, fBest, aszResults[eResult], field.fTheater, field.stake.fDestruction,
+						field.stake.fExposure, field.stake.fGround, field.stake.fRelief, field.stake.fCityProgress, field.stake.fGarrison));
 			}
-			else
-				kTactical.LogTacticalMessage(CvString::format("Operational check of fight %d at plot %d, estimate %.6f: %s; theater %.6f, destruction %.6f, exposure %.6f, ground %.6f, relief %.6f, city progress %.6f, garrison %.6f",
-					iBest, field.iPlotIndex, fBest, aszResults[eResult], field.fTheater,
-					field.stake.fDestruction, field.stake.fExposure, field.stake.fGround, field.stake.fRelief, field.stake.fCityProgress, field.stake.fGarrison));
-		}
-		if (bBestReinforce && eResult != OPERATIONAL_CHECK_PASSED)
-		{
-			//a reduced selection goes back into the queue at its checked estimate; Reinforce never waits
-			field.eReinforce = eResult == OPERATIONAL_CHECK_REDUCED && field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
-			continue;
-		}
-		if (eResult != OPERATIONAL_CHECK_PASSED)
-		{
-			field.iFailures++;
-			if (field.iFailures >= iMaxFailures)
-			{
-				field.eFight = OPERATIONAL_OFFER_SKIPPED;
-				record.vSkipped.push_back(iBest);
-			}
-			else
-				field.eFight = OPERATIONAL_OFFER_WAITING;
-			continue;
-		}
-
-		//the record is kept before the offer runs, so a command that ends the run is still recorded
-		record.commands.push_back(SOperationalCommandRecord());
-		SOperationalCommandRecord& command = record.commands.back();
-		command.iCommand = iCommands;
-		command.iBattlefield = iBest;
-		command.iPlotIndex = field.iPlotIndex;
-		command.eKind = bBestReinforce ? OPERATIONAL_KIND_REINFORCE : field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? OPERATIONAL_KIND_OWN_CITY_FIGHT :
-			field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? OPERATIONAL_KIND_CITY_FIGHT : OPERATIONAL_KIND_UNIT_FIGHT;
-		command.eOwner = field.eOwner;
-		//a Reinforce runs at its checked estimate, which a replaced selection may have raised
-		command.fEstimate = bBestReinforce ? field.fReinforceEstimate : fBest;
-		command.iFailuresBefore = bBestReinforce ? 0 : field.iFailures;
-
-		SOperationalBoard before;
-		SnapshotBoard(turn, before);
-		BeginCommand(kTactical, iCommands, field.iZoneID);
-		if (bBestReinforce)
-			ExecuteReinforce(kTactical, turn, field, command);
-		else
-			ExecuteFight(kTactical, turn, field, command);
-		EndCommand(kTactical);
-		iCommands++;
-		const bool bRefused = command.admission.eResult == OPERATIONAL_ADMISSION_REFUSED;
-		if (bBestReinforce)
-			field.eReinforce = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
-		else
-			field.eFight = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
-		turn.iStateRevision++;
-
-		//the exemptions read the threats after the command, since its search may have moved units into a target's reach
-		BuildThreats(turn);
-
-		for (size_t i = 0; i < turn.battlefields.size(); i++)
-		{
-			SOperationalBattlefield& other = turn.battlefields[i];
-			//an enemy-unit fight that ran its search covered the unit fights around its target
-			if (!bBestReinforce && command.bSearchRan && RetiresFight(field, other))
-			{
-				other.eFight = OPERATIONAL_OFFER_RETIRED;
-				command.vRetired.push_back(other.iID);
-			}
-			//a Reinforce that moved a unit covered the enemy groups it counted
-			if (bBestReinforce && command.bMoved && RetiresReinforce(field, other))
-			{
-				other.eReinforce = OPERATIONAL_OFFER_RETIRED;
-				command.vRetiredReinforce.push_back(other.iID);
-			}
-			//reach checks hold only until a command changes the board
-			other.reinforce.bChecked = false;
-		}
-
-		SOperationalBoard after;
-		SnapshotBoard(turn, after);
-		SOperationalChanges changes;
-		DiffBoard(turn.ePlayer, before, after, changes);
-
-		//a city this command captured becomes one of our cities, with its own offers from the next estimate on
-		for (size_t i = 0; i < changes.vCapturedPlots.size(); i++)
-		{
-			CvPlot* pPlot = GC.getMap().plotByIndex(changes.vCapturedPlots[i]);
-			CvCity* pCity = pPlot ? pPlot->getPlotCity() : NULL;
-			if (!pCity || pCity->getOwner() != turn.ePlayer)
+			if (eResult != OPERATIONAL_CHECK_PASSED)
 				continue;
-			bool bKnown = false;
-			for (size_t j = 0; j < turn.battlefields.size() && !bKnown; j++)
-				bKnown = turn.battlefields[j].eCenter == OPERATIONAL_CENTER_OUR_CITY && turn.battlefields[j].iTargetID == pCity->GetID();
-			if (!bKnown)
-				AddOwnCityBattlefield(kTactical, turn, *pCity);
-		}
-		if (bLog)
-			kTactical.LogTacticalMessage(CvString::format("Operational command %d: %s %d at plot %d, search %s, %d fights and %d Reinforce retired",
-				command.iCommand, bBestReinforce ? "Reinforce" : "fight", iBest, command.iPlotIndex, command.bSearchRan ? "ran" : "did not run",
-				(int)command.vRetired.size(), (int)command.vRetiredReinforce.size()));
 
-		EstimateOffers(kTactical, turn, &changes);
+			// the record is kept before the offer runs, so a command that ends the run is still recorded
+			SOperationalCommandRecord localCommand;
+			if (pRecord)
+				record.commands.push_back(SOperationalCommandRecord());
+			SOperationalCommandRecord& command = pRecord ? record.commands.back() : localCommand;
+			command.iStep = iCommands;
+			command.iCommand = iCommands;
+			command.iBattlefield = iBest;
+			command.iPlotIndex = field.iPlotIndex;
+			command.eKind = bBestReinforce									 ? OPERATIONAL_KIND_REINFORCE
+							: field.eCenter == OPERATIONAL_CENTER_OUR_CITY	 ? OPERATIONAL_KIND_OWN_CITY_FIGHT
+							: field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? OPERATIONAL_KIND_CITY_FIGHT
+																			 : OPERATIONAL_KIND_UNIT_FIGHT;
+			command.eOwner = field.eOwner;
+			// a Reinforce runs at its checked estimate, which a replaced selection may have raised
+			command.fEstimate = bBestReinforce ? field.fReinforceEstimate : fBest;
+			command.iFailuresBefore = bBestReinforce ? 0 : field.iFailures;
+			command.fTheater = field.fTheater;
+			command.fSwing = bBestReinforce ? field.reinforce.fSwing : 1.0;
+			command.stake = field.stake;
+
+			if (pRecord)
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+				SOperationalEvent event = {
+					"command", iBest, iCommands, bBestReinforce, check.eAfter, OPERATIONAL_OFFER_EXECUTED, check.fAfter, command.fEstimate};
+				record.steps.back().events.push_back(event);
+				record.steps.back().iCommand = iCommands;
+				record.steps.back().szEnd = "command";
+			}
+			SOperationalBoard before;
+			SnapshotBoard(turn, before);
+			const unsigned long long executeBefore = turn.performance.executeNs;
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.executeNs : NULL, &turn.performance.recordNs);
+				turn.performance.commands++;
+				SOperationalCommandScope commandScope(kTactical, iCommands, field.iZoneID);
+				if (bBestReinforce)
+					ExecuteReinforce(kTactical, turn, field, command);
+				else
+					ExecuteFight(kTactical, turn, field, command);
+			}
+			if (pRecord)
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+				record.steps.back().executeNs = turn.performance.executeNs - executeBefore;
+			}
+
+			if (bProvider) ReportExecution(choice.iEffective, OPERATIONAL_CHECK_PASSED, &command);
+			iCommands++;
+			const bool bRefused = command.admission.eResult == OPERATIONAL_ADMISSION_REFUSED;
+			if (bBestReinforce)
+				field.eReinforce = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
+			else
+				field.eFight = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
+			turn.iStateRevision++;
+			if (pRecord && bRefused)
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+				SOperationalEvent& commandEvent = record.steps.back().events.back();
+				commandEvent.eAfter = OPERATIONAL_OFFER_REFUSED;
+				SOperationalEvent refusal = commandEvent;
+				refusal.szType = "refusal";
+				refusal.eBefore = refusal.eAfter;
+				refusal.fBefore = refusal.fAfter;
+				record.steps.back().events.push_back(refusal);
+			}
+			if (IsHostStopped())
+			{
+				if (pRecord)
+					pRecord->steps.back().szEnd = "stopped";
+				break;
+			}
+			SOperationalChanges changes;
+			{
+				SOperationalTimer retireTimer(turn.bTiming ? &turn.performance.retireNs : NULL);
+
+				// the exemptions read the threats after the command, since its search may have moved units into a target's reach
+				BuildThreats(turn);
+
+				for (size_t i = 0; i < turn.battlefields.size(); i++)
+				{
+					SOperationalBattlefield& other = turn.battlefields[i];
+					// an enemy-unit fight that ran its search covered the unit fights around its target
+					if (!bBestReinforce && command.bSearchRan && RetiresFight(field, other))
+					{
+						other.eFight = OPERATIONAL_OFFER_RETIRED;
+						command.vRetired.push_back(other.iID);
+					}
+					// a Reinforce that moved a unit covered the enemy groups it counted
+					if (bBestReinforce && command.bMoved && RetiresReinforce(field, other))
+					{
+						other.eReinforce = OPERATIONAL_OFFER_RETIRED;
+						command.vRetiredReinforce.push_back(other.iID);
+					}
+					// reach checks hold only until a command changes the board
+					other.reinforce.bChecked = false;
+				}
+
+				SOperationalBoard after;
+				SnapshotBoard(turn, after);
+				DiffBoard(turn.ePlayer, before, after, changes);
+
+				// a city this command captured becomes one of our cities, with its own offers from the next estimate on
+				for (size_t i = 0; i < changes.vCapturedPlots.size(); i++)
+				{
+					CvPlot* pPlot = GC.getMap().plotByIndex(changes.vCapturedPlots[i]);
+					CvCity* pCity = pPlot ? pPlot->getPlotCity() : NULL;
+					if (!pCity || pCity->getOwner() != turn.ePlayer)
+						continue;
+					bool bKnown = false;
+					for (size_t j = 0; j < turn.battlefields.size() && !bKnown; j++)
+						bKnown =
+							turn.battlefields[j].eCenter == OPERATIONAL_CENTER_OUR_CITY && turn.battlefields[j].iTargetID == pCity->GetID();
+					if (!bKnown)
+						AddOwnCityBattlefield(kTactical, turn, *pCity);
+				}
+			}
+			if (bLog)
+				kTactical.LogTacticalMessage(CvString::format(
+					"Operational step %d command %d: %s %d at plot %d, search %s, %d fights and %d Reinforce retired", command.iStep,
+					command.iCommand, bBestReinforce ? "Reinforce" : "fight", iBest, command.iPlotIndex,
+					command.bSearchRan ? "ran" : "did not run", (int)command.vRetired.size(), (int)command.vRetiredReinforce.size()));
+
+			{
+				SOperationalTimer timer(turn.bTiming ? &turn.performance.estimateNs : NULL);
+				EstimateOffers(kTactical, turn, &changes);
+			}
+			if (pRecord)
+				RecordStep(turn, *pRecord);
+		}
 	}
+	catch (...)
+	{
+		if (pRecord && !pRecord->steps.empty()) pRecord->steps.back().szEnd = "stopped";
+		CloseRecord(turn, pRecord);
+		timing = turn.performance;
+		throw;
+	}
+	CloseRecord(turn, pRecord);
+	timing = turn.performance;
 }
 
 //------------------------------------------------------------------------------
@@ -1042,6 +1266,7 @@ void CvTacticalOperationalLoop::AddOwnCityBattlefield(CvTacticalAI& kTactical, S
 // Vox Deorum: one cache serves the city-first estimate pass and expires when that pass ends.
 void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalChanges* pChanges)
 {
+	turn.bEstimating = true;
 	SOperationalEstimateCache cache;
 	for (int iPass = 0; iPass < 2; iPass++)
 	{
@@ -1055,6 +1280,7 @@ void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperati
 			const bool bReinforceOpen = field.eReinforce == OPERATIONAL_OFFER_READY || field.eReinforce == OPERATIONAL_OFFER_INACTIVE;
 			if (!bFightOpen && !bReinforceOpen && field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT)
 				continue;
+			turn.performance.estimates += (bFightOpen ? 1 : 0) + (bReinforceOpen ? 1 : 0);
 			if (!EstimateBattlefield(kTactical, turn, cache, field, bFightOpen || bReinforceOpen, bReinforceOpen))
 			{
 				if (bFightOpen)
@@ -1064,7 +1290,10 @@ void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperati
 				continue;
 			}
 			if (field.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT)
+			{
 				cache.cityTheaters[field.iPlotIndex] = field.fTheater;
+				cache.theaters[field.iPlotIndex] = field.theater;
+			}
 			if (field.eFight == OPERATIONAL_OFFER_WAITING)
 			{
 				if (pChanges && field.fEstimate > 0.0 && WakesFight(turn.ePlayer, turn, field, *pChanges))
@@ -1076,6 +1305,7 @@ void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperati
 				field.eReinforce = field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
 		}
 	}
+	turn.bEstimating = false;
 }
 
 // Vox Deorum: one local set feeds theater, fight stake and Reinforce; closed cities need only theater strength.
@@ -1116,6 +1346,8 @@ void CvTacticalOperationalLoop::EstimateTheater(const SOperationalTurn& turn, co
 	{
 		reinforce.countedUnits.clear();
 		reinforce.countedCities.clear();
+		SOperationalTimer timer(turn.bTiming ? &turn.performance.forceTallyNs : NULL);
+		turn.performance.forceTallies++;
 		if (bOurCity)
 		{
 			reinforce.fLocal = LocalCityStrength(*kPlot.getPlotCity(), local);
@@ -1135,14 +1367,20 @@ void CvTacticalOperationalLoop::EstimateTheater(const SOperationalTurn& turn, co
 	{
 		map<int, double>::const_iterator theater = cache.cityTheaters.find(field.iZoneCityPlot);
 		field.fTheater = theater != cache.cityTheaters.end() ? theater->second : turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_FLOOR];
+		map<int, SOperationalTheater>::const_iterator components = cache.theaters.find(field.iZoneCityPlot);
+		field.theater = components != cache.theaters.end() ? components->second : SOperationalTheater();
 	}
 	else
 	{
 		const CvCity* pCity = kPlot.getPlotCity();
 		const double fAttackers = bOurCity ? reinforce.fEnemy : reinforce.fLocal;
 		const double fPressure = fAttackers <= 0.0 ? 0.0 : (bOurCity ? 1.0 - reinforce.fShare : reinforce.fShare);
+		field.theater.fImportance = field.fImportance;
+		field.theater.fPressure = fPressure;
+		field.theater.fDamageLevel = DamageShare(pCity->getDamage(), pCity->GetMaxHitPoints());
+		field.theater.fContest = TheaterContest(fPressure, field.theater.fDamageLevel);
 		field.fTheater = TheaterMultiplier(turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_FLOOR], field.fImportance,
-			TheaterContest(fPressure, DamageShare(pCity->getDamage(), pCity->GetMaxHitPoints())));
+			field.theater.fContest);
 	}
 }
 
@@ -1186,9 +1424,13 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		const double fExposure = threat != turn.unitThreats.end() ? threat->second.fExposure : 0.0;
 		if (fUnitScale > 0.0)
 		{
-			stake.fDestruction = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * DestroyedUnitValue(*pUnit, iDamage) / fUnitScale;
+			const double fDestroyed = DestroyedUnitValue(*pUnit, iDamage);
+			stake.afValue[0] = fDestroyed / fUnitScale;
+			stake.fDestruction = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fDestroyed / fUnitScale;
+			stake.afValue[1] = fExposure / fUnitScale;
 			stake.fExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale;
 		}
+		stake.afValue[2] = stake.fDamageShare * field.fGround;
 		stake.fGround = stake.fDamageShare * afWeight[OPERATIONAL_WEIGHT_HOLD_GROUND] * field.fGround;
 		if (pZoneCity && pZoneCity->getOwner() == turn.ePlayer)
 		{
@@ -1204,6 +1446,7 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 			stake.fFallShare = DamageShare(iDanger, std::max(1, pZoneCity->GetMaxHitPoints() - pZoneCity->getDamage()));
 			// City danger is the sum of these attack contributions.
 			stake.fReliefShare = iDanger > 0 ? static_cast<double>(iTargetDamage) / iDanger : 0.0;
+			stake.afValue[3] = stake.fDamageShare * turn.fCityUnit * stake.fFallShare * stake.fReliefShare;
 			stake.fRelief = stake.fDamageShare * afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * turn.fCityUnit *
 				stake.fFallShare * stake.fReliefShare;
 		}
@@ -1226,9 +1469,13 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 				dangers[vEndangered[i]->GetID()]);
 		field.bHasEndangered = !vEndangered.empty();
 
+		stake.afValue[4] = turn.fCityUnit * stake.fFallShare;
 		stake.fCityProgress = afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * turn.fCityUnit * stake.fFallShare;
 		if (fUnitScale > 0.0)
+		{
+			stake.afValue[1] = fExposure / fUnitScale;
 			stake.fExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale;
+		}
 		stake.fStake = stake.fCityProgress + stake.fExposure;
 	}
 	else
@@ -1241,6 +1488,7 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		for (size_t i = 0; i < local.vDamage.size(); i++)
 			SimulateCityAttack(*pCity, *local.vDamage[i], damage, iRisk);
 		stake.fFallShare = AttackFallShare(damage.iCityDamage, damage.iHeal, damage.iRemaining, local.bCanCapture);
+		stake.afValue[4] = turn.fCityUnit * stake.fFallShare;
 		stake.fCityProgress = afWeight[OPERATIONAL_WEIGHT_OCCUPATION] * turn.fCityUnit * stake.fFallShare;
 
 		CvUnit* pGarrison = pCity->GetGarrisonedUnit();
@@ -1257,8 +1505,13 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		if (fUnitScale > 0.0)
 		{
 			if (damage.pGarrison && damage.iGarrisonHealth > 0)
-				stake.fGarrison = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * DestroyedUnitValue(*damage.pGarrison,
-					stake.fFallShare >= 1.0 ? damage.iGarrisonHealth : damage.iGarrisonDamage) / fUnitScale;
+			{
+				const double fDestroyed = DestroyedUnitValue(*damage.pGarrison,
+					stake.fFallShare >= 1.0 ? damage.iGarrisonHealth : damage.iGarrisonDamage);
+				stake.afValue[5] = fDestroyed / fUnitScale;
+				stake.fGarrison = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fDestroyed / fUnitScale;
+			}
+			stake.afValue[1] = fExposure / fUnitScale;
 			stake.fExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale;
 		}
 		stake.fStake = stake.fCityProgress + stake.fGarrison + stake.fExposure;
@@ -1647,6 +1900,8 @@ int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit
 // Vox Deorum: reads danger contents before installing any roll, so cache refreshes retain native expected damage.
 int CvTacticalOperationalLoop::UnitDanger(const SOperationalTurn& turn, const CvUnit& kUnit)
 {
+	SOperationalTimer dangerTimer(turn.bTiming && turn.bEstimating ? &turn.performance.dangerReadNs : NULL);
+	if (turn.bEstimating) turn.performance.dangerReads++;
 	CvDangerPlotContents& contents = DangerContents(turn.ePlayer, *kUnit.plot());
 	vector<SOperationalThreatDamage> threats;
 	return GetDangerByThreat(contents, &kUnit, SUnitIDValueContainer(), 0, AIR_ACTION_ATTACK, threats,
@@ -1938,10 +2193,12 @@ void CvTacticalOperationalLoop::ExecuteFight(CvTacticalAI& kTactical, const SOpe
 	// Might be able to hit/kill with a city
 	if (!bCity)
 	{
+		SOperationalTimer timer(turn.bTiming ? &turn.performance.cityFireNs : NULL);
 		CvUnit* pDefender = pPlot->getBestDefender(NO_PLAYER, ePlayer, NULL, true, true);
 		if (!pDefender || pDefender->isDelayedDeath())
 			return;
-		if (kTactical.FindCitiesWithinStrikingDistance(pPlot) && kTactical.ExecuteAttackWithCities(pDefender))
+		record.bCityFireAttempted = kTactical.FindCitiesWithinStrikingDistance(pPlot);
+		if (record.bCityFireAttempted && kTactical.ExecuteAttackWithCities(pDefender))
 			return;
 	}
 
@@ -2016,9 +2273,14 @@ void CvTacticalOperationalLoop::ExecuteFight(CvTacticalAI& kTactical, const SOpe
 	for (size_t i = 0; i < vNativeSpotters.size(); i++)
 		if (!IsHeldGarrison(vNativeSpotters[i]) && std::find(vUnits.begin(), vUnits.end(), vNativeSpotters[i]) != vUnits.end())
 			vSpotters.push_back(vNativeSpotters[i]);
-	bool bSearch = kTactical.ExecuteSpotterMove(vSpotters, pPlot);
+	bool bSearch;
+	{
+		SOperationalTimer timer(turn.bTiming ? &turn.performance.spottingNs : NULL);
+		bSearch = kTactical.ExecuteSpotterMove(vSpotters, pPlot);
+	}
 	if (bSearch && !MOD_VOX_TACTICAL_AIR_SEARCH)
 	{
+		SOperationalTimer timer(turn.bTiming ? &turn.performance.greedyAirNs : NULL);
 		//first handle air units (including missiles)
 		kTactical.ExecuteAirSweep(pPlot);
 		kTactical.ExecuteAirAttack(pPlot);
@@ -2136,6 +2398,7 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckReinforce(CvTacticalAI& 
 	if (!pTarget)
 		return OPERATIONAL_CHECK_TARGET_GONE;
 
+	SOperationalTimer reachTimer(turn.bTiming ? &turn.performance.reinforceReachNs : NULL);
 	// do not set a player - that way we can traverse unrevealed plots and foreign territory
 	SPathFinderUserData data(NO_PLAYER, PT_ARMY_MIXED, NO_PLAYER, kTactical.GetRecruitRange());
 	const ReachablePlots relevantPlots = GC.GetStepFinder().GetPlotsInReach(pTarget, data);
@@ -2153,6 +2416,7 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckReinforce(CvTacticalAI& 
 			if (passed.count(iUnitID) > 0)
 				continue;
 			CvUnit* pUnit = kTactical.m_pPlayer->getUnit(iUnitID);
+			turn.performance.reinforceReachChecks++;
 			const bool bReach = ReinforceReach(kTactical, pUnit, pTarget, relevantPlots, searchPlots);
 			if (bReach)
 				passed.insert(iUnitID);
@@ -2574,6 +2838,7 @@ SOperationalDecisionIdentity CvTacticalOperationalLoop::DecisionIdentity(const S
 	if (pCommand)
 	{
 		identity.iCommand = pCommand->iCommand;
+		identity.iStep = pCommand->iStep;
 		identity.iBattlefield = pCommand->iBattlefield;
 		identity.eKind = pCommand->eKind;
 		identity.iTargetPlot = pCommand->iPlotIndex;
@@ -2593,10 +2858,8 @@ int CvTacticalOperationalLoop::NativeCommandChoice(const SOperationalChoiceReque
 		if (iBest >= 0)
 		{
 			const SOperationalSelectableOffer& best = request.offers[iBest];
-			if (!OfferOutranks(offer.bReinforce ? field.fReinforceEstimate : field.fEstimate,
-				OfferRank(field.eCenter, offer.bReinforce), field.iPlotIndex,
-				best.bReinforce ? best.field.fReinforceEstimate : best.field.fEstimate,
-				OfferRank(best.field.eCenter, best.bReinforce), best.field.iPlotIndex))
+			if (!OperationalOfferBefore(field, offer.bReinforce, offer.iOffer,
+				best.field, best.bReinforce, best.iOffer))
 				continue;
 		}
 		iBest = static_cast<int>(i);
@@ -2656,13 +2919,19 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 	const bool bReinforce = record.eKind == OPERATIONAL_KIND_REINFORCE;
 	if (bReinforce)
 		decision.effectiveReinforce = field.reinforce;
-	if (!HasAdmission())
+	// Vox Deorum: query capability once for this command and keep it through admission dispatch.
+	const bool bHasAdmission = HasAdmission();
+	if (!bHasAdmission)
 	{
 		decision.eResult = vUnits.empty() ? OPERATIONAL_ADMISSION_NO_ELIGIBLE : OPERATIONAL_ADMISSION_ABSENT;
 		return !vUnits.empty();
 	}
 	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
-	if (bReinforce)
+	// Vox Deorum: supplied adapters rebuild eligibility without the hidden-state native filters.
+	const bool bPermittedMenu = UsesPermittedMenu();
+	if (bPermittedMenu)
+		PrepareAdmission(request);
+	else if (bReinforce)
 	{
 		const CvCity* pCity = pTarget->getPlotCity();
 		GatherReinforceCandidates(kTactical, field, *pTarget, pCity != NULL || !pTarget->isWater(),
@@ -2678,8 +2947,14 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 			candidate.bHeldGarrison = IsHeldGarrison(vUnits[i]);
 			request.candidates.push_back(candidate);
 		}
+	if (!bPermittedMenu)
+		PrepareAdmission(request);
 	GatherSearchPlotZones(vUnits, pTarget, record.eKind != OPERATIONAL_KIND_OWN_CITY_FIGHT, request.preliminaryZones);
-	const bool bCallback = AdmitCommand(request, decision.requested);
+	bool bCallback;
+	{
+		SOperationalTimer timer(turn.bTiming ? &turn.performance.admissionNs : NULL);
+		bCallback = AdmitCommand(request, decision.requested);
+	}
 	decision.eResult = bCallback ? OPERATIONAL_ADMISSION_NATIVE : OPERATIONAL_ADMISSION_ABSENT;
 	if (bCallback && !decision.requested.bUseNative)
 	{
@@ -2720,6 +2995,17 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 			else
 				decision.vFailedReach.push_back(iUnitID);
 		}
+		decision.vEffective.swap(reached);
+	}
+	// Vox Deorum: added fight candidates must belong to native's validated reach set.
+	if (!bReinforce && decision.eResult == OPERATIONAL_ADMISSION_SUBSET)
+	{
+		vector<int> reached;
+		for (size_t i = 0; i < decision.vEffective.size(); ++i)
+			if (std::find(request.vNative.begin(), request.vNative.end(), decision.vEffective[i]) != request.vNative.end())
+				reached.push_back(decision.vEffective[i]);
+			else
+				decision.vFailedReach.push_back(decision.vEffective[i]);
 		decision.vEffective.swap(reached);
 	}
 	if (bReinforce)
@@ -2768,6 +3054,15 @@ void CvTacticalOperationalLoop::StampDecision(SOperationalDecisionIdentity& /*id
 // Vox Deorum: the DLL has no supplied operational provider.
 bool CvTacticalOperationalLoop::HasOperationalProvider() { return false; }
 
+// Vox Deorum: the DLL always uses its native queue.
+bool CvTacticalOperationalLoop::UsesPermittedMenu() { return false; }
+
+// Vox Deorum: confirmed execution feedback is a simulator-only provider seam.
+void CvTacticalOperationalLoop::ReportExecution(int /*iOffer*/, int /*iResult*/, const SOperationalCommandRecord* /*pCommand*/) {}
+
+// Vox Deorum: the DLL retains its native admission candidates.
+void CvTacticalOperationalLoop::PrepareAdmission(SOperationalAdmissionRequest& /*request*/) {}
+
 // Vox Deorum: the DLL keeps native admission without building an unused observation.
 bool CvTacticalOperationalLoop::HasAdmission() { return false; }
 
@@ -2793,6 +3088,23 @@ STacticalFlavors CvTacticalOperationalLoop::ChooseSearchFlavors(const SOperation
 // engagements
 //------------------------------------------------------------------------------
 
+// Vox Deorum: retains confirmed engagement counters on every exit from command search.
+struct SOperationalEngagementScope
+{
+	const SOperationalTurn* pTurn;
+	const SOperationalEngagementReport& report;
+	// Vox Deorum: borrows the command's accumulated search report.
+	SOperationalEngagementScope(const SOperationalTurn* turn, const SOperationalEngagementReport& value) : pTurn(turn), report(value) {}
+	// Vox Deorum: counts provider/search attempts even if execution stopped the host.
+	~SOperationalEngagementScope()
+	{
+		if (!pTurn) return;
+		if (report.iAttempts > 0) pTurn->performance.engagements++;
+		if (pTurn->bTiming) pTurn->performance.searchNs += report.searchNs;
+		pTurn->performance.attempts += report.iAttempts;
+	}
+};
+
 // The geometry comes first so the flavors can follow the zones the search covers.
 bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 	PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
@@ -2801,6 +3113,7 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 {
 	if (vUnits.empty() || !pTarget)
 		return false;
+	report.bTiming = pTurn ? pTurn->bTiming : (GC.getLogging() && GC.getAILogging());
 	GatherSearchPlotZones(vUnits, pTarget, bTargetDistanceRelevant, report.zonePlots);
 	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, eKind, eCounterpart, VoxRlCurrentOperationId(ePlayer),
 		aiMapped, settings, report.iRepresentativeZone, report.iAggressionRisk);
@@ -2824,7 +3137,10 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 	request.iRepresentativeZone = report.iRepresentativeZone;
 	request.native = report.flavors;
 	request.iAggressionRisk = report.iAggressionRisk;
-	report.requestedFlavors = ChooseSearchFlavors(request);
+	{
+		SOperationalTimer timer(pTurn && pTurn->bTiming ? &pTurn->performance.flavorsNs : NULL);
+		report.requestedFlavors = ChooseSearchFlavors(request);
+	}
 	for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
 		if (report.requestedFlavors.iFlavor[iSlot] < 0 || report.requestedFlavors.iFlavor[iSlot] > 100)
 			report.bInvalidFlavors = true;
@@ -2843,6 +3159,7 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 		else if (pZone && pZone->GetTerritoryType() == TACTICAL_TERRITORY_ENEMY)
 			eSearchIntent = kSearchIntentBattleEnemy;
 	}
+	SOperationalEngagementScope closure(pTurn, report);
 	return SearchAndExecute(ePlayer, vUnits, pTarget, report.eAggLvl, eSearchIntent, report.flavors,
 		bTargetDistanceRelevant, report);
 }
@@ -2864,16 +3181,20 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 	{
 		iCount++;
 
+		report.iAttempts++;
 		vector<STacticalAssignment> vAssignments;
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		{
-			vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, eSearchIntent, ePlayer,
-				currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, bTargetDistanceRelevant, false, 0, flavors);
-		}
-		else
-		{
-			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, bTargetDistanceRelevant,
-				false, 0, flavors);
+			SOperationalTimer searchTimer(report.bTiming ? &report.searchNs : NULL);
+			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+			{
+				vAssignments = VoxRlCapture::GetInstance().SearchAssignments(VOX_RL_CALLER_FULL, eSearchIntent, ePlayer,
+					currentUnits, pTarget, static_cast<int>(eAggLvl), unuseableUnits, bTargetDistanceRelevant, false, 0, flavors);
+			}
+			else
+			{
+				vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, bTargetDistanceRelevant,
+					false, 0, flavors);
+			}
 		}
 		if (vAssignments.empty())
 		{
@@ -3096,7 +3417,10 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
 		if (!IsHeldGarrison(*it))
 			vSpotters.push_back(*it);
-	kTactical.ExecuteSpotterMove(vSpotters, pTarget);
+	{
+		SOperationalTimer timer(pTurn && pTurn->bTiming ? &pTurn->performance.spottingNs : NULL);
+		kTactical.ExecuteSpotterMove(vSpotters, pTarget);
+	}
 
 	//first round: in case there are enemies around, do a combat simulation
 	vector<CvUnit*> vSimUnits; //make a copy we can modify!
@@ -3106,6 +3430,7 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	bool bTactSimSuccess = vSimUnits.empty() ? false : ExecuteEngagement(kTactical.m_pPlayer->GetID(), vSimUnits, pTarget, eKind, eCounterpart,
 		aiMapped, settings, true, report, pTurn, pCommand);
 
+	SOperationalTimer marchingTimer(pTurn && pTurn->bTiming ? &pTurn->performance.marchingNs : NULL);
 	//sometimes tactsim cannot use all units, eg if they are too far out
 	vector<CvUnit*> farout;
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
@@ -3461,6 +3786,8 @@ const SOperationalCityDanger& CvTacticalOperationalLoop::CachedCityDanger(const 
 	map<int, SOperationalCityDanger>::iterator it = cache.cityDanger.find(iPlotIndex);
 	if (it == cache.cityDanger.end())
 	{
+		SOperationalTimer dangerTimer(turn.bTiming && turn.bEstimating ? &turn.performance.dangerReadNs : NULL);
+		if (turn.bEstimating) turn.performance.dangerReads++;
 		CvDangerPlotContents& contents = DangerContents(turn.ePlayer, *kCity.plot());
 		SOperationalCityDanger danger;
 		danger.iTotal = GetCityDangerByThreat(contents, &kCity, NULL, SUnitIDValueContainer(), 0, &danger.threats,
@@ -3468,4 +3795,159 @@ const SOperationalCityDanger& CvTacticalOperationalLoop::CachedCityDanger(const 
 		it = cache.cityDanger.insert(make_pair(iPlotIndex, danger)).first;
 	}
 	return it->second;
+}
+
+// Vox Deorum: reads the monotonic performance counter used by cvStopWatch, avoiding absolute-tick overflow.
+unsigned long long CvTacticalOperationalLoop::ClockNs()
+{
+	static LARGE_INTEGER frequency = {0};
+	if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
+	LARGE_INTEGER ticks;
+	QueryPerformanceCounter(&ticks);
+	return (ticks.QuadPart / frequency.QuadPart) * 1000000000ULL +
+		(ticks.QuadPart % frequency.QuadPart) * 1000000000ULL / frequency.QuadPart;
+}
+
+// Vox Deorum: reports the game's retained terminal state.
+bool CvTacticalOperationalLoop::IsHostStopped()
+{
+	return GC.getGame().getGameState() == GAMESTATE_OVER;
+}
+
+// Vox Deorum: closed offers remain consumed for the rest of this pass.
+bool OperationalOfferIsClosed(eOperationalOfferState state)
+{
+	return state >= OPERATIONAL_OFFER_SKIPPED;
+}
+
+// Vox Deorum: names closure using retained state and immutable offer metadata.
+const char* OperationalOfferClosedReason(eOperationalOfferState state, eOperationalKind kind)
+{
+	if (state == OPERATIONAL_OFFER_SKIPPED) return "failureLimit";
+	if (state == OPERATIONAL_OFFER_RETIRED) return "retired";
+	if (state == OPERATIONAL_OFFER_EXECUTED) return "executed";
+	if (state == OPERATIONAL_OFFER_REFUSED) return "providerRefused";
+	if (state == OPERATIONAL_OFFER_DROPPED) return kind == OPERATIONAL_KIND_UNIT_FIGHT ? "targetGone" : "cityLost";
+	return "";
+}
+
+// Vox Deorum: city progress at our city uses hold-city; other progress uses occupation.
+int OperationalStakeWeight(int iTerm, eOperationalKind kind)
+{
+	const int weights[NUM_OPERATIONAL_STAKE_TERMS] = { OPERATIONAL_WEIGHT_ATTRITION, OPERATIONAL_WEIGHT_RISK,
+		OPERATIONAL_WEIGHT_HOLD_GROUND, OPERATIONAL_WEIGHT_HOLD_CITY,
+		kind == OPERATIONAL_KIND_OWN_CITY_FIGHT ? OPERATIONAL_WEIGHT_HOLD_CITY : OPERATIONAL_WEIGHT_OCCUPATION,
+		OPERATIONAL_WEIGHT_ATTRITION };
+	return weights[iTerm];
+}
+
+// Vox Deorum: compares every serialized scalar before emitting a replacement snapshot row.
+bool OperationalSnapshotEqual(const SOperationalSnapshot& a, const SOperationalSnapshot& b)
+{
+	if (a.iPlotIndex != b.iPlotIndex || a.iRank != b.iRank || a.eState != b.eState || a.fEstimate != b.fEstimate ||
+		a.fTheater != b.fTheater || a.fSwing != b.fSwing || a.fSelectedSwing != b.fSelectedSwing ||
+		a.theater.fImportance != b.theater.fImportance || a.theater.fPressure != b.theater.fPressure ||
+		a.theater.fContest != b.theater.fContest || a.theater.fDamageLevel != b.theater.fDamageLevel) return false;
+	for (int i = 0; i < NUM_OPERATIONAL_STAKE_TERMS; ++i)
+		if (a.stake.afValue[i] != b.stake.afValue[i]) return false;
+	return a.stake.fDestruction == b.stake.fDestruction && a.stake.fExposure == b.stake.fExposure &&
+		a.stake.fGround == b.stake.fGround && a.stake.fRelief == b.stake.fRelief &&
+		a.stake.fCityProgress == b.stake.fCityProgress && a.stake.fGarrison == b.stake.fGarrison;
+}
+
+// Vox Deorum: writes only scalar snapshots from the live queue, with stable ranks and explicit closure reasons.
+void CvTacticalOperationalLoop::RecordStep(const SOperationalTurn& turn, SOperationalTurnRecord& record)
+{
+	SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+	SOperationalStep step;
+	step.iStep = static_cast<int>(record.steps.size());
+	step.estimateNs = turn.performance.estimateNs - record.recordedEstimateNs;
+	record.recordedEstimateNs = turn.performance.estimateNs;
+	vector<int> ready, ranks(turn.battlefields.size() * 2, -1);
+	for (size_t i = 0; i < turn.battlefields.size(); ++i)
+		for (int k = 0; k < 2; ++k)
+			if ((k ? turn.battlefields[i].eReinforce : turn.battlefields[i].eFight) == OPERATIONAL_OFFER_READY)
+				ready.push_back(static_cast<int>(i) * 2 + k);
+	std::sort(ready.begin(), ready.end(), PrOperationalOfferBefore(turn.battlefields));
+	for (size_t i = 0; i < ready.size(); ++i) ranks[ready[i]] = static_cast<int>(i);
+	for (size_t i = 0; i < turn.battlefields.size(); i++)
+	{
+		const SOperationalBattlefield& field = turn.battlefields[i];
+		for (int k = 0; k < 2; k++)
+		{
+			if (record.offers.size() <= i * 2 + k)
+			{
+				SOperationalOfferRecord offer = { field.iID, field.iTargetID, field.iPlotIndex, field.iZoneID,
+					k ? OPERATIONAL_KIND_REINFORCE : field.eCenter == OPERATIONAL_CENTER_OUR_CITY ? OPERATIONAL_KIND_OWN_CITY_FIGHT :
+					field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY ? OPERATIONAL_KIND_CITY_FIGHT : OPERATIONAL_KIND_UNIT_FIGHT, field.eOwner };
+				record.offers.push_back(offer);
+			}
+			SOperationalSnapshot row;
+			row.iBattlefield = field.iID;
+			row.iPlotIndex = field.iPlotIndex;
+			row.bReinforce = k != 0;
+			row.eState = k ? field.eReinforce : field.eFight;
+			row.fEstimate = k ? field.fReinforceEstimate : field.fEstimate;
+			row.fTheater = field.fTheater;
+			row.theater = field.theater;
+			// Vox Deorum: a gated offer contributes no swing; keep the native selection swing alongside it.
+			row.fSwing = k ? (field.fReinforceEstimate > 0.0 ? field.reinforce.fSwing : 0.0) : 1.0;
+			row.fSelectedSwing = k ? field.reinforce.fSwing : 1.0;
+			row.stake = field.stake;
+
+			if (OperationalOfferIsClosed(row.eState) && i * 2 + k < record.latestSnapshot.size())
+			{
+				const eOperationalOfferState state = row.eState;
+				row = record.latestSnapshot[i * 2 + k];
+				row.eState = state;
+				// Vox Deorum: a checked Reinforce can execute at a repaired estimate within this step.
+				if (state == OPERATIONAL_OFFER_EXECUTED || state == OPERATIONAL_OFFER_REFUSED)
+					for (size_t c = 0; c < record.commands.size(); c++)
+						if (record.commands[c].iBattlefield == field.iID &&
+							(record.commands[c].eKind == OPERATIONAL_KIND_REINFORCE) == (k != 0))
+						{
+							row.fEstimate = record.commands[c].fEstimate;
+							row.fTheater = record.commands[c].fTheater;
+							row.fSwing = row.fSelectedSwing = record.commands[c].fSwing;
+							row.iPlotIndex = record.commands[c].iPlotIndex;
+							row.stake = record.commands[c].stake;
+						}
+			}
+			row.szReason = OperationalOfferClosedReason(row.eState, record.offers[i * 2].eKind);
+			row.iRank = ranks[i * 2 + k];
+			if (i * 2 + k >= record.latestSnapshot.size())
+			{
+				step.snapshot.push_back(row);
+				record.latestSnapshot.push_back(row);
+			}
+			else if (!OperationalSnapshotEqual(row, record.latestSnapshot[i * 2 + k]))
+			{
+				step.snapshot.push_back(row);
+				record.latestSnapshot[i * 2 + k] = row;
+			}
+		}
+	}
+	record.steps.push_back(step);
+}
+
+// Vox Deorum: closes the last trace step before scratch destruction, after nested stage timers have unwound.
+void CvTacticalOperationalLoop::CloseRecord(const SOperationalTurn& turn, SOperationalTurnRecord* pRecord)
+{
+	if (pRecord && !pRecord->steps.empty())
+	{
+		SOperationalTimer timer(turn.bTiming ? &turn.performance.recordNs : NULL);
+		SOperationalStep& step = pRecord->steps.back();
+		if (IsHostStopped() || !*step.szEnd) step.szEnd = "stopped";
+		unsigned long long estimated = 0, checked = 0, executed = 0;
+		for (size_t i = 0; i + 1 < pRecord->steps.size(); i++)
+		{
+			estimated += pRecord->steps[i].estimateNs;
+			checked += pRecord->steps[i].readinessNs;
+			executed += pRecord->steps[i].executeNs;
+		}
+		// Vox Deorum: retain partial stages if an estimate or readiness check unwound before its normal record boundary.
+		step.estimateNs = turn.performance.estimateNs - estimated;
+		step.readinessNs = turn.performance.readinessNs - checked;
+		step.executeNs = turn.performance.executeNs - executed;
+	}
 }
