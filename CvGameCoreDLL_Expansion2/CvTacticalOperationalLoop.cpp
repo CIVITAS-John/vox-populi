@@ -2676,14 +2676,14 @@ bool CvTacticalOperationalLoop::WakesFight(PlayerTypes ePlayer, const SOperation
 double CvTacticalOperationalLoop::OurUnitWorth(const CvUnit& kUnit)
 {
 	const CvUnitEntry& kInfo = kUnit.getUnitInfo();
-	const double fBase = UnitBaseWorth(kInfo.GetPower(), kInfo.GetProductionCost());
+	const double fBase = UnitBaseWorth(kInfo);
 	double fUpgrade = 0.0;
 	const UnitTypes eUpgrade = kUnit.GetUpgradeUnitType();
 	if (eUpgrade != NO_UNIT && kUnit.CanUpgradeRightNow(true))
 	{
 		const CvUnitEntry* pUpgrade = GC.getUnitInfo(eUpgrade);
 		if (pUpgrade)
-			fUpgrade = UpgradePremium(fBase, UnitBaseWorth(pUpgrade->GetPower(), pUpgrade->GetProductionCost()), gradeUpgradeDiscount);
+			fUpgrade = UpgradePremium(fBase, UnitBaseWorth(*pUpgrade), gradeUpgradeDiscount);
 	}
 	return UnitWorth(fBase, kUnit.getLevel(), gradeSeniorityPerLevel) + fUpgrade;
 }

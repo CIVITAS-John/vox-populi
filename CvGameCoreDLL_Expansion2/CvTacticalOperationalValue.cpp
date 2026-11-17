@@ -5,6 +5,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvTacticalOperationalValue.h"
 #include "CvUnitClasses.h"
+#include <cmath>
 #include "LintFree.h"
 
 // Vox Deorum: maps risk to our expected roll in units of 1/200 of the random damage range.
@@ -19,13 +20,13 @@ int EnemyRollPer200(int iRisk)
 	return 200 - iRisk;
 }
 
-// Returns power times production cost, each floored at 0.
+// Returns the geometric mean of power and production cost, each floored at 0.
 double UnitBaseWorth(int iPower, int iProductionCost)
 {
-	return static_cast<double>(std::max(0, iPower)) * std::max(0, iProductionCost);
+	return std::sqrt(static_cast<double>(std::max(0, iPower)) * std::max(0, iProductionCost));
 }
 
-// Reads power and production cost from the unit entry.
+// Uses the unit entry's raw power and production cost.
 double UnitBaseWorth(const CvUnitEntry& kUnitEntry)
 {
 	return UnitBaseWorth(kUnitEntry.GetPower(), kUnitEntry.GetProductionCost());
@@ -228,7 +229,7 @@ void ReferenceUnitTypes(const CvPlayer& kPlayer, std::vector<UnitTypes>& aeTypes
 	aeTypes.erase(std::unique(aeTypes.begin(), aeTypes.end()), aeTypes.end());
 }
 
-// Sums base worth over all reference types for the mean, and price and base worth over the priced ones for the rate.
+// Sums base worth over all reference types for the mean, and price and base worth over the priced types for the rate.
 void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double& fGoldPerWorth)
 {
 	fTypicalWorth = 0.0;
@@ -244,7 +245,7 @@ void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double&
 		const CvUnitEntry* pInfo = GC.getUnitInfo(aeTypes[i]);
 		if (!pInfo)
 			continue;
-		const double fWorth = UnitBaseWorth(pInfo->GetPower(), pInfo->GetProductionCost());
+		const double fWorth = UnitBaseWorth(*pInfo);
 		fWorthTotal += fWorth;
 		const double fPrice = UnitRulePrice(*pInfo, iEra);
 		if (fPrice > 0.0)

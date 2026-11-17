@@ -47,9 +47,9 @@ const unsigned int groundHoldsOurs = 1U;
 const unsigned int groundHoldsHostile = 2U;
 const unsigned int groundHoldsNeutral = 4U;
 
-// Returns a unit type's base worth B: its power times its production cost, each floored at 0.
+// Returns base worth B: the geometric mean of power and production cost, each floored at 0.
 double UnitBaseWorth(int iPower, int iProductionCost);
-// Returns the base worth of a unit type from its entry.
+// Returns base worth for the unit entry.
 double UnitBaseWorth(const CvUnitEntry& kUnitEntry);
 // Returns a unit's worth F = B + S, where the level premium S adds fSeniorityPerLevel x B per level above the first.
 double UnitWorth(double fBaseWorth, int iLevel, double fSeniorityPerLevel);
