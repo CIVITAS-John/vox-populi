@@ -7523,36 +7523,25 @@ void CvBasePosition::UpdateScore(const STacticalAssignment& assignment)
 	UpdateScore(assignment.iUnitID, assignment.GetPlotScore(), assignment.GetOldPlotScore(), assignment.GetDamageDelta(), assignment.GetBonusScore());
 }
 
-// Total score of a completed position: (damage delta + bonus) * 10 + trade gain + the final plot score of each unit.
-// Computed on demand so every change to a component is reflected without a separate refresh.
-int CvBasePosition::getScoreTotal() const
-{
-	int iTotal = (iDamageDelta + iBonusScore) * 10 + iTradeGain;
-	const map<int, short>& plotScores_r = plotScores.read();
-	for (map<int, short>::const_iterator it = plotScores_r.begin(); it != plotScores_r.end(); ++it)
-		iTotal += it->second;
-	return iTotal;
-}
-
+// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore, int iDamageDelta_, int iBonusScore_)
 {
 	iScoreOverParent += iBonusScore_ + iPlotScore - iOldPlotScore + iDamageDelta_;
 	iDamageDelta += iDamageDelta_;
 	iBonusScore += iBonusScore_;
+	iTotalScore += (iDamageDelta_ + iBonusScore_) * 10;
 
 	const map<int, short>& plotScores_r = plotScores.read();
 
 	map<int, short>::const_iterator it = plotScores_r.find(iUnitId);
-	if (it != plotScores_r.end())
+	short sPreviousPlotScore = it != plotScores_r.end() ? it->second : 0;
+	iScoreOverParent -= sPreviousPlotScore;
+	if (iPlotScore != sPreviousPlotScore)
 	{
-		short sPreviousPlotScore = it->second;
-		iScoreOverParent -= sPreviousPlotScore;
-		if (iPlotScore != sPreviousPlotScore)
-			plotScores.write()[iUnitId] = iPlotScore;
+		short sNewPlotScore = static_cast<short>(iPlotScore);
+		plotScores.write()[iUnitId] = sNewPlotScore;
+		iTotalScore += sNewPlotScore - sPreviousPlotScore;
 	}
-	//the unit didn't have a previous plot score, so we set it here
-	else if (iPlotScore != 0)
-		plotScores.write()[iUnitId] = iPlotScore;
 }
 
 static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition)
@@ -10992,6 +10981,8 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	iTotalScore = 0;
 	iScoreOverParent = 0; 
 	parentPosition = NULL;
 	iGeneration = 0;
@@ -11040,6 +11031,8 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	nFirstInterestingAssignment = parent.nFirstInterestingAssignment;
 	iBonusScore = parent.iBonusScore;
 	iDamageDelta = parent.iDamageDelta;
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	iTotalScore = parent.iTotalScore;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = parent.iTradeGain;
@@ -11638,7 +11631,7 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 
 	// Vox Deorum: any assignment can move the position's trade score: a unit takes or leaves a step, takes a route from a unit
 	// on a later step, kills a threat or captures a city on a route. A row that affects the score adds the change to the plan's
-	// trade gain, which UpdateScore puts in the total.
+	// trade gain, which getScoreTotal includes in the total.
 	// Only a row that touches a trade step, kills, heals, or damages a unit whose death matters to the trade score (splash and
 	// area damage included) can move it; our own units' health only counts on a step. Rows that leave the score alone (initial
 	// and blocked units) change none of these, so the plan's trade gain stays its trade score less the root's.
@@ -12674,6 +12667,8 @@ CvSupportPosition::CvSupportPosition()
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	iTotalScore = 0;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = 0;
@@ -12773,6 +12768,8 @@ void CvSupportPosition::initFromTacticalPosition(const CvTacticalPosition& tactP
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	iTotalScore = 0;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = 0;
@@ -12832,6 +12829,8 @@ void CvSupportPosition::initFromParent(const CvSupportPosition& parent)
 	nFirstInterestingAssignment = parent.nFirstInterestingAssignment;
 	iBonusScore = parent.iBonusScore;
 	iDamageDelta = parent.iDamageDelta;
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	iTotalScore = parent.iTotalScore;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = 0;

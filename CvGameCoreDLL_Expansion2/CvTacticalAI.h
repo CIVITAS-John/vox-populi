@@ -1232,6 +1232,8 @@ protected:
 	SCoWField<map<int, short>> plotScores; // not additive (only the final plot value is included in the total evaluation)
 	int iDamageDelta; //damage dealt - damage received
 	int iBonusScore; // additive
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	int iTotalScore; // weighted damage and bonus plus final plot scores; trade gain is added by the getter
 	//for heap sorting (included all moves made in the last generation)
 	int iScoreOverParent;
 	// Vox Deorum: the air sweep ranking values of the last generation's moves. Orders the heap, never scores a plan.
@@ -1366,7 +1368,9 @@ public:
 
 	int getGeneration() const { return iGeneration; }
 	PlayerTypes getPlayer() const { return ePlayer; }
-	int getScoreTotal() const;
+	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
+	// Vox Deorum: include the separately updated trade gain in the cached position score.
+	int getScoreTotal() const { return iTotalScore + iTradeGain; }
 	int getScoreLastRound() const { return iScoreOverParent; }
 	// Vox Deorum: the last round's score plus the ranking values of its air sweeps
 	int getRankScoreLastRound() const { return iScoreOverParent + iRankBonusOverParent; }
