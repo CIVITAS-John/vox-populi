@@ -2071,7 +2071,6 @@ namespace TacticalAIHelpers
 	void UpdateTradeSteps();
 	// Vox Deorum: pnRowsRun, when given, receives how many leading rows ran before the stream stopped (the operational loop)
 	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun = NULL);
-	bool LaterRowsDependOnPlot(const vector<STacticalAssignment>& vAssignments, size_t iIndex, int iPlotIndex);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }
 

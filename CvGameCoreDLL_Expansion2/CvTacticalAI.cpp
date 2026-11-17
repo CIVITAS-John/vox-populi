@@ -14176,12 +14176,6 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			break;
 		}
 
-		//the damage roll can make a plain ranged attack kill its target against the plan.
-		//that only removes danger, so it invalidates the rest of the plan only when a later row attacks or enters the same plot.
-		//a ranged kill that leaves its target alive still fails, because later units were placed ignoring that enemy's danger.
-		if (vAssignments[i].eAssignmentType == A_RANGEATTACK && bPrecondition && !bPostcondition && !LaterRowsDependOnPlot(vAssignments, i, vAssignments[i].iToPlotIndex))
-			bPostcondition = true;
-
 		// Vox Deorum: count the row for the operational loop once its precondition held
 		if (pnRowsRun && bPrecondition)
 			*pnRowsRun = i + 1;
@@ -14225,17 +14219,6 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 	}
 
 	return true;
-}
-
-//answers whether any row after iIndex attacks or moves into the given plot
-bool TacticalAIHelpers::LaterRowsDependOnPlot(const vector<STacticalAssignment>& vAssignments, size_t iIndex, int iPlotIndex)
-{
-	for (size_t j = iIndex + 1; j < vAssignments.size(); j++)
-	{
-		if (vAssignments[j].iToPlotIndex == iPlotIndex)
-			return true;
-	}
-	return false;
 }
 
 bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit)
