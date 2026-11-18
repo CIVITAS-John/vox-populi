@@ -787,6 +787,9 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			check.bReinforce = bBestReinforce;
 			check.eBefore = bBestReinforce ? field.eReinforce : field.eFight;
 			check.fBefore = fBest;
+			// Vox Deorum: a fight check can also change its paired Reinforce, which the trace records separately.
+			const eOperationalOfferState ePairedBefore = field.eReinforce;
+			const double fPairedBefore = field.fReinforceEstimate;
 			const unsigned long long readinessBefore = turn.performance.readinessNs;
 			eOperationalCheckResult eResult;
 			{
@@ -834,6 +837,12 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 										   bBestReinforce, check.eBefore, check.eAfter,
 										   check.fBefore,  check.fAfter};
 				record.steps.back().events.push_back(event);
+				if (!bBestReinforce && (field.eReinforce != ePairedBefore || field.fReinforceEstimate != fPairedBefore))
+				{
+					SOperationalEvent paired = {"update", iBest, event.iRecord, true, ePairedBefore, field.eReinforce,
+												fPairedBefore, field.fReinforceEstimate};
+					record.steps.back().events.push_back(paired);
+				}
 				record.checks.push_back(check);
 				if (check.eAfter == OPERATIONAL_OFFER_SKIPPED)
 				{
