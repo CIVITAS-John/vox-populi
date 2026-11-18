@@ -46,12 +46,18 @@ double ValueAtDamage(double fWorth, int iDamage, int iMaxHitPoints)
 	return fWorth * (unitKillShare + (1.0 - unitKillShare) * fHealth);
 }
 
+// Vox Deorum: apply the square root once per target, after reach and melee limits have been accounted for.
+double ScoredDamage(double fRealized, int iRejected)
+{
+	return iRejected > 0 ? fRealized + std::sqrt(static_cast<double>(iRejected)) : fRealized;
+}
+
 // Divides damage by maximum hit points, clamped to 0..1.
-double DamageShare(int iDamage, int iMaxHitPoints)
+double DamageShare(double fDamage, int iMaxHitPoints)
 {
 	if (iMaxHitPoints <= 0)
 		return 0.0;
-	return std::min(1.0, std::max(0.0, static_cast<double>(iDamage) / iMaxHitPoints));
+	return std::min(1.0, std::max(0.0, fDamage / iMaxHitPoints));
 }
 
 // Loses the whole value on a kill, otherwise the damaged share of the part above the value floor.
@@ -65,13 +71,14 @@ double UnitExposure(double fWorth, int iDamage, int iMaxHitPoints, int iIncoming
 }
 
 // Vox Deorum: values enemy damage by the same retained and health shares as our units' exposure.
-double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fDamage)
+double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fRealized, int iRejected)
 {
-	if (fMaximum <= 0.0 || fRemaining <= 0.0 || fDamage <= 0.0)
+	if (fMaximum <= 0.0 || fRemaining <= 0.0)
 		return 0.0;
-	if (fDamage >= fRemaining)
+	if (fRealized >= fRemaining)
 		return fWorth * (unitKillShare + (1.0 - unitKillShare) * std::min(1.0, fRemaining / fMaximum));
-	return fWorth * (1.0 - unitKillShare) * fDamage / fMaximum;
+	const double fHealthLost = std::max(0.0, std::min(fRemaining, ScoredDamage(fRealized, iRejected)));
+	return fWorth * (1.0 - unitKillShare) * fHealthLost / fMaximum;
 }
 
 // Vox Deorum: uses a strength ratio to keep the powers bounded for large native strength tallies.

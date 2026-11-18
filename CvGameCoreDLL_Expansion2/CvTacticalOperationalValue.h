@@ -55,13 +55,15 @@ double UnitBaseWorth(const CvUnitEntry& kUnitEntry);
 double UnitWorth(double fBaseWorth, int iLevel, double fSeniorityPerLevel);
 // Returns a living unit's value: its worth times k + (1 - k) x its health share, with health clamped to 0..1.
 double ValueAtDamage(double fWorth, int iDamage, int iMaxHitPoints);
+// Vox Deorum: readiness gives partial damage credit for the total rejected by a target's reach check.
+double ScoredDamage(double fRealized, int iRejected);
 // Returns damage over maximum hit points, clamped to 0..1, or 0 without hit points.
-double DamageShare(int iDamage, int iMaxHitPoints);
+double DamageShare(double fDamage, int iMaxHitPoints);
 // Returns what a unit loses to iIncomingDamage more damage: its whole value when that reaches its HP left,
 // otherwise worth x (1 - k) x the incoming damage over maximum HP.
 double UnitExposure(double fWorth, int iDamage, int iMaxHitPoints, int iIncomingDamage);
-// Vox Deorum: returns K(F, R, M, D): health value lost to nonlethal damage, or the whole living value on a kill.
-double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fDamage);
+// Vox Deorum: scores health damage up to the target's remaining HP; only realized damage can earn the kill share.
+double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fRealized, int iRejected = 0);
 // Vox Deorum: returns L^k / (L^k + T^k), or 1 when enemy strength T is 0.
 double StrengthShare(double fLocal, double fEnemy, double fSteepness);
 // Vox Deorum: returns city contest: 1 - (1 - pressure) * (1 - damage level).

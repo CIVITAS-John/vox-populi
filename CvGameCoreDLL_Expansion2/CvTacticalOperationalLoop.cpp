@@ -121,6 +121,13 @@ const int NUM_OPERATIONAL_VP_TERMS = sizeof(OPERATIONAL_VP_TERMS) / sizeof(OPERA
 // the damage native's danger adds per fogged plot nearby (FOG_DEFAULT_DANGER in CvDangerPlots.cpp)
 static const int OPERATIONAL_FOG_DANGER = 1;
 
+// Vox Deorum: the most distinct enemy targets sampled in one command loop.
+static const size_t OPERATIONAL_FORECAST_BUDGET = 24;
+// Vox Deorum: each successive victim contributes this fraction of the previous exposure weight.
+static const double OPERATIONAL_DEFENSE_EXPOSURE_DECAY = 0.8;
+// Vox Deorum: native caps melee hits by attackers that cannot move after attacking.
+static const int OPERATIONAL_UNIT_MELEE_CAP = 3;
+
 //------------------------------------------------------------------------------
 // settings
 //------------------------------------------------------------------------------
@@ -534,12 +541,12 @@ struct PrOperationalOfferBefore
 };
 
 // Bombardment alone leaves a city at 1 HP, where it can still heal, so damage past R - 1 needs a capturer.
-double AttackFallShare(double fCityDamage, int iHeal, int iRemaining, bool bCapture)
+double AttackFallShare(double fRealized, int iHeal, int iRemaining, bool bCapture, int iRejected)
 {
 	const double fRemaining = static_cast<double>(std::max(1, iRemaining));
-	if (bCapture && fCityDamage >= fRemaining)
+	if (bCapture && fRealized >= fRemaining)
 		return 1.0;
-	return std::max(0.0, std::min(fCityDamage, fRemaining - 1.0) - iHeal) / fRemaining;
+	return std::max(0.0, std::min(ScoredDamage(fRealized, iRejected), fRemaining - 1.0) - iHeal) / fRemaining;
 }
 
 //------------------------------------------------------------------------------
@@ -784,7 +791,11 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			eOperationalCheckResult eResult;
 			{
 				SOperationalTimer timer(turn.bTiming ? &turn.performance.readinessNs : NULL);
-				eResult = bBestReinforce ? CheckReinforce(kTactical, turn, field) : CheckFight(kTactical, turn, field);
+				// Vox Deorum: only native fight selection initiates forecast path checks.
+				eResult = !bProvider && !bBestReinforce
+					? CheckForecastReadiness(kTactical, turn, field) : OPERATIONAL_CHECK_PASSED;
+				if (eResult == OPERATIONAL_CHECK_PASSED)
+					eResult = bBestReinforce ? CheckReinforce(kTactical, turn, field) : CheckFight(kTactical, turn, field);
 				turn.performance.checks++;
 			}
 			if (bProvider) ReportExecution(choice.iEffective, eResult, NULL);
@@ -792,10 +803,26 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			if (bBestReinforce && eResult != OPERATIONAL_CHECK_PASSED)
 				field.eReinforce = eResult == OPERATIONAL_CHECK_REDUCED && field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY
 																										  : OPERATIONAL_OFFER_INACTIVE;
+			// Vox Deorum: a reduced forecast competes again without consuming a failed readiness attempt.
+			else if (eResult == OPERATIONAL_CHECK_REDUCED)
+				field.eFight = field.fEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
 			else if (eResult != OPERATIONAL_CHECK_PASSED)
 			{
 				field.iFailures++;
 				field.eFight = field.iFailures >= iMaxFailures ? OPERATIONAL_OFFER_SKIPPED : OPERATIONAL_OFFER_WAITING;
+				if (eResult == OPERATIONAL_CHECK_NO_RECRUITS || eResult == OPERATIONAL_CHECK_NO_DEFENDERS)
+				{
+					field.bReleaseLocal = true;
+					CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
+					if (pTarget && (field.eReinforce == OPERATIONAL_OFFER_READY || field.eReinforce == OPERATIONAL_OFFER_INACTIVE))
+					{
+						SOperationalLocalSet local;
+						GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, false);
+						field.reinforce.bChecked = false;
+						EstimateReinforce(kTactical, turn, local, field);
+						field.eReinforce = field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
+					}
+				}
 			}
 			check.eAfter = bBestReinforce ? field.eReinforce : field.eFight;
 			check.fAfter = bBestReinforce ? field.fReinforceEstimate : field.fEstimate;
@@ -899,7 +926,10 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			if (bBestReinforce)
 				field.eReinforce = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
 			else
+			{
 				field.eFight = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
+				field.bReleaseLocal = command.bSearchRan && !bRefused;
+			}
 			turn.iStateRevision++;
 			if (pRecord && bRefused)
 			{
@@ -1281,7 +1311,7 @@ void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperati
 			if (!bFightOpen && !bReinforceOpen && field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT)
 				continue;
 			turn.performance.estimates += (bFightOpen ? 1 : 0) + (bReinforceOpen ? 1 : 0);
-			if (!EstimateBattlefield(kTactical, turn, cache, field, bFightOpen || bReinforceOpen, bReinforceOpen))
+			if (!EstimateBattlefield(kTactical, turn, cache, field, bFightOpen || bReinforceOpen, bReinforceOpen, pChanges))
 			{
 				if (bFightOpen)
 					field.eFight = OPERATIONAL_OFFER_DROPPED;
@@ -1294,12 +1324,7 @@ void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperati
 				cache.cityTheaters[field.iPlotIndex] = field.fTheater;
 				cache.theaters[field.iPlotIndex] = field.theater;
 			}
-			if (field.eFight == OPERATIONAL_OFFER_WAITING)
-			{
-				if (pChanges && field.fEstimate > 0.0 && WakesFight(turn.ePlayer, turn, field, *pChanges))
-					field.eFight = OPERATIONAL_OFFER_READY;
-			}
-			else if (bFightOpen)
+			if (bFightOpen && field.eFight != OPERATIONAL_OFFER_WAITING)
 				field.eFight = field.fEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
 			if (bReinforceOpen)
 				field.eReinforce = field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
@@ -1310,17 +1335,14 @@ void CvTacticalOperationalLoop::EstimateOffers(CvTacticalAI& kTactical, SOperati
 
 // Vox Deorum: one local set feeds theater, fight stake and Reinforce; closed cities need only theater strength.
 bool CvTacticalOperationalLoop::EstimateBattlefield(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache,
-	SOperationalBattlefield& field, bool bStake, bool bReinforce)
+	SOperationalBattlefield& field, bool bStake, bool bReinforce, const SOperationalChanges* pChanges)
 {
 	field.fEstimate = 0.0;
 	CvPlot* pPlot = BattlefieldPlot(field);
 	if (!pPlot)
 		return false;
-	const CvCity* pCity = field.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT ? pPlot->getPlotCity() : NULL;
-	const bool bLand = pCity != NULL || !pPlot->isWater();
-	const bool bSea = pCity ? pCity->isCoastal() : pPlot->isWater();
 	SOperationalLocalSet local;
-	GatherLocalSet(kTactical, turn.ePlayer, *pPlot, bLand, bSea, local, bStake);
+	GatherTargetLocalSet(kTactical, turn.ePlayer, *pPlot, local, bStake, field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT);
 	EstimateTheater(turn, cache, *pPlot, local, field, bReinforce);
 	if (!bStake)
 		return true;
@@ -1330,6 +1352,13 @@ bool CvTacticalOperationalLoop::EstimateBattlefield(CvTacticalAI& kTactical, con
 	const CvCity* pZoneCity = pZonePlot ? pZonePlot->getPlotCity() : NULL;
 	if (!EstimateFight(kTactical, turn, cache, local, pZoneCity, field))
 		return false;
+	// Vox Deorum: a waking fight takes back its local units before Reinforce selects candidates.
+	if (field.eFight == OPERATIONAL_OFFER_WAITING && pChanges && field.fEstimate > 0.0 &&
+		WakesFight(turn.ePlayer, turn, field, *pChanges))
+	{
+		field.eFight = OPERATIONAL_OFFER_READY;
+		field.bReleaseLocal = false;
+	}
 	if (bReinforce)
 		EstimateReinforce(kTactical, turn, local, field);
 	return true;
@@ -1401,14 +1430,23 @@ CvPlot* CvTacticalOperationalLoop::BattlefieldPlot(SOperationalBattlefield& fiel
 	return pCity ? pCity->plot() : NULL;
 }
 
+// Vox Deorum: identifies a forecast by center, owner and target ID.
+static OperationalForecastKey ForecastKey(const SOperationalBattlefield& field)
+{
+	return OperationalForecastKey(static_cast<int>(field.eCenter), make_pair(static_cast<int>(field.eOwner), field.iTargetID));
+}
+
 // Vox Deorum: values what local attackers can destroy and what the fight can protect, in typical units.
 bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache, const SOperationalLocalSet& local,
-	const CvCity* pZoneCity, SOperationalBattlefield& field)
+	const CvCity* pZoneCity, SOperationalBattlefield& field, bool bSample)
 {
 	const double* afWeight = turn.weights.afWeight;
 	const double fUnitScale = turn.fTypicalUnitWorth;
 	const int iRisk = turn.aiMapped[STacticalFlavors::RISK];
 	SOperationalStake stake;
+	// Vox Deorum: only previously selected targets have a cached speculative rejection fraction.
+	OperationalForecastMap::iterator it = turn.forecasts.find(ForecastKey(field));
+	SOperationalForecast* pForecast = it != turn.forecasts.end() && (bSample || it->second.bChecked) ? &it->second : NULL;
 	field.fEstimate = 0.0;
 	if (field.eOwner == NO_PLAYER)
 		return false;
@@ -1418,13 +1456,14 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		if (!pUnit || pUnit->isDelayedDeath() || !pUnit->plot())
 			return false;
 		field.iPlotIndex = pUnit->plot()->GetPlotIndex();
-		const int iDamage = LocalUnitDamage(turn.ePlayer, *pUnit, local, iRisk);
-		stake.fDamageShare = DamageShare(iDamage, pUnit->GetCurrHitPoints());
+		int iRejected = 0;
+		const int iDamage = LocalUnitDamage(turn.ePlayer, *pUnit, local, iRisk, iRejected, pForecast, bSample);
+		stake.fDamageShare = DamageShare(ScoredDamage(iDamage, iRejected), pUnit->GetCurrHitPoints());
 		map<pair<int, int>, SOperationalThreatExposure>::const_iterator threat = turn.unitThreats.find(make_pair(static_cast<int>(field.eOwner), field.iTargetID));
 		const double fExposure = threat != turn.unitThreats.end() ? threat->second.fExposure : 0.0;
 		if (fUnitScale > 0.0)
 		{
-			const double fDestroyed = DestroyedUnitValue(*pUnit, iDamage);
+			const double fDestroyed = DestroyedUnitValue(*pUnit, iDamage, iRejected);
 			stake.afValue[0] = fDestroyed / fUnitScale;
 			stake.fDestruction = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fDestroyed / fUnitScale;
 			stake.afValue[1] = fExposure / fUnitScale;
@@ -1463,10 +1502,7 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		vector<CvUnit*> vEndangered;
 		map<int, int> dangers;
 		GatherCityEndangered(kTactical, turn, *pCity, vEndangered, &dangers);
-		double fExposure = 0.0;
-		for (size_t i = 0; i < vEndangered.size(); i++)
-			fExposure += UnitExposure(OurUnitWorth(*vEndangered[i]), vEndangered[i]->getDamage(), vEndangered[i]->GetMaxHitPoints(),
-				dangers[vEndangered[i]->GetID()]);
+		const double fExposure = CityDefenseExposure(turn, cache, vEndangered, dangers);
 		field.bHasEndangered = !vEndangered.empty();
 
 		stake.afValue[4] = turn.fCityUnit * stake.fFallShare;
@@ -1485,9 +1521,38 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 			return false;
 		SOperationalCityDamage damage;
 		StartCityDamage(*pCity, damage);
+		bool bCanCapture = !pForecast && local.bCanCapture;
+		const CvPlot& kTarget = *pCity->plot();
 		for (size_t i = 0; i < local.vDamage.size(); i++)
-			SimulateCityAttack(*pCity, *local.vDamage[i], damage, iRisk);
-		stake.fFallShare = AttackFallShare(damage.iCityDamage, damage.iHeal, damage.iRemaining, local.bCanCapture);
+		{
+			const CvUnit& kAttacker = *local.vDamage[i];
+			eOperationalStrikeReadiness eReadiness = OPERATIONAL_STRIKE_UNCONFIRMED;
+			if (pForecast)
+			{
+				if (StrikeNow(kAttacker, kTarget))
+					eReadiness = OPERATIONAL_STRIKE_IMMEDIATE;
+				else if (bSample && StrikeReachable(kAttacker, kTarget))
+					eReadiness = OPERATIONAL_STRIKE_REACHABLE;
+
+				if (CanCapture(kAttacker))
+				{
+					if (eReadiness == OPERATIONAL_STRIKE_REACHABLE)
+						pForecast->reachableCapturers.insert(kAttacker.GetID());
+					// Vox Deorum: a sampled capturer must still belong to the current local capture roster.
+					if (eReadiness == OPERATIONAL_STRIKE_IMMEDIATE || pForecast->reachableCapturers.count(kAttacker.GetID()) > 0)
+						bCanCapture = true;
+				}
+			}
+			SimulateCityAttack(*pCity, kAttacker, damage, iRisk, pForecast, bSample, eReadiness);
+		}
+		if (pForecast && bSample)
+		{
+			pForecast->iSpeculative = damage.iSpeculative;
+			pForecast->iSpeculativeGarrison = damage.iSpeculativeGarrison;
+			pForecast->iRejected = damage.iRemoved;
+			pForecast->iRejectedGarrison = damage.iRemovedGarrison;
+		}
+		stake.fFallShare = AttackFallShare(damage.iCityDamage, damage.iHeal, damage.iRemaining, bCanCapture, damage.iRemoved);
 		stake.afValue[4] = turn.fCityUnit * stake.fFallShare;
 		stake.fCityProgress = afWeight[OPERATIONAL_WEIGHT_OCCUPATION] * turn.fCityUnit * stake.fFallShare;
 
@@ -1507,7 +1572,7 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 			if (damage.pGarrison && damage.iGarrisonHealth > 0)
 			{
 				const double fDestroyed = DestroyedUnitValue(*damage.pGarrison,
-					stake.fFallShare >= 1.0 ? damage.iGarrisonHealth : damage.iGarrisonDamage);
+					stake.fFallShare >= 1.0 ? damage.iGarrisonHealth : damage.iGarrisonDamage, damage.iRemovedGarrison);
 				stake.afValue[5] = fDestroyed / fUnitScale;
 				stake.fGarrison = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fDestroyed / fUnitScale;
 			}
@@ -1519,6 +1584,26 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 	field.stake = stake;
 	field.fEstimate = field.fTheater * stake.fStake;
 	return true;
+}
+
+// Vox Deorum: finds a local capturer and optionally adds local strength outside the candidate pool.
+static bool TallyLocalOutsideCandidates(const SOperationalLocalSet& local, const vector<SOperationalCandidate>& vCandidates,
+	double* pfStrength)
+{
+	set<int> candidates;
+	for (size_t i = 0; i < vCandidates.size(); i++)
+		candidates.insert(vCandidates[i].iUnitID);
+	bool bCapturer = false;
+	for (size_t i = 0; i < local.vStrength.size(); i++)
+	{
+		const CvUnit& kUnit = *local.vStrength[i];
+		if (candidates.count(kUnit.GetID()) > 0)
+			continue;
+		if (pfStrength)
+			*pfStrength += CvTacticalOperationalLoop::UnitStrength(kUnit);
+		bCapturer = bCapturer || CvTacticalOperationalLoop::IsCapturer(kUnit);
+	}
+	return bCapturer;
 }
 
 // Vox Deorum: the fight supplies theater and stake; incoming strength earns only the share of its outcome it swings.
@@ -1537,9 +1622,20 @@ void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const
 	const double fRatio = turn.weights.afConstant[OPERATIONAL_CONSTANT_STRENGTH_RATIO];
 	vector<SOperationalCandidate> vCandidates;
 	if (bOpen)
-		GatherReinforceCandidates(kTactical, field, *pTarget, local.bLand, local.bSea, vCandidates);
+		GatherReinforceCandidates(kTactical, field, *pTarget, local.bLand, local.bSea, vCandidates, field.bReleaseLocal);
+	bool bLocalCapturer = local.bCapturer;
+	if (field.bReleaseLocal && bOpen)
+	{
+		// Vox Deorum: a leftover enters the selection pool instead of counting as current strength or an existing capturer.
+		// A rejected recruit no longer enters the pool, so start each selection from the live local set again.
+		reinforce.fLocal = bOurCity ? CityStrength(*pTarget->getPlotCity()) : 0.0;
+		bLocalCapturer = TallyLocalOutsideCandidates(local, vCandidates, &reinforce.fLocal);
+		reinforce.fShare = StrengthShare(reinforce.fLocal, reinforce.fEnemy,
+			turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_STEEPNESS]);
+		reinforce.fShareWithHelp = reinforce.fShare;
+	}
 	SelectReinforcement(vCandidates, reinforce.fLocal, reinforce.fEnemy, fRatio,
-		bOpen && field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !local.bCapturer, reinforce);
+		bOpen && field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !bLocalCapturer, reinforce);
 	if (reinforce.vSelected.empty())
 		return;
 
@@ -1559,7 +1655,7 @@ void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const
 // range bounds by plain distance; destination dominance gates apply to enemy centers only; units covering a civilian
 // are left out without native's skip and processing; generals, admirals and civilian sappers fall to the combat test.
 void CvTacticalOperationalLoop::GatherReinforceCandidates(CvTacticalAI& kTactical, const SOperationalBattlefield& field, const CvPlot& kTarget,
-	bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates)
+	bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates, bool bAllowLocal)
 {
 	vCandidates.clear();
 	const CvTacticalAnalysisMap* pZoneMap = kTactical.GetTacticalAnalysisMap();
@@ -1578,10 +1674,10 @@ void CvTacticalOperationalLoop::GatherReinforceCandidates(CvTacticalAI& kTactica
 		if (!((bLand && pUnit->getDomainType() == DOMAIN_LAND) || (bSea && pUnit->getDomainType() == DOMAIN_SEA)))
 			continue;
 
-		//local units count in L; a held garrison stays search-only, so it joins only within the search's reach
+		// Vox Deorum: keep local units for the same-field fight until it has used or released them.
 		const int iDistance = plotDistance(*pUnit->plot(), kTarget);
 		const bool bHeld = IsHeldGarrison(pUnit);
-		if (iDistance <= StrikeReach(*pUnit) ||
+		if ((!bAllowLocal && iDistance <= StrikeReach(*pUnit)) ||
 			iDistance > (bHeld ? std::min(iRecruitRange, static_cast<int>(TACTICAL_COMBAT_MAX_TARGET_DISTANCE)) : iRecruitRange))
 			continue;
 
@@ -1736,6 +1832,15 @@ void CvTacticalOperationalLoop::GatherLocalSet(CvTacticalAI& kTactical, PlayerTy
 	std::sort(local.vDamage.begin(), local.vDamage.end(), PrOperationalUnitID());
 }
 
+// Vox Deorum: gathers local units, keeping unit fight estimates in the plot's terrain domain even at a city.
+void CvTacticalOperationalLoop::GatherTargetLocalSet(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kTarget,
+	SOperationalLocalSet& local, bool bDamage, bool bUnitTarget)
+{
+	const CvCity* pCity = bUnitTarget ? NULL : kTarget.getPlotCity();
+	GatherLocalSet(kTactical, ePlayer, kTarget, pCity != NULL || !kTarget.isWater(),
+		pCity ? pCity->isCoastal() : kTarget.isWater(), local, bDamage);
+}
+
 // The unit-specific city filters in CvTacticalAI::FindUnitsWithinStrikingDistance: no capture prohibition, and a ranged
 // attack from the unit's plot that meets native's minimum damage of min(garrison HP / 20, 3).
 bool CvTacticalOperationalLoop::CanStrikeCity(CvTacticalAI& kTactical, CvUnit& kUnit, const CvCity& kCity)
@@ -1797,7 +1902,9 @@ void CvTacticalOperationalLoop::StartCityDamage(const CvCity& kCity, SOperationa
 // counted totals are kept here; hits on a replacement garrison add city damage only, so D_g stays with the garrison the
 // estimate started with; the expected-damage bookkeeping on the move list is left out; a suicidal attack changes no
 // garrison state, and a garrison predicted to die is never met again as a replacement.
-void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, SOperationalCityDamage& damage, int iRisk)
+// Vox Deorum: applies the forecast discount using readiness determined by the caller.
+void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, SOperationalCityDamage& damage, int iRisk,
+	SOperationalForecast* pForecast, bool bSample, eOperationalStrikeReadiness eReadiness)
 {
 	int iSelfDamage = 0;
 	int iCityDamage = 0;
@@ -1825,6 +1932,35 @@ void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const Cv
 		((iCityDamage + iGarrisonDamage) * 2 > iSelfDamage && kAttacker.GetCurrHitPoints() - iSelfDamage > kAttacker.GetMaxHitPoints() / 2)))
 		return;
 
+	// Vox Deorum: reject unreachable hits before they alter hypothetical city or garrison health.
+	if (pForecast && eReadiness != OPERATIONAL_STRIKE_IMMEDIATE)
+	{
+		damage.iSpeculative += iCityDamage;
+		if (bStartingGarrison)
+			damage.iSpeculativeGarrison += iGarrisonDamage;
+		if (bSample)
+		{
+			if (eReadiness == OPERATIONAL_STRIKE_UNCONFIRMED)
+			{
+				damage.iRemoved += iCityDamage;
+				if (bStartingGarrison)
+					damage.iRemovedGarrison += iGarrisonDamage;
+				return;
+			}
+		}
+		else
+		{
+			const int iRemoved = RejectedDamage(damage.iSpeculative, pForecast->iRejected, pForecast->iSpeculative);
+			const int iRemovedGarrison = RejectedDamage(damage.iSpeculativeGarrison,
+				pForecast->iRejectedGarrison, pForecast->iSpeculativeGarrison);
+			iCityDamage -= iRemoved - damage.iRemoved;
+			if (bStartingGarrison)
+				iGarrisonDamage -= iRemovedGarrison - damage.iRemovedGarrison;
+			damage.iRemoved = iRemoved;
+			damage.iRemovedGarrison = iRemovedGarrison;
+		}
+	}
+
 	damage.iTotalGarrisonDamage += iGarrisonDamage;
 	if (damage.pCurrent)
 	{
@@ -1846,9 +1982,8 @@ void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const Cv
 	damage.iGarrisonDamage += iGarrisonDamage;
 }
 
-// Vox Deorum: copies the unit case of CvTacticalAI::ComputeTotalExpectedDamage for one attacker. Differences:
-// target damage uses our roll, self damage uses the enemy roll, and quick estimates avoid interceptor searches inside a roll scope.
-void CvTacticalOperationalLoop::SimulateUnitAttack(const CvUnit& kTarget, const CvUnit& kAttacker, int& iTotalDamage, int& iMeleeCount, int iRisk)
+// Vox Deorum: projects raw unit damage with separate rolls and returns zero if the native suicide test fails.
+static int RawUnitAttackDamage(const CvUnit& kTarget, const CvUnit& kAttacker, int iRisk, bool& bAccepted)
 {
 	int iDamage = 0;
 	int iSelfDamage = 0;
@@ -1864,21 +1999,13 @@ void CvTacticalOperationalLoop::SimulateUnitAttack(const CvUnit& kTarget, const 
 		TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(&kTarget, &kAttacker, kTarget.plot(), kAttacker.plot(),
 			iSelfDamage, true, 0, 0, true);
 	}
-	if (!(iDamage > iSelfDamage / 5 && kAttacker.GetCurrHitPoints() > iSelfDamage / 2))
-		return;
-	// Vox Deorum: native counts only the first three melee attackers that cannot move after attacking.
-	if (!kAttacker.IsCanAttackRanged() && !kAttacker.canMoveAfterAttacking())
-	{
-		if (iMeleeCount < 3)
-			iTotalDamage += iDamage;
-		iMeleeCount++;
-	}
-	else
-		iTotalDamage += iDamage;
+	bAccepted = iDamage > iSelfDamage / 5 && kAttacker.GetCurrHitPoints() > iSelfDamage / 2;
+	return bAccepted ? iDamage : 0;
 }
 
 // Vox Deorum: mirrors FindCitiesWithinStrikingDistance without changing its move list, then simulates local units in ID order.
-int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk)
+int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk, int& iRejected,
+	SOperationalForecast* pForecast, bool bSample)
 {
 	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
 	CvPlot* pTargetPlot = kTarget.plot();
@@ -1891,10 +2018,252 @@ int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit
 		OperationalDamageRollScope roll(OurRollPer200(iRisk));
 		iDamage += pCity->rangeCombatDamage(&kTarget, false, pTargetPlot);
 	}
-	int iMeleeCount = 0; // Vox Deorum: carries native's melee cap across the local attackers.
+	int iMeleeCount = 0;
+	iRejected = 0;
+	int iSpeculative = 0;
+	int iRealizableDamage = iDamage;
+	int iRealizableMelee = 0;
 	for (size_t i = 0; i < local.vDamage.size(); i++)
-		SimulateUnitAttack(kTarget, *local.vDamage[i], iDamage, iMeleeCount, iRisk);
-	return iDamage;
+	{
+		const CvUnit& kAttacker = *local.vDamage[i];
+		bool bAccepted;
+		const int iRawDamage = RawUnitAttackDamage(kTarget, kAttacker, iRisk, bAccepted);
+		// Vox Deorum: the unsampled tally counts every hit that passes the native test; forecasts count positive hits.
+		if (!bAccepted || (pForecast && iRawDamage <= 0))
+			continue;
+		const bool bCapped = !kAttacker.IsCanAttackRanged() && !kAttacker.canMoveAfterAttacking();
+		const bool bStockAdmitted = !bCapped || iMeleeCount < OPERATIONAL_UNIT_MELEE_CAP;
+		if (bCapped)
+			iMeleeCount++;
+		const bool bImmediate = pForecast && StrikeNow(kAttacker, *pTargetPlot);
+		if (bStockAdmitted)
+		{
+			iDamage += iRawDamage;
+			if (pForecast && !bImmediate)
+				iSpeculative += iRawDamage;
+		}
+		if (pForecast && bSample && (!bCapped || iRealizableMelee < OPERATIONAL_UNIT_MELEE_CAP) &&
+			(bImmediate || StrikeReachable(kAttacker, *pTargetPlot)))
+		{
+			iRealizableDamage += iRawDamage;
+			if (bCapped)
+				iRealizableMelee++;
+		}
+	}
+	if (pForecast)
+	{
+		if (bSample)
+		{
+			pForecast->iSpeculative = iSpeculative;
+			pForecast->iRejected = std::max(0, std::min(iSpeculative, iDamage - iRealizableDamage));
+		}
+		iRejected = RejectedDamage(iSpeculative, pForecast->iRejected, pForecast->iSpeculative);
+	}
+	return iDamage - iRejected;
+}
+
+// Vox Deorum: preserves admitted air estimates and legal immediate attacks from the actual origin.
+bool CvTacticalOperationalLoop::StrikeNow(const CvUnit& kUnit, const CvPlot& kTarget)
+{
+	if (kUnit.getDomainType() == DOMAIN_AIR)
+		return true;
+	if (!kUnit.canMove() || kUnit.isOutOfAttacks())
+		return false;
+	if (kUnit.IsCanAttackRanged())
+		return kUnit.canRangeStrikeAt(kTarget.getX(), kTarget.getY());
+	int iFlags = CvUnit::MOVEFLAG_ATTACK | CvUnit::MOVEFLAG_DESTINATION;
+	if (kTarget.isCity())
+	{
+		iFlags |= CvUnit::MOVEFLAG_NO_EMBARK;
+		if (!kTarget.isEnemyCity(kUnit) || !kUnit.IsCanAttackWithMove() ||
+			(kUnit.plot()->needsEmbarkation(&kUnit) && !kUnit.canDisembarkOnto(*kUnit.plot(), kTarget, true, iFlags)))
+			return false;
+	}
+	return kUnit.plot()->isAdjacent(&kTarget) && kUnit.canMoveInto(kTarget, iFlags);
+}
+
+// Vox Deorum: copies source-independent target checks from CvUnit::canRangeStrikeAt.
+bool CvTacticalOperationalLoop::CanRangeStrikeTarget(const CvUnit& kUnit, const CvPlot& kTarget)
+{
+	if (kUnit.isEmbarked() || kUnit.GetRange() <= 0 || kUnit.GetBaseRangedCombatStrength() <= 0 || kUnit.isOutOfAttacks())
+		return false;
+	if (kTarget.isCity())
+		return kTarget.isEnemyCity(kUnit) && (kUnit.AI_getUnitAIType() != UNITAI_MISSILE_AIR || kUnit.rangeStrikeTarget(kTarget, true) != NULL);
+	const CvUnit* pDefender = kUnit.rangeStrikeTarget(kTarget, true);
+	if (!pDefender)
+		return false;
+	if (MOD_GLOBAL_SUBS_UNDER_ICE_IMMUNITY && pDefender->getInvisibleType() == 0)
+	{
+		if (kTarget.getFeatureType() == FEATURE_ICE && kUnit.getInvisibleType() != 0)
+			return false;
+		if (kUnit.getUnitCombatType() == GC.getInfoTypeForString("UNITCOMBAT_ARCHER", true))
+			return false;
+	}
+	return true;
+}
+
+// Vox Deorum: tests legal attack bases independently without reserving firing tiles for other attackers.
+bool CvTacticalOperationalLoop::StrikeReachable(const CvUnit& kUnit, const CvPlot& kTarget)
+{
+	if (!kUnit.canMove() || kUnit.isOutOfAttacks() || kUnit.getDomainType() == DOMAIN_AIR)
+		return false;
+	const bool bRanged = kUnit.IsCanAttackRanged();
+	if (bRanged && !CanRangeStrikeTarget(kUnit, kTarget))
+		return false;
+	int iFlags = CvUnit::MOVEFLAG_ATTACK | CvUnit::MOVEFLAG_DESTINATION;
+	if (kTarget.isCity())
+	{
+		iFlags |= CvUnit::MOVEFLAG_NO_EMBARK;
+		if (!kTarget.isEnemyCity(kUnit) || (!bRanged && !kUnit.IsCanAttackWithMove()))
+			return false;
+	}
+	if (!bRanged && !kUnit.canMoveInto(kTarget, iFlags))
+		return false;
+	const ReachablePlots reach = TacticalAIHelpers::GetAllPlotsInReachThisTurn(&kUnit, kUnit.plot(),
+		CvUnit::MOVEFLAG_IGNORE_DANGER | CvUnit::MOVEFLAG_NO_EMBARK, 1);
+	for (ReachablePlots::const_iterator it = reach.begin(); it != reach.end(); ++it)
+	{
+		if (it->iMovesLeft <= 0 || it->iPlotIndex == kTarget.GetPlotIndex())
+			continue;
+		const CvPlot* pBase = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
+		if (!kUnit.canEndTurnAtPlot(pBase))
+			continue;
+		if (bRanged)
+		{
+			if (kUnit.canEverRangeStrikeAt(kTarget.getX(), kTarget.getY(), pBase, false))
+				return true;
+		}
+		else if (pBase->isAdjacent(&kTarget) && (!kTarget.isCity() || !pBase->needsEmbarkation(&kUnit) ||
+			kUnit.canDisembarkOnto(*pBase, kTarget, true, iFlags)))
+			return true;
+	}
+	return false;
+}
+
+// Vox Deorum: rounds a cached fraction against the current speculative amount only.
+int CvTacticalOperationalLoop::RejectedDamage(int iCurrent, int iRejected, int iSampled)
+{
+	return iSampled > 0 ? static_cast<int>((static_cast<long long>(iCurrent) * iRejected + iSampled / 2) / iSampled) : 0;
+}
+
+// Vox Deorum: samples a target on first selection while the command loop has a forecast budget left.
+eOperationalCheckResult CvTacticalOperationalLoop::CheckForecastReadiness(CvTacticalAI& kTactical, const SOperationalTurn& turn,
+	SOperationalBattlefield& field)
+{
+	if (field.eCenter == OPERATIONAL_CENTER_OUR_CITY)
+		return OPERATIONAL_CHECK_PASSED;
+	const OperationalForecastKey key = ForecastKey(field);
+	if (turn.forecasts.find(key) != turn.forecasts.end() || turn.forecasts.size() >= OPERATIONAL_FORECAST_BUDGET)
+		return OPERATIONAL_CHECK_PASSED;
+	CvPlot* pTarget = BattlefieldPlot(field);
+	if (!pTarget)
+		return OPERATIONAL_CHECK_PASSED;
+	SOperationalForecast& forecast = turn.forecasts[key];
+	SOperationalLocalSet local;
+	GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, true, field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT);
+	CvPlot* pZone = field.iZoneCityPlot >= 0 ? GC.getMap().plotByIndex(field.iZoneCityPlot) : NULL;
+	SOperationalEstimateCache cache;
+	const double fBefore = field.fEstimate;
+	EstimateFight(kTactical, turn, cache, local, pZone ? pZone->getPlotCity() : NULL, field, true);
+	forecast.bChecked = true;
+	if (field.fEstimate < fBefore)
+	{
+		// Vox Deorum: retain reinforcement admission gates while immediately correcting its inherited fight score.
+		if (field.fReinforceEstimate > 0.0)
+		{
+			field.fReinforceEstimate = field.fEstimate * field.reinforce.fSwing;
+			if (field.fReinforceEstimate <= 0.0 && field.eReinforce == OPERATIONAL_OFFER_READY)
+				field.eReinforce = OPERATIONAL_OFFER_INACTIVE;
+		}
+		return OPERATIONAL_CHECK_REDUCED;
+	}
+	return OPERATIONAL_CHECK_PASSED;
+}
+
+// Vox Deorum: normalizes threat shares only when identified damage exceeds whole danger.
+SOperationalVictimExposure CvTacticalOperationalLoop::AttributeExposure(double fExposure, int iDanger,
+	const vector<SOperationalThreatDamage>& threats)
+{
+	SOperationalVictimExposure result;
+	int iTotal = 0;
+	for (size_t i = 0; i < threats.size(); i++)
+		iTotal += std::max(0, threats[i].iDamage);
+	const int iDenominator = std::max(iDanger, iTotal);
+	if (iDenominator > 0)
+		for (size_t i = 0; i < threats.size(); i++)
+			if (threats[i].iDamage > 0)
+				result.shares[make_pair(threats[i].bCity, make_pair(static_cast<int>(threats[i].eOwner), threats[i].iID))] +=
+					fExposure * threats[i].iDamage / iDenominator;
+	result.fResidual = iDenominator > 0 ? fExposure * (iDenominator - iTotal) / iDenominator : fExposure;
+	return result;
+}
+
+// Vox Deorum: retains each source's largest allowed shares, then applies geometric decay to the sorted victim exposures.
+double CvTacticalOperationalLoop::CityDefenseExposure(const SOperationalTurn& turn, SOperationalEstimateCache& cache,
+	const vector<CvUnit*>& vEndangered, const map<int, int>& dangers)
+{
+	vector<double> exposures(vEndangered.size(), 0.0);
+	map<pair<bool, pair<int, int> >, vector<pair<double, int> > > allocations;
+	const int iRisk = turn.aiMapped[STacticalFlavors::RISK];
+	for (size_t i = 0; i < vEndangered.size(); i++)
+	{
+		const CvUnit& kVictim = *vEndangered[i];
+		map<int, SOperationalVictimExposure>::iterator stored = cache.victimExposure.find(kVictim.GetID());
+		if (stored == cache.victimExposure.end())
+		{
+			const int iDanger = dangers.find(kVictim.GetID())->second;
+			const double fExposure = UnitExposure(OurUnitWorth(kVictim), kVictim.getDamage(), kVictim.GetMaxHitPoints(), iDanger);
+			CvDangerPlotContents& contents = DangerContents(turn.ePlayer, *kVictim.plot());
+			vector<SOperationalThreatDamage> threats;
+			SOperationalVictimExposure shares;
+			if (kVictim.plot()->isFriendlyCity(kVictim))
+			{
+				// Vox Deorum: use native's pretend-garrison projection and retain environmental danger with the victim.
+				const CvCity* pCity = kVictim.plot()->getPlotCity();
+				const int iCityDanger = GetCityDangerByThreat(contents, pCity, &kVictim, SUnitIDValueContainer(), 0, &threats, iRisk);
+				const bool bFalls = iCityDanger + pCity->getDamage() >= pCity->GetMaxHitPoints();
+				const int iHostile = bFalls ? iDanger : (kVictim.CanGarrison() ? std::max(0, iDanger - contents.m_iImprovementDamage) : 0);
+				shares = AttributeExposure(fExposure, 0, threats);
+				if (iDanger > 0 && !shares.shares.empty())
+				{
+					const double fFraction = static_cast<double>(iHostile) / iDanger;
+					for (map<pair<bool, pair<int, int> >, double>::iterator it = shares.shares.begin(); it != shares.shares.end(); ++it)
+						it->second *= fFraction;
+					shares.fResidual = fExposure * (1.0 - fFraction);
+				}
+			}
+			else
+			{
+				GetDangerByThreat(contents, &kVictim, SUnitIDValueContainer(), 0, AIR_ACTION_ATTACK, threats, iRisk);
+				shares = AttributeExposure(fExposure, iDanger, threats);
+			}
+			stored = cache.victimExposure.insert(make_pair(kVictim.GetID(), shares)).first;
+		}
+		exposures[i] = stored->second.fResidual;
+		for (map<pair<bool, pair<int, int> >, double>::const_iterator it = stored->second.shares.begin(); it != stored->second.shares.end(); ++it)
+			if (it->second > 0.0)
+				// Vox Deorum: equal shares keep the earlier native roster victim.
+				allocations[it->first].push_back(make_pair(it->second, -static_cast<int>(i)));
+	}
+	for (map<pair<bool, pair<int, int> >, vector<pair<double, int> > >::iterator it = allocations.begin(); it != allocations.end(); ++it)
+	{
+		const CvUnit* pAttacker = it->first.first ? NULL :
+			GET_PLAYER(static_cast<PlayerTypes>(it->first.second.first)).getUnit(it->first.second.second);
+		const int iAttacks = it->first.first ? 1 : (pAttacker ? std::max(0, pAttacker->getNumAttacks()) : 0);
+		vector<pair<double, int> >& shares = it->second;
+		std::sort(shares.begin(), shares.end(), std::greater<pair<double, int> >());
+		for (size_t i = 0; i < shares.size() && i < static_cast<size_t>(iAttacks); i++)
+			exposures[-shares[i].second] += shares[i].first;
+	}
+	std::sort(exposures.begin(), exposures.end(), std::greater<double>());
+	double fTotal = 0.0;
+	double fWeight = 1.0;
+	for (size_t i = 0; i < exposures.size(); i++)
+	{
+		fTotal += fWeight * exposures[i];
+		fWeight *= OPERATIONAL_DEFENSE_EXPOSURE_DECAY;
+	}
+	return fTotal;
 }
 
 // Vox Deorum: reads danger contents before installing any roll, so cache refreshes retain native expected damage.
@@ -2430,9 +2799,7 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckReinforce(CvTacticalAI& 
 			break;
 		// Vox Deorum: only the rejected selection changed; reuse the current theater, stake and strength tallies.
 		SOperationalLocalSet local;
-		const CvCity* pCity = pTarget->getPlotCity();
-		GatherLocalSet(kTactical, turn.ePlayer, *pTarget, pCity != NULL || !pTarget->isWater(),
-			pCity ? pCity->isCoastal() : pTarget->isWater(), local, false);
+		GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, false);
 		EstimateReinforce(kTactical, turn, local, field);
 	}
 	field.reinforce.bChecked = true;
@@ -2689,10 +3056,10 @@ double CvTacticalOperationalLoop::OurUnitWorth(const CvUnit& kUnit)
 }
 
 // Vox Deorum: values the enemy's lost health and retained share without an upgrade premium.
-double CvTacticalOperationalLoop::DestroyedUnitValue(const CvUnit& kUnit, double fDamage)
+double CvTacticalOperationalLoop::DestroyedUnitValue(const CvUnit& kUnit, double fRealized, int iRejected)
 {
 	const double fWorth = UnitWorth(UnitBaseWorth(kUnit.getUnitInfo()), kUnit.getLevel(), gradeSeniorityPerLevel);
-	return DestroyedValue(fWorth, kUnit.GetCurrHitPoints(), kUnit.GetMaxHitPoints(), fDamage);
+	return DestroyedValue(fWorth, kUnit.GetCurrHitPoints(), kUnit.GetMaxHitPoints(), fRealized, iRejected);
 }
 
 // Mirrors the grade's SideIn and FriendPlayers on live relations: hostility wins; friends are teammates, master and
@@ -2935,7 +3302,7 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 	{
 		const CvCity* pCity = pTarget->getPlotCity();
 		GatherReinforceCandidates(kTactical, field, *pTarget, pCity != NULL || !pTarget->isWater(),
-			pCity ? pCity->isCoastal() : pTarget->isWater(), request.candidates);
+			pCity ? pCity->isCoastal() : pTarget->isWater(), request.candidates, field.bReleaseLocal);
 	}
 	else
 		for (size_t i = 0; i < vUnits.size(); i++)
@@ -3013,10 +3380,10 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 		if (decision.eResult == OPERATIONAL_ADMISSION_SUBSET || decision.eResult == OPERATIONAL_ADMISSION_REFUSED)
 		{
 			SOperationalLocalSet local;
-			const CvCity* pCity = pTarget->getPlotCity();
-			GatherLocalSet(kTactical, turn.ePlayer, *pTarget, pCity != NULL || !pTarget->isWater(),
-				pCity ? pCity->isCoastal() : pTarget->isWater(), local, false);
-			AdmittedReinforcement(request.candidates, field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !local.bCapturer,
+			GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, false);
+			const bool bLocalCapturer = field.bReleaseLocal && !bPermittedMenu
+				? TallyLocalOutsideCandidates(local, request.candidates, NULL) : local.bCapturer;
+			AdmittedReinforcement(request.candidates, field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !bLocalCapturer,
 				decision.vEffective, turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_STEEPNESS], decision.effectiveReinforce);
 		}
 	}
