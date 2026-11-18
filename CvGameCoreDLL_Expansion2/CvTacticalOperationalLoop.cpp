@@ -1907,6 +1907,19 @@ void CvTacticalOperationalLoop::StartCityDamage(const CvCity& kCity, SOperationa
 	damage.iHeal = ExpectedCityHeal(kCity);
 }
 
+// Vox Deorum: the chance in 1/10000 that an air strike gets past the best visible interceptor, as native's full estimate
+// weighs it (AdjustAirAttackDamageForInterception). Turns the attacker's self damage into the expected loss with interception.
+// Other attackers always land.
+static int AirStrikeChance(const CvUnit& kAttacker, const CvPlot& kTarget, int iRisk, int& iSelfDamage)
+{
+	if (kAttacker.getDomainType() != DOMAIN_AIR)
+		return 10000;
+	// Interceptor selection can fill native caches, so it precedes the damage-roll scope.
+	const CvUnit* pInterceptor = kTarget.GetBestInterceptor(kAttacker.getOwner(), &kAttacker, false, true);
+	OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
+	return TacticalAIHelpers::GetAirStrikeChance(&kAttacker, pInterceptor, &kTarget, 0, 0, iSelfDamage);
+}
+
 // Copy of the city case in CvTacticalAI::ComputeTotalExpectedDamage for one attacker. Changes: the quick estimate; the
 // counted totals are kept here; hits on a replacement garrison add city damage only, so D_g stays with the garrison the
 // estimate started with; the expected-damage bookkeeping on the move list is left out; a suicidal attack changes no
@@ -1935,6 +1948,10 @@ void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const Cv
 		TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(&kCity, &kAttacker, kAttacker.plot(), iSelfDamage, iIgnoredGarrisonDamage, true, 0,
 			damage.iCityDamage, iAssumedGarrisonDamage, true, true, damage.pCurrent);
 	}
+	// Vox Deorum: the quick estimate skips interception, so known interceptors discount air strikes here.
+	const int iStrikeChance = AirStrikeChance(kAttacker, *kCity.plot(), iRisk, iSelfDamage);
+	iCityDamage = iCityDamage * iStrikeChance / 10000;
+	iGarrisonDamage = iGarrisonDamage * iStrikeChance / 10000;
 
 	//exclude suicidal melee attacks
 	if (!(iCityDamage + iGarrisonDamage > iSelfDamage ||
@@ -2008,6 +2025,8 @@ static int RawUnitAttackDamage(const CvUnit& kTarget, const CvUnit& kAttacker, i
 		TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(&kTarget, &kAttacker, kTarget.plot(), kAttacker.plot(),
 			iSelfDamage, true, 0, 0, true);
 	}
+	// Vox Deorum: the quick estimate skips interception, so known interceptors discount air strikes here.
+	iDamage = iDamage * AirStrikeChance(kAttacker, *kTarget.plot(), iRisk, iSelfDamage) / 10000;
 	bAccepted = iDamage > iSelfDamage / 5 && kAttacker.GetCurrHitPoints() > iSelfDamage / 2;
 	return bAccepted ? iDamage : 0;
 }
