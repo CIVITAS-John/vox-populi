@@ -3674,8 +3674,10 @@ int CvPlot::GetInterceptorCount(PlayerTypes eAttackingPlayer, CvUnit* pAttacking
 
 
 //	--------------------------------------------------------------------------------
-CvUnit* CvPlot::GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* pAttackingUnit /* = NULL */, 
-	bool bLandInterceptorsOnly /*false*/, bool bVisibleInterceptorsOnly /*false*/, int* piNumPossibleInterceptors) const
+// Vox Deorum: selects an interceptor using live or forecast interception counts.
+CvUnit* CvPlot::GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* pAttackingUnit /* = NULL */,
+	bool bLandInterceptorsOnly /*false*/, bool bVisibleInterceptorsOnly /*false*/, int* piNumPossibleInterceptors,
+	const std::map<int, int>* pInterceptionsUsed) const
 {
 	if (eAttackingPlayer == NO_PLAYER)
 		return NULL;
@@ -3714,8 +3716,15 @@ CvUnit* CvPlot::GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* p
 			if (!pInterceptorUnit || pInterceptorUnit->isDelayedDeath())
 				continue;
 
-			// Vox Deorum: the eligibility and ranking rules are shared with the tactical simulation
-			int iValue = GetInterceptorValue(pInterceptorUnit, iDistance, bLandInterceptorsOnly, 0, 0);
+			// Vox Deorum: apply forecast spends through the shared eligibility and ranking rules.
+			int iExtraInterceptionsUsed = 0;
+			if (pInterceptionsUsed)
+			{
+				std::map<int, int>::const_iterator used = pInterceptionsUsed->find(pInterceptorUnit->GetID());
+				if (used != pInterceptionsUsed->end())
+					iExtraInterceptionsUsed = used->second;
+			}
+			int iValue = GetInterceptorValue(pInterceptorUnit, iDistance, bLandInterceptorsOnly, 0, iExtraInterceptionsUsed);
 			if (iValue < 0)
 				continue;
 
@@ -3735,7 +3744,7 @@ CvUnit* CvPlot::GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* p
 }
 
 // Vox Deorum: how well this unit would intercept an attack over this plot, or -1 if it cannot. The tactical simulation
-// passes the damage it has dealt to the interceptor and the interceptions it has used up; the live game passes zero.
+// passes planned damage and interception uses. The operational forecast also passes planned interception uses.
 int CvPlot::GetInterceptorValue(const CvUnit* pInterceptorUnit, int iDistance, bool bLandInterceptorsOnly, int iExtraDamage, int iExtraInterceptionsUsed) const
 {
 	// Must not have already intercepted this turn

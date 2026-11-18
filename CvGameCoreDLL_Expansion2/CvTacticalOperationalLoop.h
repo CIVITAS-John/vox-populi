@@ -16,6 +16,8 @@
 #include "VoxDeorumRL/schema/SearchIntent.h"
 
 struct CvDangerPlotContents;
+// Vox Deorum: damage dealt and taken before interception.
+struct SOperationalAttackDamage;
 
 // one posture row per eTacticalPosture value
 const int NUM_OPERATIONAL_POSTURES = TACTICAL_POSTURE_COUNTERATTACK + 1;
@@ -227,6 +229,8 @@ struct SOperationalLocalSet
 	bool bSea;                  // the battlefield takes sea units
 	vector<CvUnit*> vStrength;  // strength filter: in-domain land and sea units, spent units and army members included
 	vector<CvUnit*> vDamage;    // damage filter: recruitable units outside armies that can still attack, aircraft included, by ascending ID
+	// Vox Deorum: fighters that can sweep this target from their current plot, by ascending ID.
+	vector<CvUnit*> vSweepers;
 	bool bCapturer;             // a strength-filter unit passes IsCapturer
 	bool bCanCapture;           // a damage-filter unit passes CanCapture
 
@@ -846,10 +850,11 @@ public:
 	static int ExpectedCityHeal(const CvCity& kCity);
 	// Starts a damage simulation against the city: its garrison and health, remaining HP and expected heal.
 	static void StartCityDamage(const CvCity& kCity, SOperationalCityDamage& damage);
-	// Vox Deorum: simulates one city attack, tests for suicide and applies the forecast discount from the supplied readiness.
+	// Vox Deorum: tests a projected city hit with its planned interceptor and applies the readiness discount.
 	// Counts city and starting garrison damage and replaces a garrison predicted to die.
-	static void SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, SOperationalCityDamage& damage, int iRisk,
-		SOperationalForecast* pForecast, bool bSample, eOperationalStrikeReadiness eReadiness);
+	static void SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, const CvUnit* pInterceptor,
+		SOperationalAttackDamage hit, SOperationalCityDamage& damage, int iRisk, SOperationalForecast* pForecast, bool bSample,
+		eOperationalStrikeReadiness eReadiness);
 	// Vox Deorum: estimates realizable damage from city fire and local units; reports rejected damage separately for scoring.
 	static int LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk, int& iRejected,
 		SOperationalForecast* pForecast = NULL, bool bSample = false);

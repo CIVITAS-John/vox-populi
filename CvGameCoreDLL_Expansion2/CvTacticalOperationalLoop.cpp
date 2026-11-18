@@ -1445,6 +1445,181 @@ static OperationalForecastKey ForecastKey(const SOperationalBattlefield& field)
 	return OperationalForecastKey(static_cast<int>(field.eCenter), make_pair(static_cast<int>(field.eOwner), field.iTargetID));
 }
 
+// Vox Deorum: returns the chance in 1/10000 of getting past the planned interceptor and updates expected self damage.
+// Non-air attacks bypass this adjustment.
+static int AirStrikeChance(const CvUnit& kAttacker, const CvPlot& kTarget, const CvUnit* pInterceptor, int iRisk, int& iSelfDamage)
+{
+	if (kAttacker.getDomainType() != DOMAIN_AIR)
+		return 10000;
+	OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
+	return TacticalAIHelpers::GetAirStrikeChance(&kAttacker, pInterceptor, &kTarget, 0, 0, iSelfDamage);
+}
+
+// Vox Deorum: stores damage dealt and taken before interception.
+struct SOperationalAttackDamage
+{
+	int iDamage;
+	int iGarrisonDamage;
+	int iSelfDamage;
+};
+
+// Vox Deorum: projects damage to the city and garrison and retaliation before interception.
+static SOperationalAttackDamage ProjectCityAttackDamage(const CvCity& kCity, const CvUnit& kAttacker,
+	const SOperationalCityDamage& damage, int iRisk)
+{
+	SOperationalAttackDamage hit = { 0, 0, 0 };
+	// Vox Deorum: a replacement still supplies native city strength, but absorbs none of the later hits.
+	const int iAssumedGarrisonDamage = damage.pCurrent && damage.pCurrent != damage.pGarrison
+		? damage.pCurrent->GetCurrHitPoints() : damage.iTotalGarrisonDamage;
+	// The first projection supplies our hit; the second supplies only the enemy-roll retaliation for the suicide test.
+	{
+		OperationalDamageRollScope roll(OurRollPer200(iRisk));
+		hit.iDamage = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(&kCity, &kAttacker, kAttacker.plot(), hit.iSelfDamage, hit.iGarrisonDamage,
+			true, 0, damage.iCityDamage, iAssumedGarrisonDamage, true, true, damage.pCurrent);
+	}
+	// Native non-air ranged attacks have no self damage.
+	if (!kAttacker.IsCanAttackRanged() || kAttacker.getDomainType() == DOMAIN_AIR)
+	{
+		OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
+		int iIgnoredGarrisonDamage = 0;
+		TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(&kCity, &kAttacker, kAttacker.plot(), hit.iSelfDamage, iIgnoredGarrisonDamage, true, 0,
+			damage.iCityDamage, iAssumedGarrisonDamage, true, true, damage.pCurrent);
+	}
+	return hit;
+}
+
+// Vox Deorum: projects damage to the target unit and retaliation before interception.
+static SOperationalAttackDamage RawUnitAttackDamage(const CvUnit& kTarget, const CvUnit& kAttacker, int iRisk)
+{
+	SOperationalAttackDamage hit = { 0, 0, 0 };
+	{
+		OperationalDamageRollScope roll(OurRollPer200(iRisk));
+		hit.iDamage = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(&kTarget, &kAttacker, kTarget.plot(), kAttacker.plot(),
+			hit.iSelfDamage, true, 0, 0, true);
+	}
+	// Native non-air ranged attacks have no self damage.
+	if (!kAttacker.IsCanAttackRanged() || kAttacker.getDomainType() == DOMAIN_AIR)
+	{
+		OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
+		TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(&kTarget, &kAttacker, kTarget.plot(), kAttacker.plot(),
+			hit.iSelfDamage, true, 0, 0, true);
+	}
+	return hit;
+}
+
+// Vox Deorum: applies the planned interceptor before testing whether the attack is worth making.
+static bool ApplyInterceptionAndTest(const CvPlot& kTarget, const CvUnit& kAttacker, const CvUnit* pInterceptor,
+	int iRisk, bool bCityTarget, SOperationalAttackDamage& hit)
+{
+	const int iStrikeChance = AirStrikeChance(kAttacker, kTarget, pInterceptor, iRisk, hit.iSelfDamage);
+	hit.iDamage = hit.iDamage * iStrikeChance / 10000;
+	hit.iGarrisonDamage = hit.iGarrisonDamage * iStrikeChance / 10000;
+	if (!bCityTarget)
+		return hit.iDamage > hit.iSelfDamage / 5 && kAttacker.GetCurrHitPoints() > hit.iSelfDamage / 2;
+
+	const int iDamage = hit.iDamage + hit.iGarrisonDamage;
+	return iDamage > hit.iSelfDamage ||
+		(iDamage * 2 > hit.iSelfDamage && kAttacker.GetCurrHitPoints() - hit.iSelfDamage > kAttacker.GetMaxHitPoints() / 2);
+}
+
+// Vox Deorum: counts visible interceptors only when the damage filter has an air striker.
+static int CountVisibleAirInterceptors(PlayerTypes ePlayer, const CvPlot& kTarget, const SOperationalLocalSet& local)
+{
+	for (size_t i = 0; i < local.vDamage.size(); i++)
+		if (local.vDamage[i]->getDomainType() == DOMAIN_AIR)
+			return kTarget.GetInterceptorCount(ePlayer, NULL, false, true);
+	return 0;
+}
+
+// Vox Deorum: holds the planned air exchange for one entry in the damage filter.
+struct SOperationalAirExchange
+{
+	const CvUnit* pInterceptor;
+	bool bSweeps; // the fighter sweeps instead of striking
+};
+
+// Vox Deorum: plans surviving sweeps first, then assigns remaining visible interceptions using the starting damage estimates.
+static vector<SOperationalAirExchange> PlanAirExchanges(PlayerTypes ePlayer, const CvPlot& kTarget, const SOperationalLocalSet& local,
+	int iVisibleInterceptors, const vector<SOperationalAttackDamage>& vAirHits, int iRisk, bool bCityTarget)
+{
+	const SOperationalAirExchange noExchange = { NULL, false };
+	vector<SOperationalAirExchange> vExchanges(local.vDamage.size(), noExchange);
+	// Vox Deorum: the count is zero without air strikers or visible interceptors.
+	if (iVisibleInterceptors == 0)
+		return vExchanges;
+
+	map<int, int> interceptionsUsed;
+	if (!local.vSweepers.empty())
+	{
+		size_t iNonFighterStrikers = 0;
+		for (size_t i = 0; i < local.vDamage.size(); i++)
+		{
+			const CvUnit* pAttacker = local.vDamage[i];
+			if (pAttacker->getDomainType() == DOMAIN_AIR && pAttacker->getUnitInfo().GetDefaultUnitAIType() != UNITAI_DEFENSE_AIR)
+				++iNonFighterStrikers;
+		}
+		// Vox Deorum: the conservative sweep cap is the smaller of the non-fighter striker and visible interceptor
+		// counts. Native uses the visible count with a minimum of one, or no cap with air search on.
+		const size_t iSweepLimit = std::min(iNonFighterStrikers, static_cast<size_t>(iVisibleInterceptors));
+		size_t iSweeps = 0;
+		for (size_t i = 0; i < local.vSweepers.size() && iSweeps < iSweepLimit; i++)
+		{
+			const CvUnit* pSweeper = local.vSweepers[i];
+			// Select before changing the roll. A later aircraft may be visible to more interceptors.
+			const CvUnit* pInterceptor = kTarget.GetBestInterceptor(ePlayer, pSweeper, false, true, NULL, &interceptionsUsed);
+			if (!pInterceptor)
+				continue;
+
+			int iIgnoredInterceptorDamage = 0;
+			int iDamageToSweeper = 0;
+			{
+				OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
+				TacticalAIHelpers::GetSimulatedAirSweepDamage(pSweeper, pInterceptor, pSweeper->plot(), &kTarget,
+					0, 0, iIgnoredInterceptorDamage, iDamageToSweeper);
+			}
+			// Vox Deorum: assume a lethal sweep leaves the interception for a later strike. Native spends it either way.
+			if (iDamageToSweeper >= pSweeper->GetCurrHitPoints())
+				continue;
+
+			// Ignore damage to the interceptor, so it retains its strength for any remaining interceptions.
+			++iSweeps;
+			++interceptionsUsed[pInterceptor->GetID()];
+			// A fighter can sweep even when it is outside the damage filter.
+			const vector<CvUnit*>::const_iterator attacker = std::find(local.vDamage.begin(), local.vDamage.end(), pSweeper);
+			if (attacker != local.vDamage.end())
+				vExchanges[attacker - local.vDamage.begin()].bSweeps = true;
+		}
+	}
+
+	// The damage filter is sorted by unit ID, so the index breaks ties in that order.
+	vector<pair<int, size_t> > vStrikes;
+	for (size_t i = 0; i < local.vDamage.size(); i++)
+	{
+		if (local.vDamage[i]->getDomainType() != DOMAIN_AIR || vExchanges[i].bSweeps)
+			continue;
+
+		// Vox Deorum: a hit absorbed by the garrison still counts toward the size of the strike.
+		const SOperationalAttackDamage& hit = vAirHits[i];
+		vStrikes.push_back(make_pair(-(hit.iDamage + hit.iGarrisonDamage), i));
+	}
+	std::sort(vStrikes.begin(), vStrikes.end());
+	for (size_t i = 0; i < vStrikes.size(); i++)
+	{
+		const size_t iAttacker = vStrikes[i].second;
+		const CvUnit* pAttacker = local.vDamage[iAttacker];
+		const CvUnit* pInterceptor = kTarget.GetBestInterceptor(ePlayer, pAttacker, false, true, NULL, &interceptionsUsed);
+		if (!pInterceptor)
+			continue;
+
+		// Vox Deorum: a strike that fails against the starting target keeps its interceptor but leaves the use for the next strike.
+		vExchanges[iAttacker].pInterceptor = pInterceptor;
+		SOperationalAttackDamage hit = vAirHits[iAttacker];
+		if (ApplyInterceptionAndTest(kTarget, *pAttacker, pInterceptor, iRisk, bCityTarget, hit))
+			++interceptionsUsed[pInterceptor->GetID()];
+	}
+	return vExchanges;
+}
+
 // Vox Deorum: values what local attackers can destroy and what the fight can protect, in typical units.
 bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache, const SOperationalLocalSet& local,
 	const CvCity* pZoneCity, SOperationalBattlefield& field, bool bSample)
@@ -1532,8 +1707,21 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		StartCityDamage(*pCity, damage);
 		bool bCanCapture = !pForecast && local.bCanCapture;
 		const CvPlot& kTarget = *pCity->plot();
+		// Vox Deorum: project the starting air hits before city and garrison damage accumulate.
+		const int iVisibleInterceptors = CountVisibleAirInterceptors(turn.ePlayer, kTarget, local);
+		vector<SOperationalAttackDamage> vAirHits;
+		if (iVisibleInterceptors > 0)
+		{
+			vAirHits.resize(local.vDamage.size());
+			for (size_t i = 0; i < local.vDamage.size(); i++)
+				if (local.vDamage[i]->getDomainType() == DOMAIN_AIR)
+					vAirHits[i] = ProjectCityAttackDamage(*pCity, *local.vDamage[i], damage, iRisk);
+		}
+		const vector<SOperationalAirExchange> vExchanges = PlanAirExchanges(turn.ePlayer, kTarget, local, iVisibleInterceptors, vAirHits, iRisk, true);
 		for (size_t i = 0; i < local.vDamage.size(); i++)
 		{
+			if (vExchanges[i].bSweeps)
+				continue;
 			const CvUnit& kAttacker = *local.vDamage[i];
 			eOperationalStrikeReadiness eReadiness = OPERATIONAL_STRIKE_UNCONFIRMED;
 			if (pForecast)
@@ -1552,7 +1740,11 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 						bCanCapture = true;
 				}
 			}
-			SimulateCityAttack(*pCity, kAttacker, damage, iRisk, pForecast, bSample, eReadiness);
+			// Vox Deorum: reuse the starting hit until the simulated city or garrison changes.
+			const bool bReuseHit = !vAirHits.empty() && kAttacker.getDomainType() == DOMAIN_AIR &&
+				damage.iCityDamage == 0 && damage.iTotalGarrisonDamage == 0 && damage.pCurrent == damage.pGarrison;
+			const SOperationalAttackDamage hit = bReuseHit ? vAirHits[i] : ProjectCityAttackDamage(*pCity, kAttacker, damage, iRisk);
+			SimulateCityAttack(*pCity, kAttacker, vExchanges[i].pInterceptor, hit, damage, iRisk, pForecast, bSample, eReadiness);
 		}
 		if (pForecast && bSample)
 		{
@@ -1795,10 +1987,9 @@ struct PrOperationalUnitID
 };
 
 // Vox Deorum: plain distance, no pathfinding. In-domain land and sea units add strength within strike reach; ranged
-// units of either domain and aircraft in range can join the damage filter. A unit enters the damage filter when it is
-// on the tactical roster and has an attack left, and passes the recruitment filters of
-// CvTacticalAI::FindUnitsWithinStrikingDistance that need no pathfinding, so readiness can recruit every unit the
-// estimate counts.
+// units of either domain and aircraft in range can join the damage filter. Local attackers need a roster spot, an attack
+// left and the checks from CvTacticalAI::FindUnitsWithinStrikingDistance that need no pathfinding. Fighters can strike
+// with air search on if they can also sweep from their current plot.
 void CvTacticalOperationalLoop::GatherLocalSet(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kPlot, bool bLand, bool bSea,
 	SOperationalLocalSet& local, bool bDamage)
 {
@@ -1830,15 +2021,27 @@ void CvTacticalOperationalLoop::GatherLocalSet(CvTacticalAI& kTactical, PlayerTy
 				local.bCapturer = local.bCapturer || IsCapturer(*pUnit);
 			}
 		}
-		if (bDamage && (!pUnit->IsCanAttackRanged() || !pUnit->isEmbarked()) &&
-			roster.count(pUnit->GetID()) > 0 && pUnit->canUseForTacticalAI() && !pUnit->isOutOfAttacks() && !pUnit->IsCoveringFriendlyCivilian() &&
-			pUnit->getUnitInfo().GetDefaultUnitAIType() != UNITAI_DEFENSE_AIR && (!pCity || CanStrikeCity(kTactical, *pUnit, *pCity)))
+		if (!bDamage || (pUnit->IsCanAttackRanged() && pUnit->isEmbarked()) ||
+			roster.count(pUnit->GetID()) == 0 || !pUnit->canUseForTacticalAI() || pUnit->isOutOfAttacks() || pUnit->IsCoveringFriendlyCivilian())
+			continue;
+
+		// Vox Deorum: a sweep needs a valid target plot but does not need to pass the city strike test.
+		if (pUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_DEFENSE_AIR)
+		{
+			if (pUnit->getDomainType() != DOMAIN_AIR || !pUnit->canAirSweepAt(kPlot.getX(), kPlot.getY()))
+				continue;
+			local.vSweepers.push_back(pUnit);
+			if (!MOD_VOX_TACTICAL_AIR_SEARCH)
+				continue;
+		}
+		if (!pCity || CanStrikeCity(kTactical, *pUnit, *pCity))
 		{
 			local.vDamage.push_back(pUnit);
 			local.bCanCapture = local.bCanCapture || CanCapture(*pUnit);
 		}
 	}
 	std::sort(local.vDamage.begin(), local.vDamage.end(), PrOperationalUnitID());
+	std::sort(local.vSweepers.begin(), local.vSweepers.end(), PrOperationalUnitID());
 }
 
 // Vox Deorum: gathers local units, keeping unit fight estimates in the plot's terrain domain even at a city.
@@ -1907,57 +2110,20 @@ void CvTacticalOperationalLoop::StartCityDamage(const CvCity& kCity, SOperationa
 	damage.iHeal = ExpectedCityHeal(kCity);
 }
 
-// Vox Deorum: the chance in 1/10000 that an air strike gets past the best visible interceptor, as native's full estimate
-// weighs it (AdjustAirAttackDamageForInterception). Turns the attacker's self damage into the expected loss with interception.
-// Other attackers always land.
-static int AirStrikeChance(const CvUnit& kAttacker, const CvPlot& kTarget, int iRisk, int& iSelfDamage)
+// Vox Deorum: copies the city case of CvTacticalAI::ComputeTotalExpectedDamage for one attacker. Applies the planned
+// interceptor to the quick estimate and tests it against the accumulated city and garrison state. Applies the readiness
+// discount without changing the move list. A suicidal attack leaves the garrison unchanged. Replacement hits count
+// toward city damage only, and a garrison predicted to die cannot return.
+void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, const CvUnit* pInterceptor,
+	SOperationalAttackDamage hit, SOperationalCityDamage& damage, int iRisk, SOperationalForecast* pForecast, bool bSample,
+	eOperationalStrikeReadiness eReadiness)
 {
-	if (kAttacker.getDomainType() != DOMAIN_AIR)
-		return 10000;
-	// Interceptor selection can fill native caches, so it precedes the damage-roll scope.
-	const CvUnit* pInterceptor = kTarget.GetBestInterceptor(kAttacker.getOwner(), &kAttacker, false, true);
-	OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
-	return TacticalAIHelpers::GetAirStrikeChance(&kAttacker, pInterceptor, &kTarget, 0, 0, iSelfDamage);
-}
-
-// Copy of the city case in CvTacticalAI::ComputeTotalExpectedDamage for one attacker. Changes: the quick estimate; the
-// counted totals are kept here; hits on a replacement garrison add city damage only, so D_g stays with the garrison the
-// estimate started with; the expected-damage bookkeeping on the move list is left out; a suicidal attack changes no
-// garrison state, and a garrison predicted to die is never met again as a replacement.
-// Vox Deorum: applies the forecast discount using readiness determined by the caller.
-void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, SOperationalCityDamage& damage, int iRisk,
-	SOperationalForecast* pForecast, bool bSample, eOperationalStrikeReadiness eReadiness)
-{
-	int iSelfDamage = 0;
-	int iCityDamage = 0;
-	int iGarrisonDamage = 0;
-	const bool bStartingGarrison = damage.pCurrent != NULL && damage.pCurrent == damage.pGarrison;
-	// Vox Deorum: a replacement still supplies native city strength, but absorbs none of the later hits.
-	const int iAssumedGarrisonDamage = damage.pCurrent && !bStartingGarrison ? damage.pCurrent->GetCurrHitPoints() : damage.iTotalGarrisonDamage;
-	// The first projection supplies our hit; the second supplies only the enemy-roll retaliation for the suicide test.
-	{
-		OperationalDamageRollScope roll(OurRollPer200(iRisk));
-		iCityDamage = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(&kCity, &kAttacker, kAttacker.plot(), iSelfDamage, iGarrisonDamage, true, 0,
-			damage.iCityDamage, iAssumedGarrisonDamage, true, true, damage.pCurrent);
-	}
-	// Native non-air ranged attacks have no self damage.
-	if (!kAttacker.IsCanAttackRanged() || kAttacker.getDomainType() == DOMAIN_AIR)
-	{
-		OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
-		int iIgnoredGarrisonDamage = 0;
-		TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(&kCity, &kAttacker, kAttacker.plot(), iSelfDamage, iIgnoredGarrisonDamage, true, 0,
-			damage.iCityDamage, iAssumedGarrisonDamage, true, true, damage.pCurrent);
-	}
-	// Vox Deorum: the quick estimate skips interception, so known interceptors discount air strikes here.
-	const int iStrikeChance = AirStrikeChance(kAttacker, *kCity.plot(), iRisk, iSelfDamage);
-	iCityDamage = iCityDamage * iStrikeChance / 10000;
-	iGarrisonDamage = iGarrisonDamage * iStrikeChance / 10000;
-
-	//exclude suicidal melee attacks
-	if (!(iCityDamage + iGarrisonDamage > iSelfDamage ||
-		((iCityDamage + iGarrisonDamage) * 2 > iSelfDamage && kAttacker.GetCurrHitPoints() - iSelfDamage > kAttacker.GetMaxHitPoints() / 2)))
+	if (!ApplyInterceptionAndTest(*kCity.plot(), kAttacker, pInterceptor, iRisk, true, hit))
 		return;
 
+	int iCityDamage = hit.iDamage;
+	int iGarrisonDamage = hit.iGarrisonDamage;
+	const bool bStartingGarrison = damage.pCurrent != NULL && damage.pCurrent == damage.pGarrison;
 	// Vox Deorum: reject unreachable hits before they alter hypothetical city or garrison health.
 	if (pForecast && eReadiness != OPERATIONAL_STRIKE_IMMEDIATE)
 	{
@@ -2008,35 +2174,23 @@ void CvTacticalOperationalLoop::SimulateCityAttack(const CvCity& kCity, const Cv
 	damage.iGarrisonDamage += iGarrisonDamage;
 }
 
-// Vox Deorum: projects raw unit damage with separate rolls and returns zero if the native suicide test fails.
-static int RawUnitAttackDamage(const CvUnit& kTarget, const CvUnit& kAttacker, int iRisk, bool& bAccepted)
-{
-	int iDamage = 0;
-	int iSelfDamage = 0;
-	{
-		OperationalDamageRollScope roll(OurRollPer200(iRisk));
-		iDamage = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(&kTarget, &kAttacker, kTarget.plot(), kAttacker.plot(),
-			iSelfDamage, true, 0, 0, true);
-	}
-	// Native non-air ranged attacks have no self damage.
-	if (!kAttacker.IsCanAttackRanged() || kAttacker.getDomainType() == DOMAIN_AIR)
-	{
-		OperationalDamageRollScope roll(EnemyRollPer200(iRisk));
-		TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(&kTarget, &kAttacker, kTarget.plot(), kAttacker.plot(),
-			iSelfDamage, true, 0, 0, true);
-	}
-	// Vox Deorum: the quick estimate skips interception, so known interceptors discount air strikes here.
-	iDamage = iDamage * AirStrikeChance(kAttacker, *kTarget.plot(), iRisk, iSelfDamage) / 10000;
-	bAccepted = iDamage > iSelfDamage / 5 && kAttacker.GetCurrHitPoints() > iSelfDamage / 2;
-	return bAccepted ? iDamage : 0;
-}
-
-// Vox Deorum: mirrors FindCitiesWithinStrikingDistance without changing its move list, then simulates local units from the largest hit down.
+// Vox Deorum: counts city fire without changing the move list, then tallies local hits from largest to smallest.
 int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk, int& iRejected,
 	SOperationalForecast* pForecast, bool bSample)
 {
 	CvPlayer& kPlayer = GET_PLAYER(ePlayer);
 	CvPlot* pTargetPlot = kTarget.plot();
+	// Vox Deorum: share the starting air hits between interception planning and the damage tally.
+	const int iVisibleInterceptors = CountVisibleAirInterceptors(ePlayer, *pTargetPlot, local);
+	vector<SOperationalAttackDamage> vAirHits;
+	if (iVisibleInterceptors > 0)
+	{
+		vAirHits.resize(local.vDamage.size());
+		for (size_t i = 0; i < local.vDamage.size(); i++)
+			if (local.vDamage[i]->getDomainType() == DOMAIN_AIR)
+				vAirHits[i] = RawUnitAttackDamage(kTarget, *local.vDamage[i], iRisk);
+	}
+	const vector<SOperationalAirExchange> vExchanges = PlanAirExchanges(ePlayer, *pTargetPlot, local, iVisibleInterceptors, vAirHits, iRisk, false);
 	int iDamage = 0;
 	int iLoop = 0;
 	for (CvCity* pCity = kPlayer.firstCity(&iLoop); pCity != NULL; pCity = kPlayer.nextCity(&iLoop))
@@ -2055,11 +2209,14 @@ int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit
 	vector<pair<int, size_t> > vHits;
 	for (size_t i = 0; i < local.vDamage.size(); i++)
 	{
-		bool bAccepted;
-		const int iRawDamage = RawUnitAttackDamage(kTarget, *local.vDamage[i], iRisk, bAccepted);
+		if (vExchanges[i].bSweeps)
+			continue;
+		const CvUnit& kAttacker = *local.vDamage[i];
+		SOperationalAttackDamage hit = !vAirHits.empty() && kAttacker.getDomainType() == DOMAIN_AIR
+			? vAirHits[i] : RawUnitAttackDamage(kTarget, kAttacker, iRisk);
 		// Vox Deorum: the unsampled tally counts every hit that passes the native test; forecasts count positive hits.
-		if (bAccepted && (!pForecast || iRawDamage > 0))
-			vHits.push_back(make_pair(-iRawDamage, i));
+		if (ApplyInterceptionAndTest(*pTargetPlot, kAttacker, vExchanges[i].pInterceptor, iRisk, false, hit) && (!pForecast || hit.iDamage > 0))
+			vHits.push_back(make_pair(-hit.iDamage, i));
 	}
 	std::sort(vHits.begin(), vHits.end());
 	for (size_t h = 0; h < vHits.size(); h++)

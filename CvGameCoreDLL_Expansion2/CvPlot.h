@@ -187,7 +187,9 @@ public:
 
 	bool HasAirCover(PlayerTypes eDefendingPlayer) const;
 	int GetInterceptorCount(PlayerTypes eAttackingPlayer, CvUnit* pAttackingUnit = NULL, bool bLandInterceptorsOnly = false, bool bVisibleInterceptorsOnly = false) const;
-	CvUnit* GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* pAttackingUnit = NULL, bool bLandInterceptorsOnly = false, bool bVisibleInterceptorsOnly = false, int* piNumPossibleInterceptors = NULL) const;
+	// Vox Deorum: finds the best interceptor, optionally accounting for interceptions already planned.
+	CvUnit* GetBestInterceptor(PlayerTypes eAttackingPlayer, const CvUnit* pAttackingUnit = NULL, bool bLandInterceptorsOnly = false,
+		bool bVisibleInterceptorsOnly = false, int* piNumPossibleInterceptors = NULL, const std::map<int, int>* pInterceptionsUsed = NULL) const;
 	// Vox Deorum: interceptor eligibility and ranking over this plot, shared with the tactical simulation. -1 means it cannot intercept.
 	int GetInterceptorValue(const CvUnit* pInterceptorUnit, int iDistance, bool bLandInterceptorsOnly, int iExtraDamage, int iExtraInterceptionsUsed) const;
 
