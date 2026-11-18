@@ -112,6 +112,7 @@ vector<SComboMove> gMovesToAdd;
 map<int, int> gBadUnitsCount;
 SUnitIDValueContainer gEnemyDamageDealt;
 TUnitFlagLookup gSafePlotCount;
+tr1::unordered_map<int, int> gSafePlotTestBound; //per unit: plots offered to the safe plot count this sim (caps the count)
 // Vox Deorum: unit ID -> lowest danger on a plot outside a city where the unit can end the turn, or -1 without one. Only for
 // land units that can reach one of their own cities, filled once per search at the root position.
 tr1::unordered_map<int, int> gOpenPlotDanger;
@@ -11295,6 +11296,23 @@ static void UpdateOpenPlotDanger(const CvUnit* pUnit, const ReachablePlots& reac
 	gOpenPlotDanger[pUnit->GetID()] = iLowestDanger;
 }
 
+//gSafePlotCount is only ever tested for > 0 or == 0, so once a unit has a safe plot, counting more of them changes nothing.
+//Returns true if the root prunes may stop testing plots for this unit once its count is positive (the caller checks that).
+//The tests themselves (GetPlotDanger, canEndTurnAtPlot) only read game state, with two exceptions that keep the full
+//count: canMoveInto calls a Lua hook with MOD_EVENTS_CAN_MOVE_INTO, and getUnitByIndex reports stale unit entries in
+//network games. The count is an unsigned short: while the plots offered to it stay below 65536 it cannot wrap to zero,
+//so the shortcut is only taken below that bound.
+static bool CanStopCountingSafePlots(int iUnitID, size_t nPlotsOffered)
+{
+	if (MOD_EVENTS_CAN_MOVE_INTO || GC.getGame().isNetworkMultiPlayer())
+		return false;
+
+	int& iBound = gSafePlotTestBound[iUnitID];
+	if (iBound < 65536)
+		iBound += (int)nPlotsOffered;
+	return iBound < 65536;
+}
+
 void CvTacticalPosition::updateMoveAndAttackPlotsForUnit(SUnitStats unit)
 {
 	// Vox Deorum: aircraft reach only their base plot, and their targets come from the position's enemy plots (GetAirTargetPlots),
@@ -11323,29 +11341,34 @@ void CvTacticalPosition::updateMoveAndAttackPlotsForUnit(SUnitStats unit)
 		bool bTargetIsEnemy = pTargetPlot->isEnemyUnit(ePlayer, true, true) || pTargetPlot->isEnemyCity(*pUnit);
 		CvPlayer& kPlayer = GET_PLAYER(ePlayer);
 
-		//this is a performance fix / logic simplification
-		//all open positions share just one instance of gSafePlotCount
-		//we only update the count once at the start of the sim
-		//if there is no safe plot then, there will never be one!
-		//callers only check whether the count is zero, so we can stop looking after the first safe plot
-		bool bNeedSafePlot = !parentPosition && gSafePlotCount[unit.iUnitID] == 0;
 		// Vox Deorum: the danger outside a city, for the hold bonus
 		if (!parentPosition)
 			UpdateOpenPlotDanger(pUnit, reachablePlots, GetUnitDamageDealt());
 
 		//try to save some memory here
 		ReachablePlots reachablePlotsPruned;
+		bool bCanStopCounting = !parentPosition && CanStopCountingSafePlots(unit.iUnitID, reachablePlots.size());
+		bool bHaveSafePlot = false;
+		if (bCanStopCounting)
+		{
+			TUnitFlagLookup::const_iterator itSafe = gSafePlotCount.find(unit.iUnitID);
+			bHaveSafePlot = (itSafe != gSafePlotCount.end() && itSafe->second > 0);
+		}
 		for (ReachablePlots::const_iterator it = reachablePlots.begin(); it != reachablePlots.end(); ++it)
 		{
 			CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
 
-			if (bNeedSafePlot)
+			//this is a performance fix / logic simplification
+			//all open positions share just one instance of gSafePlotCount
+			//we only update the count once at the start of the sim
+			//if there is no safe plot then, there will never be one!
+			if (!parentPosition && !bHaveSafePlot)
 			{
 				bool bIsSafe = GET_PLAYER(ePlayer).GetPlotDanger(*pPlot, pUnit, GetUnitDamageDealt(), 0) < pUnit->GetCurrHitPoints();
 				if (bIsSafe && pUnit->canEndTurnAtPlot(pPlot))
 				{
 					gSafePlotCount[unit.iUnitID]++;
-					bNeedSafePlot = false;
+					bHaveSafePlot = bCanStopCounting;
 				}
 			}
 
@@ -13021,15 +13044,15 @@ void CvSupportPosition::updateMovePlotsForUnit(SUnitStats unit)
 		int iMoveFlags = CvUnit::MOVEFLAG_IGNORE_STACKING_SELF | CvUnit::MOVEFLAG_IGNORE_DANGER;
 		ReachablePlots reachablePlots = TacticalAIHelpers::GetAllPlotsInReachThisTurn(pUnit, pStartPlot, iMoveFlags, 0, unit.iMovesLeft, freedPlots_r);
 
-		//this is a performance fix / logic simplification
-		//all open positions share just one instance of gSafePlotCount
-		//we only update the count once at the start of the sim
-		//if there is no safe plot then, there will never be one!
-		//callers only check whether the count is zero, so we can stop looking after the first safe plot
-		bool bNeedSafePlot = !parentPosition && gSafePlotCount[unit.iUnitID] == 0;
-
 		//try to save some memory here
 		ReachablePlots reachablePlotsPruned;
+		bool bCanStopCounting = !parentPosition && CanStopCountingSafePlots(unit.iUnitID, reachablePlots.size());
+		bool bHaveSafePlot = false;
+		if (bCanStopCounting)
+		{
+			TUnitFlagLookup::const_iterator itSafe = gSafePlotCount.find(unit.iUnitID);
+			bHaveSafePlot = (itSafe != gSafePlotCount.end() && itSafe->second > 0);
+		}
 		for (ReachablePlots::const_iterator it = reachablePlots.begin(); it != reachablePlots.end(); ++it)
 		{
 			CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
@@ -13040,13 +13063,17 @@ void CvSupportPosition::updateMovePlotsForUnit(SUnitStats unit)
 			if (TacticalAIHelpers::GetPlotDistanceToTarget(it->iPlotIndex, pUnit->getDomainType()) > TACTICAL_COMBAT_MAX_TARGET_DISTANCE + 2)
 				continue;
 
-			if (bNeedSafePlot)
+			//this is a performance fix / logic simplification
+			//all open positions share just one instance of gSafePlotCount
+			//we only update the count once at the start of the sim
+			//if there is no safe plot then, there will never be one!
+			if (!parentPosition && !bHaveSafePlot)
 			{
 				bool bIsSafe = GET_PLAYER(ePlayer).GetPlotDanger(*pPlot, pUnit, SUnitIDValueContainer(), 0) < pUnit->GetCurrHitPoints();
 				if (bIsSafe && pUnit->canEndTurnAtPlot(pPlot))
 				{
 					gSafePlotCount[unit.iUnitID]++;
-					bNeedSafePlot = false;
+					bHaveSafePlot = bCanStopCounting;
 				}
 			}
 
@@ -13758,6 +13785,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	gReachablePlotsLookup.clear();
 	gRangeAttackPlotsLookup.clear();
 	gSafePlotCount.clear();
+	gSafePlotTestBound.clear();
 	gOpenPlotDanger.clear();
 	// Vox Deorum: rebuilds the trade steps only when a route changed since the last search. The search's own routes are set
 	// once the root is built.
