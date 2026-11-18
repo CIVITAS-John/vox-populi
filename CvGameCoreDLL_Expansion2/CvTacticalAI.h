@@ -1228,12 +1228,21 @@ struct SCoWField {
 class CvBasePosition
 {
 protected:
-	//for final sorting (does not include intermediate moves)
-	SCoWField<map<int, short>> plotScores; // not additive (only the final plot value is included in the total evaluation)
+	// Vox Deorum: one provisional plot value per unit, replaced in the total when the plan commits its finish.
+	SCoWField<map<int, short>> plotScores;
 	int iDamageDelta; //damage dealt - damage received
 	int iBonusScore; // additive
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
-	int iTotalScore; // weighted damage and bonus plus final plot scores; trade gain is added by the getter
+	int iTotalScore; // weighted damage and bonus plus the stored plot scores
+	// Vox Deorum: final plot values minus their stored values, applied only at completion.
+	int iFinalPlotAdjustment;
+	// Vox Deorum: find what a finish changes without copying the provisional plot scores.
+	int getFinalPlotAdjustment(const STacticalAssignment& finish) const
+	{
+		const map<int, short>& scores = plotScores.read();
+		map<int, short>::const_iterator previous = scores.find(finish.iUnitID);
+		return finish.GetPlotScore() - (previous != scores.end() ? previous->second : 0);
+	}
 	//for heap sorting (included all moves made in the last generation)
 	int iScoreOverParent;
 	// Vox Deorum: the air sweep ranking values of the last generation's moves. Orders the heap, never scores a plan.
@@ -1369,8 +1378,8 @@ public:
 	int getGeneration() const { return iGeneration; }
 	PlayerTypes getPlayer() const { return ePlayer; }
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
-	// Vox Deorum: include the separately updated trade gain in the cached position score.
-	int getScoreTotal() const { return iTotalScore + iTradeGain; }
+	// Vox Deorum: include final positioning and trade gain in the cached position score.
+	int getScoreTotal() const { return iTotalScore + iFinalPlotAdjustment + iTradeGain; }
 	int getScoreLastRound() const { return iScoreOverParent; }
 	// Vox Deorum: the last round's score plus the ranking values of its air sweeps
 	int getRankScoreLastRound() const { return iScoreOverParent + iRankBonusOverParent; }

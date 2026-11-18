@@ -8585,11 +8585,11 @@ static bool IsCityFallingInSearch(const CvUnit* pUnit, const CvPlot* pPlot, int 
 		TacticalAIHelpers::CanEnemyCaptureCity(pUnit->getOwner(), pPlot, assumedPosition.GetUnitDamageDealt());
 }
 
-// Vox Deorum: the turn-end score, with an optional per-pass cargo snapshot for the danger a sinking carrier adds
+// Vox Deorum: score the end position. A caller requesting the score for an unsafe plot receives its safety result separately.
 int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignment, const CvTacticalPlot* testPlot, int iDanger,
 							CvTacticalPlot::eTactPlotDomain eRelevantDomain, int iSelfDamage,
 							const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, bool bRelaxedCheck, bool bOnlyCheckImpossible,
-							SCargoCountSnapshot* pCargoSnapshot)
+							SCargoCountSnapshot* pCargoSnapshot, bool* pbUnsafe)
 {
 	int iResult = 0;
 	const CvPlot* pTestPlot = testPlot->getPlot();
@@ -8609,10 +8609,11 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		bIsFrontlineCitadelOrCity = false;
 
 	//don't do it if it's a death trap (unless there is no other choice ...)
-	int iNumAdjEnemies = testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_BOTH);
-	if (iNumAdjEnemies > 3 || (iNumAdjEnemies == 3 && assumedPosition.getAggressionBias() < 1))
-		if (!bIsFrontlineCitadelOrCity)
-			return INT_MAX;
+	const int iNumAdjEnemies = testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_BOTH);
+	bool bUnsafe = !bIsFrontlineCitadelOrCity &&
+		(iNumAdjEnemies > 3 || (iNumAdjEnemies == 3 && assumedPosition.getAggressionBias() < 1));
+	if (bUnsafe && !pbUnsafe)
+		return INT_MAX;
 
 	int iMaxHitPoints = pUnit->GetMaxHitPoints();
 	int iCurrHitPoints = iMaxHitPoints - pUnit->getDamage() - iSelfDamage;
@@ -8622,7 +8623,11 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	{
 		//siege units (with limited visibility) should not move there unless covered (the -1 is important)
 		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(DomainForUnit(pUnit), -1) < 2)
-			return INT_MAX;
+		{
+			if (!pbUnsafe)
+				return INT_MAX;
+			bUnsafe = true;
+		}
 		
 		iDanger = max(iMaxHitPoints / 2, iDanger);
 	}
@@ -8642,14 +8647,22 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 			if (pUnit->AI_getUnitAIType() == UNITAI_RANGED || pUnit->AI_getUnitAIType() == UNITAI_CITY_BOMBARD || pUnit->AI_getUnitAIType() == UNITAI_CARRIER_SEA)
 			{
 				if (iDanger > iCurrHitPoints)
-					return INT_MAX;
+				{
+					if (!pbUnsafe)
+						return INT_MAX;
+					bUnsafe = true;
+				}
 			}
 
 			//if there is nothing we would cover or that covers us or we are low on health, don't do it
 			// Vox Deorum: an explicitly set RISK scales the safety factor
 			int iSafetyFactor = GetTurnEndSafetyFactor(pUnit, eLastAssignment, assumedPosition);
 			if (GetTurnEndSafetyMargin(iCurrHitPoints, iDanger, iSafetyFactor, assumedPosition) < 0)
-				return INT_MAX;
+			{
+				if (!pbUnsafe)
+					return INT_MAX;
+				bUnsafe = true;
+			}
 		}
 
 		if (!bOnlyCheckImpossible)
@@ -8672,6 +8685,9 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 			iResult -= assumedPosition.scaleByFlavor(STacticalFlavors::RISK, iScaledDanger, true);
 		}
 	}
+
+	if (pbUnsafe)
+		*pbUnsafe = bUnsafe;
 
 	if (bOnlyCheckImpossible)
 		return 1;
@@ -8759,6 +8775,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	int iBonusScore = 0;
 	int iDamageDelta = 0;
 	int iSelfDamage = 0;
+	bool bUnsafeFinalPlot = false;
 
 	int iCurrentHealth = pUnit->GetCurrHitPoints() - unit.iSelfDamage;
 
@@ -8961,14 +8978,15 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 		result->eAssignmentType = evalMode == EM_FINAL ? A_FINISH : A_INITIAL;
 
 		iDangerScore = ScoreCombatUnitTurnEnd(pUnit, unit.eLastAssignment, testPlot, iDanger,
-			eRelevantDomain, unit.iSelfDamage + iSelfDamage, assumedPosition, evalMode, false, false, pCargoSnapshot);
+			eRelevantDomain, unit.iSelfDamage + iSelfDamage, assumedPosition, evalMode, false, false, pCargoSnapshot,
+			evalMode == EM_FINAL ? &bUnsafeFinalPlot : NULL);
 
 		if (iDangerScore == INT_MAX)
 		{
 			if (gSafePlotCount[unit.iUnitID] > 0)
 				return result; //don't do it
 
-			//unit has no safe plots and must end turn somewhere (EM_FINAL)
+			// The initial reference can use the placeholder when the unit has no safe plots.
 			//clamp the sentinel to worst-possible arithmetic-safe value
 			iDangerScore = SHRT_MIN;
 		}
@@ -9033,6 +9051,10 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	//in that case we want to prefer the one which has more movement points left to make the movement animation look better
 	iExtra += result->iRemainingMoves / GD_INT_GET(MOVE_DENOMINATOR);
 
+	// Vox Deorum: keep a numeric positioning score even when the safety check rejects this tile.
+	// Finish validation can still allow some unsafe positions, or a unit may have no safe tile.
+	if (bUnsafeFinalPlot && gSafePlotCount[unit.iUnitID] > 0)
+		iDamageDelta = TACTICAL_COMBAT_IMPOSSIBLE_SCORE;
 	result->SetScore(iPlotScore * 10 + iDangerScore + iExtra, iBonusScore, iDamageDelta);
 
 	return result;
@@ -10473,6 +10495,7 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 
 	// Vox Deorum: one tracked-cargo scan serves every carrier whose loss this pass scores
 	SCargoCountSnapshot cargoSnapshot;
+	int iPlotAdjustment = 0;
 
 	const vector<SUnitStats>& notQuiteFinishedUnits_r = notQuiteFinishedUnits.read();
 
@@ -10490,8 +10513,6 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 
 		//make sure we don't leave a unit in an impossible position
 		const CvTacticalPlot* tactPlot = getTactPlot(unit.iPlotIndex);
-		SUnitStats tmp = unit;
-		tmp.iMovesLeft = 0;
 		STacticalAssignment* nextAssignment = ScorePlotForMove(unit, tactPlot, *this, EM_FINAL, &cargoSnapshot);
 
 		// Vox Deorum: aircraft act from their base and may sail along with their carrier, so neither rule applies to them
@@ -10520,6 +10541,7 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 			{
 				nextAssignment->iRemainingMoves = unit.iMovesLeft;
 				nextAssignment->eAssignmentType = A_FINISH;
+				iPlotAdjustment += getFinalPlotAdjustment(*nextAssignment);
 				assignedMoves.write().push_back(*nextAssignment);
 			}
 		}
@@ -10530,6 +10552,8 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		}
 	}
 
+	// Vox Deorum: rank the completed plan and the no-progress floor on the same positioning values.
+	iFinalPlotAdjustment = iPlotAdjustment;
 	//scores look good and target was killed, we're done
 	//second chance: did we kill anything (offensive), heal a unit, or at least improve the arrangement of our units (defensive)?
 	//order is important here, need to add finish moves first!
@@ -10983,6 +11007,7 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	iDamageDelta = 0;
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = 0;
+	iFinalPlotAdjustment = 0;
 	iScoreOverParent = 0; 
 	parentPosition = NULL;
 	iGeneration = 0;
@@ -11033,6 +11058,7 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	iDamageDelta = parent.iDamageDelta;
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = parent.iTotalScore;
+	iFinalPlotAdjustment = parent.iFinalPlotAdjustment;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = parent.iTradeGain;
@@ -12143,7 +12169,11 @@ static STacticalAssignment* ScorePlotForSupportMove(const SUnitStats& unit, cons
 			}
 		}
 
-		// For the final position, do some extra work to figure out if we're well positioned for the end of the turn
+	}
+
+	// Vox Deorum: use the same placement terms at the last checkpoint and for final ranking.
+	if (evalMode == EM_INTERMEDIATE || evalMode == EM_FINAL)
+	{
 		if (bLastPosition)
 		{
 			const vector<SUnitStats>& finalCombatPositionUnits = assumedPosition.GetFinalCombatPositions();
@@ -12238,7 +12268,8 @@ static STacticalAssignment* ScorePlotForSupportMove(const SUnitStats& unit, cons
 				switch (finalTactPlot->getEnemyDistance())
 				{
 				case 0:
-					return result; //don't ever go there, wouldn't work anyway
+					if (evalMode == EM_INTERMEDIATE)
+						return result;
 					break;
 				case 1:
 					iPlotScore += pPlot->isCity() ? 1 : 0; //dangerous to end the turn, avoid
@@ -12255,14 +12286,6 @@ static STacticalAssignment* ScorePlotForSupportMove(const SUnitStats& unit, cons
 			}
 		}
 	}
-	else if (evalMode == EM_FINAL)
-	{
-		if (bIsSafe)
-			result->SetScore(0, 0, 0);
-
-		return result;
-	}
-
 	//small bias for staying close to our cities, to have a way to retreat if necessary
 	int iCityDistanceScore = 10 - GET_PLAYER(assumedPosition.getPlayer()).GetCityDistanceInPlots(pPlot);
 	int iExtra = max(iCityDistanceScore, 0);
@@ -12620,6 +12643,7 @@ void CvSupportPosition::updateMovePlotsIfRequired()
 //this is a deferred check because in the beginning it's not clear how many enemy units we can eliminate
 bool CvSupportPosition::addFinishMovesIfAcceptable()
 {
+	int iPlotAdjustment = 0;
 	const vector<SUnitStats>& notQuiteFinishedUnits_r = notQuiteFinishedUnits.read();
 	//only units which have exhausted their moves are in this array! if the sim was aborted, somebody else will hopefully pick up the pieces
 	for (size_t i = 0; i < notQuiteFinishedUnits_r.size(); i++)
@@ -12644,6 +12668,7 @@ bool CvSupportPosition::addFinishMovesIfAcceptable()
 			{
 				nextAssignment->iRemainingMoves = unit.iMovesLeft;
 				nextAssignment->eAssignmentType = A_FINISH;
+				iPlotAdjustment += getFinalPlotAdjustment(*nextAssignment);
 				assignedMoves.write().push_back(*nextAssignment);
 			}
 		}
@@ -12653,6 +12678,7 @@ bool CvSupportPosition::addFinishMovesIfAcceptable()
 		}
 	}
 
+	iFinalPlotAdjustment = iPlotAdjustment;
 	vector<SUnitStats>& finishedUnits_w = finishedUnits.write();
 	finishedUnits_w.insert(finishedUnits_w.end(), notQuiteFinishedUnits_r.begin(), notQuiteFinishedUnits_r.end());
 	notQuiteFinishedUnits.write().clear();
@@ -12669,6 +12695,7 @@ CvSupportPosition::CvSupportPosition()
 	iDamageDelta = 0;
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = 0;
+	iFinalPlotAdjustment = 0;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = 0;
@@ -12770,6 +12797,7 @@ void CvSupportPosition::initFromTacticalPosition(const CvTacticalPosition& tactP
 	iDamageDelta = 0;
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = 0;
+	iFinalPlotAdjustment = 0;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = 0;
@@ -12831,6 +12859,7 @@ void CvSupportPosition::initFromParent(const CvSupportPosition& parent)
 	iDamageDelta = parent.iDamageDelta;
 	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = parent.iTotalScore;
+	iFinalPlotAdjustment = parent.iFinalPlotAdjustment;
 	iScoreOverParent = 0;
 	iRankBonusOverParent = 0;
 	iTradeGain = 0;
@@ -13147,7 +13176,7 @@ bool CvTacticalPosition::canProbablyEndTurnAfterAssignment(const SUnitStats& uni
 
 		// Vox Deorum: this filter counts carrier cargo directly, without a scoring-pass snapshot
 		return ScoreCombatUnitTurnEnd(pUnit, eAssignmentType, assumedUnitPlot, iDanger, CvTacticalPlot::TD_BOTH,
-			unit.iSelfDamage, *this, EM_FINAL, availableUnits.read().size() > 1, true, NULL) != INT_MAX;
+			unit.iSelfDamage, *this, EM_FINAL, availableUnits.read().size() > 1, true, NULL, NULL) != INT_MAX;
 	}
 	else
 		//civilians need cover. full scoring logic in ScorePlotForNonFightingUnitMove is more complex; here we just need a rule of thumb
@@ -13911,8 +13940,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		CvTacticalPosition* pBestPosition = *std::min_element(completedPositions.begin(), completedPositions.end(), CvTacticalPosition::PrPositionSortArrayTotalScore());
 
 		// Compare before support placement; a declined search leaves its participants available.
-		// No progress rejection leaves no floor, and otherwise the plan must reach 80% of the highest rejected score.
-		if (iBestNoProgressScore == INT_MIN || pBestPosition->getScoreTotal() >= 0.8 * iBestNoProgressScore)
+		// Vox Deorum: Match or beat a negative rejected score, or reach 80% of a nonnegative one.
+		if (iBestNoProgressScore == INT_MIN || pBestPosition->getScoreTotal() >= (iBestNoProgressScore < 0 ? iBestNoProgressScore : 0.8 * iBestNoProgressScore))
 		{
 			if (pBestPosition->HasSupport(DOMAIN_LAND) || pBestPosition->HasSupport(DOMAIN_SEA) || pBestPosition->HasCitySupport())
 				TacticalAIHelpers::AddSupportMoves(*pBestPosition, ourUnits);
