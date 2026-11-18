@@ -2012,7 +2012,7 @@ static int RawUnitAttackDamage(const CvUnit& kTarget, const CvUnit& kAttacker, i
 	return bAccepted ? iDamage : 0;
 }
 
-// Vox Deorum: mirrors FindCitiesWithinStrikingDistance without changing its move list, then simulates local units in ID order.
+// Vox Deorum: mirrors FindCitiesWithinStrikingDistance without changing its move list, then simulates local units from the largest hit down.
 int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk, int& iRejected,
 	SOperationalForecast* pForecast, bool bSample)
 {
@@ -2032,14 +2032,21 @@ int CvTacticalOperationalLoop::LocalUnitDamage(PlayerTypes ePlayer, const CvUnit
 	int iSpeculative = 0;
 	int iRealizableDamage = iDamage;
 	int iRealizableMelee = 0;
+	// Vox Deorum: the melee cap keeps the largest hits, so attackers are taken by damage, then by unit ID.
+	vector<pair<int, size_t> > vHits;
 	for (size_t i = 0; i < local.vDamage.size(); i++)
 	{
-		const CvUnit& kAttacker = *local.vDamage[i];
 		bool bAccepted;
-		const int iRawDamage = RawUnitAttackDamage(kTarget, kAttacker, iRisk, bAccepted);
+		const int iRawDamage = RawUnitAttackDamage(kTarget, *local.vDamage[i], iRisk, bAccepted);
 		// Vox Deorum: the unsampled tally counts every hit that passes the native test; forecasts count positive hits.
-		if (!bAccepted || (pForecast && iRawDamage <= 0))
-			continue;
+		if (bAccepted && (!pForecast || iRawDamage > 0))
+			vHits.push_back(make_pair(-iRawDamage, i));
+	}
+	std::sort(vHits.begin(), vHits.end());
+	for (size_t h = 0; h < vHits.size(); h++)
+	{
+		const CvUnit& kAttacker = *local.vDamage[vHits[h].second];
+		const int iRawDamage = -vHits[h].first;
 		const bool bCapped = !kAttacker.IsCanAttackRanged() && !kAttacker.canMoveAfterAttacking();
 		const bool bStockAdmitted = !bCapped || iMeleeCount < OPERATIONAL_UNIT_MELEE_CAP;
 		if (bCapped)
