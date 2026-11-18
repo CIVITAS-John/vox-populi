@@ -788,16 +788,18 @@ struct SUnitStats
 	int iAirGroup;
 	// Vox Deorum: a missile whose base is about to be lost, so firing it costs nothing
 	bool bBaseEndangered;
+	// Vox Deorum: this unit supplied the simulated tile's end-turn defense.
+	bool bSuppliesEndTurnCover;
 
 	//convenience constructor - do not use pUnit here because it's initialized last! (pUnit_ is ok)
 	SUnitStats(const CvUnit* pUnit_, int iImportance, eUnitMovementStrategy eMoveStrategy_) :
 		iUnitID(pUnit_->GetID()), iPlotIndex(pUnit_->plot()->GetPlotIndex()), iAttacksLeft(pUnit_->getNumAttacks() - pUnit_->getNumAttacksMadeThisTurn()),
 		iMovesLeft(pUnit_->getMoves()), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()), eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_),
-		iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false) { }
+		iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false), bSuppliesEndTurnCover(false) { }
 	//use with caution, this may lead to an inconsistent state
 	SUnitStats(const CvUnit* pUnit_, int iUnit, int iPlot, int iAttacks, int iMoves, int iImportance, eUnitMovementStrategy eMoveStrategy_) :
 		iUnitID(iUnit), iPlotIndex(iPlot), iAttacksLeft(iAttacks), iMovesLeft(iMoves), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()),
-		eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_), iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false) {}
+		eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_), iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false), bSuppliesEndTurnCover(false) {}
 
 	bool operator<(const SUnitStats& rhs) const { return iImportanceScore > rhs.iImportanceScore; } //sort descending by default
 };
@@ -986,7 +988,7 @@ public:
 	void setNumVisiblePlotsRange2(int count) { nVisiblePlotsNearEnemyRange2 = (unsigned char)count; }
 	void setNumVisiblePlotsRange3(int count) { nVisiblePlotsNearEnemyRange3 = (unsigned char)count; }
 
-	bool hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition) const;
+	bool hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition, int iIgnoreUnitPlot = -1) const;
 
 protected:
 	const CvPlot* pPlot; //null if invalid
@@ -1228,7 +1230,7 @@ struct SCoWField {
 class CvBasePosition
 {
 protected:
-	// Vox Deorum: one provisional plot value per unit, replaced in the total when the plan commits its finish.
+	// Vox Deorum: one provisional plot value per unit, replaced in the total when the plan is complete.
 	SCoWField<map<int, short>> plotScores;
 	int iDamageDelta; //damage dealt - damage received
 	int iBonusScore; // additive
@@ -1236,12 +1238,12 @@ protected:
 	int iTotalScore; // weighted damage and bonus plus the stored plot scores
 	// Vox Deorum: final plot values minus their stored values, applied only at completion.
 	int iFinalPlotAdjustment;
-	// Vox Deorum: find what a finish changes without copying the provisional plot scores.
-	int getFinalPlotAdjustment(const STacticalAssignment& finish) const
+	// Vox Deorum: replace a unit's provisional value without copying the plot scores.
+	int getFinalPlotAdjustment(int iUnitID, int iNewPlotScore) const
 	{
 		const map<int, short>& scores = plotScores.read();
-		map<int, short>::const_iterator previous = scores.find(finish.iUnitID);
-		return finish.GetPlotScore() - (previous != scores.end() ? previous->second : 0);
+		map<int, short>::const_iterator previous = scores.find(iUnitID);
+		return iNewPlotScore - (previous != scores.end() ? previous->second : 0);
 	}
 	//for heap sorting (included all moves made in the last generation)
 	int iScoreOverParent;

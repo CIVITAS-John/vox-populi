@@ -8589,7 +8589,7 @@ static bool IsCityFallingInSearch(const CvUnit* pUnit, const CvPlot* pPlot, int 
 int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignment, const CvTacticalPlot* testPlot, int iDanger,
 							CvTacticalPlot::eTactPlotDomain eRelevantDomain, int iSelfDamage,
 							const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, bool bRelaxedCheck, bool bOnlyCheckImpossible,
-							SCargoCountSnapshot* pCargoSnapshot, bool* pbUnsafe)
+							SCargoCountSnapshot* pCargoSnapshot, bool* pbUnsafe, int* piDangerPenalty = NULL, const SUnitStats* pPlacement = NULL)
 {
 	int iResult = 0;
 	const CvPlot* pTestPlot = testPlot->getPlot();
@@ -8601,6 +8601,13 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	// * ZOC is unclear during simulation
 	// * freshly revealed enemy units are not considered
 	int iNumAdjFriendlies = (evalMode==EM_FINAL) ? testPlot->getNumAdjacentFriendliesEndTurn(eRelevantDomain) : testPlot->getNumAdjacentFriendlies(eRelevantDomain, -1);
+	// Vox Deorum: a unit cannot cover its own hypothetical starting plot.
+	const int iIgnoreUnitPlot = pPlacement ? pPlacement->iPlotIndex : -1;
+	const int iIgnoreCoverPlot = pPlacement && pPlacement->bSuppliesEndTurnCover ? iIgnoreUnitPlot : -1;
+	const CvTacticalPlot::eTactPlotDomain eUnitDomain = DomainForUnit(pUnit);
+	if (iIgnoreCoverPlot >= 0 && (eRelevantDomain == CvTacticalPlot::TD_BOTH || eRelevantDomain == eUnitDomain) &&
+		GC.getMap().plotByIndexUnchecked(iIgnoreCoverPlot)->isAdjacent(pTestPlot))
+		iNumAdjFriendlies = max(0, iNumAdjFriendlies - 1);
 	if (bRelaxedCheck) //assume we have friends which might catch up to us later
 		iNumAdjFriendlies++;
 	bool bIsFrontlineCitadelOrCity = (TacticalAIHelpers::IsPlayerCitadel(pTestPlot, assumedPosition.getPlayer()) || pTestPlot->isCity()) && pUnit->getDomainType() == DOMAIN_LAND && testPlot->getEnemyDistance() < 3;
@@ -8622,7 +8629,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	if (testPlot->isEdgePlot() && !pTestPlot->isCity())
 	{
 		//siege units (with limited visibility) should not move there unless covered (the -1 is important)
-		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(DomainForUnit(pUnit), -1) < 2)
+		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(eUnitDomain, -1) < 2)
 		{
 			if (!pbUnsafe)
 				return INT_MAX;
@@ -8633,7 +8640,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	}
 	if (!MOD_COMBATAI_TWO_PASS_DANGER && !bOnlyCheckImpossible)
 	{
-		if (iDanger > 0 && (iDanger > iMaxHitPoints || !testPlot->isEdgePlot()) && testPlot->hasCoverFromOtherUnits(assumedPosition))
+		if (iDanger > 0 && (iDanger > iMaxHitPoints || !testPlot->isEdgePlot()) && testPlot->hasCoverFromOtherUnits(assumedPosition, iIgnoreCoverPlot))
 			//check for cover and assume this would help us
 			iDanger /= 2;
 	}
@@ -8682,7 +8689,10 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 
 			//penalty for high danger plots (should this be personality dependent?)
 			// Vox Deorum: a set RISK divides the danger penalty, so a higher flavor tolerates more danger
-			iResult -= assumedPosition.scaleByFlavor(STacticalFlavors::RISK, iScaledDanger, true);
+			const int iPenalty = assumedPosition.scaleByFlavor(STacticalFlavors::RISK, iScaledDanger, true);
+			if (piDangerPenalty)
+				*piDangerPenalty = max(0, iPenalty);
+			iResult -= iPenalty;
 		}
 	}
 
@@ -8723,7 +8733,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		if (pTestPlot->isCity())
 			iHoldWeight = bOwnCity ? assumedPosition.getCityHoldWeight() : 1000;
 		int iHoldBonus = TACTICAL_COMBAT_CITADEL_BONUS;
-		if (pUnit->GetRange() <= 1 && testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, -1) > 0 && testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND) == 0)
+		if (pUnit->GetRange() <= 1 && testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, eUnitDomain == CvTacticalPlot::TD_LAND ? iIgnoreUnitPlot : -1) > 0 && testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND) == 0)
 			iHoldBonus = TACTICAL_COMBAT_CITADEL_BONUS/2;
 
 		// Vox Deorum: in our own city the bonus also counts what the unit adds to the city's strength,
@@ -8759,7 +8769,8 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 }
 
 // Vox Deorum: scores a combat unit's move, passing the optional cargo snapshot to the turn-end check
-static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, SCargoCountSnapshot* pCargoSnapshot = NULL)
+static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode,
+	SCargoCountSnapshot* pCargoSnapshot = NULL, bool bPlacementOnly = false, int* piDangerPenalty = NULL)
 {
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
@@ -8779,7 +8790,8 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 
 	int iCurrentHealth = pUnit->GetCurrHitPoints() - unit.iSelfDamage;
 
-	bool bMoving = unit.iPlotIndex != pTestPlot->GetPlotIndex();
+	// Vox Deorum: compare locations without simulating another move, heal, or attack.
+	bool bMoving = !bPlacementOnly && unit.iPlotIndex != pTestPlot->GetPlotIndex();
 
 	if (!bMoving)
 		result->eAssignmentType = A_FINISH_TEMP;
@@ -8844,7 +8856,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 			iPlotScore += 3;
 
 		// if we are not in a good spot, try moving
-		if (iPlotScore <= 6 && pTestPlot == pUnit->plot() && pUnit->getDamage() + unit.iSelfDamage < 10)
+		if (!bPlacementOnly && iPlotScore <= 6 && pTestPlot == pUnit->plot() && pUnit->getDamage() + unit.iSelfDamage < 10)
 			iPlotScore -= 2;
 
 		// Move melee units in to capture cities
@@ -8898,7 +8910,8 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	}
 
 	//give a bonus for potential fortifying/healing
-	if (result->eAssignmentType == A_FINISH_TEMP)
+	const bool bStaying = result->eAssignmentType == A_FINISH_TEMP;
+	if (bStaying && !bPlacementOnly)
 	{
 		if (unit.iMovesLeft == unit.iMaxMoves)
 		{
@@ -8958,11 +8971,10 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 			iDamageDelta -= iDamageTaken;
 			iSelfDamage += iDamageTaken;
 		}
-
-		// unit giving extra strength to an adjacent city?
-		if (pUnit->GetAdjacentCityDefenseMod() > 0 && pTestPlot->IsAdjacentCity(pUnit->getTeam()))
-			iPlotScore++;
 	}
+	// unit giving extra strength to an adjacent city?
+	if (bStaying && pUnit->GetAdjacentCityDefenseMod() > 0 && pTestPlot->IsAdjacentCity(pUnit->getTeam()))
+		iPlotScore++;
 
 	// aoe damage on move
 	if (bMoving && pUnit->getAoEDamageOnMove() > 0)
@@ -8979,7 +8991,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 
 		iDangerScore = ScoreCombatUnitTurnEnd(pUnit, unit.eLastAssignment, testPlot, iDanger,
 			eRelevantDomain, unit.iSelfDamage + iSelfDamage, assumedPosition, evalMode, false, false, pCargoSnapshot,
-			evalMode == EM_FINAL ? &bUnsafeFinalPlot : NULL);
+			evalMode == EM_FINAL ? &bUnsafeFinalPlot : NULL, piDangerPenalty, bPlacementOnly ? &unit : NULL);
 
 		if (iDangerScore == INT_MAX)
 		{
@@ -9055,13 +9067,17 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	// Finish validation can still allow some unsafe positions, or a unit may have no safe tile.
 	if (bUnsafeFinalPlot && gSafePlotCount[unit.iUnitID] > 0)
 		iDamageDelta = TACTICAL_COMBAT_IMPOSSIBLE_SCORE;
-	result->SetScore(iPlotScore * 10 + iDangerScore + iExtra, iBonusScore, iDamageDelta);
+	const int iPlotValue = iPlotScore * 10 + iDangerScore + iExtra;
+	result->SetScore(iPlotValue, iBonusScore, iDamageDelta);
+	// Vox Deorum: discount only the danger penalty that fits in the stored plot score.
+	if (piDangerPenalty)
+		*piDangerPenalty = STacticalAssignment::ClampShort(iPlotValue + *piDangerPenalty) - result->GetPlotScore();
 
 	return result;
 }
 
 //stacking with combat units is allowed here!
-static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode)
+static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, int* piDangerPenalty = NULL)
 {
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
@@ -9111,12 +9127,14 @@ static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& un
 		if (evalMode!=EM_INTERMEDIATE)
 		{
 			//catch the case with infinite danger
-			int iDanger = min(1000, pUnit->GetDanger(pTestPlot, assumedPosition.GetUnitDamageDealt(), 0));
+			int iDanger = min(1000, pUnit->GetDanger(pTestPlot, assumedPosition.GetUnitDamageDealt(), piDangerPenalty ? unit.iSelfDamage : 0));
 
 			//embarked units have limited vision so be careful
 			if (testPlot->isEdgePlot())
 				iDanger += 50;
 
+			if (piDangerPenalty)
+				*piDangerPenalty = max(0, iDanger) * 10;
 			iScore -= iDanger;
 		}
 	}
@@ -9519,7 +9537,7 @@ void CvTacticalPlot::setCombatUnitEndTurn(CvTacticalPosition& currentPosition, e
 	}
 }
 
-bool CvTacticalPlot::hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition) const
+bool CvTacticalPlot::hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition, int iIgnoreUnitPlot) const
 {
 	//performance optimization
 	if (getEnemyDistance() < 2)
@@ -9533,7 +9551,8 @@ bool CvTacticalPlot::hasCoverFromOtherUnits(const CvTacticalPosition& currentPos
 	const vector<CvTacticalPlot>& plots = currentPosition.getTactPlots();
 	for (int iI = 0; iI < (int)plots.size(); iI++)
 	{
-		if (plots[iI].getEnemyDistance(eDomain) < iMyEnemyDist && !plots[iI].isCombatEndTurn())
+		if (plots[iI].getEnemyDistance(eDomain) < iMyEnemyDist &&
+			(!plots[iI].isCombatEndTurn() || plots[iI].getPlotIndex() == iIgnoreUnitPlot))
 			if (plots[iI].getPlot()->isAdjacent(getPlot()))
 				return false;
 	}
@@ -10484,6 +10503,52 @@ bool CvTacticalPosition::isEarlyFinish(bool bExtraKill) const
 	return nOriginalEnemies > 0 && nOriginalEnemies == nKilledEnemies + (bExtraKill ? 1 : 0);
 }
 
+// Vox Deorum: give remaining movement credit only for the added danger it could avoid.
+static int RelativePlacementScore(int iEndScore, int iStartScore, int iEndDanger, int iStartDanger, int iMovesLeft)
+{
+	const int iAddedDanger = max(0, iEndDanger - iStartDanger);
+	return iEndScore - iStartScore + static_cast<int>(
+		static_cast<long long>(iAddedDanger) * iMovesLeft / (GD_INT_GET(MOVE_DENOMINATOR) + iMovesLeft));
+}
+
+// Vox Deorum: read placement and its danger component from a scoring row before the next query reuses it.
+static bool ScoreFinalPlacement(const SUnitStats& unit, const CvTacticalPlot* pPlot, const CvTacticalPosition& position,
+	SCargoCountSnapshot& cargoSnapshot, int& iScore, int& iDangerPenalty)
+{
+	const bool bCombat = IsCombatUnit(unit);
+	const STacticalAssignment* pPlacement = bCombat
+		? ScorePlotForCombatUnitMove(unit, pPlot, position, EM_FINAL, &cargoSnapshot, true, &iDangerPenalty)
+		: ScorePlotForNonFightingUnitMove(unit, pPlot, position, EM_FINAL, &iDangerPenalty);
+	iScore = pPlacement->GetPlotScore();
+	return bCombat || pPlacement->IsAcceptable(); // an unsafe combat tile still has a numeric value
+}
+
+// Vox Deorum: score both tiles on the completed board with the same post-action unit state.
+static int RelativeUnitPlacement(const SUnitStats& unit, int iMovesLeft,
+	const CvTacticalPosition& position, SCargoCountSnapshot& cargoSnapshot)
+{
+	// The real unit stays on its starting tile throughout the search.
+	const int iStartPlot = unit.pUnit->plot()->GetPlotIndex();
+	if (unit.iPlotIndex == iStartPlot || unit.eMoveStrategy == MS_AIR || unit.eLastAssignment == A_USE_POWER)
+		return 0;
+
+	const CvTacticalPlot* pStart = position.getTactPlot(iStartPlot);
+	const CvTacticalPlot* pEnd = position.getTactPlot(unit.iPlotIndex);
+	if (!pStart || !pEnd)
+		return 0;
+
+	SUnitStats placement = unit;
+	placement.iMovesLeft = 0;
+	int iEndScore = 0;
+	int iStartScore = 0;
+	int iEndDanger = 0;
+	int iStartDanger = 0;
+	if (!ScoreFinalPlacement(placement, pEnd, position, cargoSnapshot, iEndScore, iEndDanger) ||
+		!ScoreFinalPlacement(placement, pStart, position, cargoSnapshot, iStartScore, iStartDanger))
+		return 0;
+	return RelativePlacementScore(iEndScore, iStartScore, iEndDanger, iStartDanger, iMovesLeft);
+}
+
 //see if all the plots where our units would end their turn are acceptable
 //this is a deferred check because in the beginning it's not clear how many enemy units we can eliminate
 // Vox Deorum: shares one tracked-cargo snapshot across the final scoring pass
@@ -10495,7 +10560,6 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 
 	// Vox Deorum: one tracked-cargo scan serves every carrier whose loss this pass scores
 	SCargoCountSnapshot cargoSnapshot;
-	int iPlotAdjustment = 0;
 
 	const vector<SUnitStats>& notQuiteFinishedUnits_r = notQuiteFinishedUnits.read();
 
@@ -10541,7 +10605,6 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 			{
 				nextAssignment->iRemainingMoves = unit.iMovesLeft;
 				nextAssignment->eAssignmentType = A_FINISH;
-				iPlotAdjustment += getFinalPlotAdjustment(*nextAssignment);
 				assignedMoves.write().push_back(*nextAssignment);
 			}
 		}
@@ -10552,7 +10615,23 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		}
 	}
 
-	// Vox Deorum: rank the completed plan and the no-progress floor on the same positioning values.
+	// Vox Deorum: replace provisional scores only after the safety checks pass. Early completion also releases units.
+	int iPlotAdjustment = 0;
+	for (int iList = 0; iList < 2; ++iList)
+	{
+		const bool bEarlyRelease = iList == 1;
+		const vector<SUnitStats>& units = bEarlyRelease ? availableUnits.read() : notQuiteFinishedUnits_r;
+		for (size_t i = 0; i < units.size(); ++i)
+		{
+			const SUnitStats& unit = units[i];
+			if (unit.eLastAssignment == A_INITIAL)
+				continue;
+			const int iMovesLeft = bEarlyRelease || unit.eLastAssignment == A_BLOCKED ? unit.iMovesLeft : 0;
+			iPlotAdjustment += getFinalPlotAdjustment(unit.iUnitID, RelativeUnitPlacement(unit, iMovesLeft, *this, cargoSnapshot));
+		}
+	}
+
+	// Rank the completed plan and the no-progress floor on the same positioning values.
 	iFinalPlotAdjustment = iPlotAdjustment;
 	//scores look good and target was killed, we're done
 	//second chance: did we kill anything (offensive), heal a unit, or at least improve the arrangement of our units (defensive)?
@@ -11736,7 +11815,11 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 				CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(itUnit->iUnitID);
 				// Need to check these cases, otherwise the unit can run away!
 				if (itUnit->iMovesLeft == 0 || pUnit->isBarbarian() || !pUnit->shouldHeal(false))
+				{
+					// Vox Deorum: remember whether this unit supplies the tile's end-turn cover.
+					itUnit->bSuppliesEndTurnCover = !tactPlot->isCombatEndTurn();
 					tactPlot->setCombatUnitEndTurn(*this, tactDomain);
+				}
 			}
 		}
 		notQuiteFinishedUnits.write().push_back(*itUnit);
@@ -12668,7 +12751,7 @@ bool CvSupportPosition::addFinishMovesIfAcceptable()
 			{
 				nextAssignment->iRemainingMoves = unit.iMovesLeft;
 				nextAssignment->eAssignmentType = A_FINISH;
-				iPlotAdjustment += getFinalPlotAdjustment(*nextAssignment);
+				iPlotAdjustment += getFinalPlotAdjustment(unit.iUnitID, nextAssignment->GetPlotScore());
 				assignedMoves.write().push_back(*nextAssignment);
 			}
 		}
