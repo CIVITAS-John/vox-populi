@@ -909,6 +909,7 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				{
 					// Vox Deorum: a failed Withdraw rests inactive until the failure limit, then leaves the turn.
 					field.iWithdrawFailures++;
+					field.fWithdrawEstimate = WithdrawPriority(turn, field, field.fWithdrawExposure, field.fWithdrawShare);
 					field.eWithdraw = field.iWithdrawFailures >= iMaxFailures ? OPERATIONAL_OFFER_SKIPPED : OPERATIONAL_OFFER_INACTIVE;
 				}
 				else if (eBestSlot == OPERATIONAL_SLOT_FIGHT)
@@ -2153,15 +2154,15 @@ double CvTacticalOperationalLoop::RemovableExposure(const SOperationalTurn& turn
 	return fExposure;
 }
 
-// Vox Deorum: the Withdraw priority from an exposure, the theater and the strength share help does not cover. The check
-// reuses it when only the recruit list changes.
+// Vox Deorum: scores the exposure that help does not cover, with a discount for each failed readiness check.
 double CvTacticalOperationalLoop::WithdrawPriority(const SOperationalTurn& turn, const SOperationalBattlefield& field,
 	double fExposure, double fShare)
 {
 	if (turn.fTypicalUnitWorth <= 0.0)
 		return 0.0;
 	return std::max(0.0, field.fTheater * turn.weights.afWeight[OPERATIONAL_WEIGHT_RISK] *
-		fExposure / turn.fTypicalUnitWorth * (1.0 - fShare));
+		fExposure / turn.fTypicalUnitWorth * (1.0 - fShare) *
+		pow(0.7, field.iWithdrawFailures));
 }
 
 // Vox Deorum: the Withdraw priority: the removable exposure times the part of the strength share that help does not
