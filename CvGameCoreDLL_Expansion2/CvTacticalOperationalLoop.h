@@ -2,7 +2,8 @@
 	Vox Deorum: the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP). With the flag on, a non-barbarian player's
 	ProcessDominanceZones hands its turn to this file's copy, which runs a global loop of battlefields in place of
 	the zone posture routines and the reinforcement sweep. The loop runs fights on enemy units, enemy cities and our own
-	cities, and a Reinforce at each of them that marches distant units in. This file holds the settings and their accessor, the posture and kind flavor rows, the mapped military flavors, the
+	cities, a Reinforce at each of them that marches distant units in, and a Withdraw at enemy centers that pulls the
+	battlefield's units back to the nearest friendly city. This file holds the settings and their accessor, the posture and kind flavor rows, the mapped military flavors, the
 	geographic blend, aggression from RISK, the loop's battlefields and offers, and the copies of the native
 	functions the loop changes. Each copy names its native original. Include after CvTacticalAI.h.
 	------------------------------------------------------------------------------------------------------- */
@@ -29,6 +30,7 @@ enum eOperationalKind
 	OPERATIONAL_KIND_CITY_FIGHT,
 	OPERATIONAL_KIND_REINFORCE,
 	OPERATIONAL_KIND_OWN_CITY_FIGHT,
+	OPERATIONAL_KIND_WITHDRAW,
 	NUM_OPERATIONAL_KINDS
 };
 
@@ -189,9 +191,13 @@ struct SOperationalThreatExposure
 {
 	double fExposure;
 	vector<int> vUnitIDs;
+	// Vox Deorum: each victim's exposure allocation, parallel to vUnitIDs.
+	vector<double> vAllocations;
+	// Vox Deorum: the attacks per turn this threat spends on its victims.
+	int iAttacks;
 
 	// Creates a threat that exposes nothing.
-	SOperationalThreatExposure() : fExposure(0.0) {}
+	SOperationalThreatExposure() : fExposure(0.0), iAttacks(0) {}
 };
 
 // Vox Deorum: the six scalar terms retained by stake records.
@@ -210,12 +216,14 @@ struct SOperationalStake
 	double fReliefShare;   // a_t at a unit target
 	double fFallShare;     // f_att at an enemy city, f_def at ours or the unit target's zone city
 	double fStake;
+	// Vox Deorum: the multiplier applied to the weighted exposure term: s, or 1 with the split off.
+	double fExposureShare;
 	// Vox Deorum: unweighted terms retained even when their weight is zero.
 	double afValue[NUM_OPERATIONAL_STAKE_TERMS];
 
 	// Creates an empty stake.
 	SOperationalStake() : fDestruction(0.0), fExposure(0.0), fGround(0.0), fRelief(0.0), fCityProgress(0.0),
-		fGarrison(0.0), fDamageShare(0.0), fReliefShare(0.0), fFallShare(0.0), fStake(0.0)
+		fGarrison(0.0), fDamageShare(0.0), fReliefShare(0.0), fFallShare(0.0), fStake(0.0), fExposureShare(1.0)
 	{
 		for (int i = 0; i < NUM_OPERATIONAL_STAKE_TERMS; i++) afValue[i] = 0.0;
 	}
@@ -300,9 +308,37 @@ struct SOperationalCityDamage
 
 // Vox Deorum: realized lethal damage with a capturer earns full credit; other progress uses scored damage after healing.
 double AttackFallShare(double fRealized, int iHeal, int iRemaining, bool bCapture, int iRejected = 0);
-// The queue rank that breaks equal estimates: our cities' fights 0, enemy cities' fights 1, enemy units' fights 2 and
-// Reinforce 3.
-int OfferRank(eOperationalCenter eCenter, bool bReinforce);
+
+// Vox Deorum: the three offers every battlefield carries, in queue tie-break order.
+enum eOperationalSlot
+{
+	OPERATIONAL_SLOT_FIGHT,
+	OPERATIONAL_SLOT_REINFORCE,
+	OPERATIONAL_SLOT_WITHDRAW,
+	NUM_OPERATIONAL_SLOTS
+};
+
+struct SOperationalBattlefield;
+// Vox Deorum: the offer identity of one battlefield's slot.
+int OperationalOfferIdentity(int iBattlefield, eOperationalSlot eSlot);
+// Vox Deorum: decodes an offer identity's battlefield index.
+int OperationalOfferBattlefield(int iOffer);
+// Vox Deorum: decodes an offer identity's slot.
+eOperationalSlot OperationalOfferSlot(int iOffer);
+// Vox Deorum: the command kind a slot runs at a center.
+eOperationalKind OperationalSlotKind(eOperationalCenter eCenter, eOperationalSlot eSlot);
+// Vox Deorum: the slot a command kind belongs to.
+eOperationalSlot OperationalKindSlot(eOperationalKind eKind);
+// Vox Deorum: one battlefield offer's state by slot.
+eOperationalOfferState& OperationalOfferState(SOperationalBattlefield& field, eOperationalSlot eSlot);
+// Vox Deorum: one battlefield offer's state by slot, read-only.
+const eOperationalOfferState& OperationalOfferState(const SOperationalBattlefield& field, eOperationalSlot eSlot);
+// Vox Deorum: one battlefield offer's estimate by slot.
+double OperationalOfferEstimate(const SOperationalBattlefield& field, eOperationalSlot eSlot);
+
+// Vox Deorum: the queue rank that breaks equal estimates: our cities' fights 0, enemy cities' fights 1, enemy units'
+// fights 2, Reinforce 3 and Withdraw 4.
+int OfferRank(eOperationalCenter eCenter, eOperationalSlot eSlot);
 // Whether an offer goes ahead of the best one so far: a higher estimate, then a lower rank, then a lower plot index.
 bool OfferOutranks(double fEstimate, int iRank, int iPlotIndex, double fBest, int iBestRank, int iBestPlotIndex);
 
@@ -361,7 +397,7 @@ struct SOperationalTheater
 	SOperationalTheater() : fImportance(0.0), fPressure(0.0), fContest(0.0), fDamageLevel(0.0) {}
 };
 
-// One battlefield of the turn, its fight offer and its Reinforce offer
+// One battlefield of the turn, its fight offer, its Reinforce offer and its Withdraw offer
 struct SOperationalBattlefield
 {
 	int iID;                      // index in the turn's list
@@ -384,16 +420,36 @@ struct SOperationalBattlefield
 	SOperationalStake stake;
 	bool bHasEndangered;          // own city: it had an endangered recruit at the last estimate
 	bool bBorder;                 // fixed: the zone is ours or neighbors one of ours
-	bool bWithdraw;               // fixed: the zone's posture is Withdraw
+	bool bWithdrawPosture;        // fixed: the zone's posture is Withdraw
 	eOperationalOfferState eReinforce;
 	double fReinforceEstimate;    // fight priority times strength swing
 	SOperationalReinforce reinforce;
+	// Vox Deorum: the Withdraw offer's state.
+	eOperationalOfferState eWithdraw;
+	// Vox Deorum: the Withdraw priority, 0 while it has no endangered recruit.
+	double fWithdrawEstimate;
+	// Vox Deorum: X, the removable exposure in worth units before dividing by Z_T.
+	double fWithdrawExposure;
+	// Vox Deorum: s, the strength share saved at the tally.
+	double fExposureShare;
+	// Vox Deorum: s+, the strength share the Withdraw estimate used.
+	double fWithdrawShare;
+	// Vox Deorum: failed Withdraw readiness checks this turn.
+	int iWithdrawFailures;
+	// Vox Deorum: the Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
+	int aiWithdrawDestination[2];
 
 	// Creates a ready battlefield with no target.
 	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), iZoneCityPlot(-1), eOwner(NO_PLAYER),
 		iTargetID(-1), fImportance(0.0), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
 		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), bReleaseLocal(false),
-		bHasEndangered(false), bBorder(false), bWithdraw(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0) {}
+		bHasEndangered(false), bBorder(false), bWithdrawPosture(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0),
+		eWithdraw(OPERATIONAL_OFFER_INACTIVE), fWithdrawEstimate(0.0), fWithdrawExposure(0.0), fExposureShare(0.0),
+		fWithdrawShare(0.0), iWithdrawFailures(0)
+	{
+		aiWithdrawDestination[0] = -1;
+		aiWithdrawDestination[1] = -1;
+	}
 };
 
 // Vox Deorum: city results shared during one estimate pass, indexed by city plot.
@@ -471,6 +527,10 @@ struct SOperationalTurn
 	map<int, vector<pair<int, int> > > cityApproach;
 	// our units outside friendly cities with a positive threat entry, by ID and whole danger: rebuilt after each command
 	map<int, int> endangeredUnits;
+	// Vox Deorum: the tactical roster unit IDs when the loop started.
+	set<int> startRoster;
+	// Vox Deorum: units that went through a Withdraw this turn.
+	set<int> withdrawnUnits;
 	vector<SOperationalBattlefield> battlefields;
 	mutable unsigned int iNextDecision;
 	mutable unsigned int iStateRevision;
@@ -518,11 +578,11 @@ struct SOperationalProviderResponse
 // Vox Deorum: one selectable identity, with the native estimate and permitted command forces.
 struct SOperationalSelectableOffer
 {
-	int iOffer; // battlefield * 2, plus one for Reinforce
+	int iOffer; // the offer identity: OperationalOfferIdentity
 	SOperationalBattlefield field;
-	bool bReinforce;
+	eOperationalSlot eSlot;
 	// Vox Deorum: creates an invalid offer identity.
-	SOperationalSelectableOffer() : iOffer(-1), bReinforce(false) {}
+	SOperationalSelectableOffer() : iOffer(-1), eSlot(OPERATIONAL_SLOT_FIGHT) {}
 };
 
 // Vox Deorum: command choice over the current queue, in build order, with the exact native proposal.
@@ -681,11 +741,15 @@ int OperationalStakeWeight(int iTerm, eOperationalKind kind);
 struct SOperationalSnapshot
 {
 	int iBattlefield, iRank, iPlotIndex;
-	bool bReinforce;
+	eOperationalSlot eSlot;
 	eOperationalOfferState eState;
 	// Vox Deorum: names why a closed offer left the queue.
 	const char* szReason;
 	double fEstimate, fTheater, fSwing, fSelectedSwing;
+	// Vox Deorum: the battlefield's strength share and the Withdraw estimate's inputs.
+	double fExposureShare, fWithdrawExposure, fWithdrawShare;
+	// Vox Deorum: the Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
+	int aiWithdrawDestination[2];
 	SOperationalTheater theater;
 	SOperationalStake stake;
 };
@@ -695,7 +759,7 @@ struct SOperationalEvent
 {
 	const char* szType;
 	int iBattlefield, iRecord;
-	bool bReinforce;
+	eOperationalSlot eSlot;
 	eOperationalOfferState eBefore, eAfter;
 	double fBefore, fAfter;
 };
@@ -720,7 +784,7 @@ struct SOperationalCheckRecord
 	eOperationalOfferState eBefore, eAfter;
 	double fBefore, fAfter;
 	eOperationalCheckResult eResult;
-	bool bReinforce;  // the battlefield's Reinforce was checked, not its fight
+	eOperationalSlot eSlot;  // the offer slot this check tested
 };
 
 // One executed command, for the records
@@ -743,13 +807,18 @@ struct SOperationalCommandRecord
 	bool bSearchRan;            // the search ran with at least one unit, so overlapping fights retire
 	vector<int> vRetired;       // battlefields whose fight this command retired
 	vector<pair<int, bool> > vEndangered;  // endangered recruits by unit ID, and whether the search placed them
-	vector<int> vSelected;      // Reinforce: the checked selection by unit ID
-	bool bMoved;                // Reinforce: a selected unit changed plot or died
+	vector<int> vSelected;      // Reinforce: the checked selection; Withdraw: the admitted recruits, by unit ID
+	bool bMoved;                // Reinforce or Withdraw: an admitted unit changed plot or died
+	vector<int> vMoved;         // Vox Deorum: admitted Reinforce or Withdraw units whose plot changed or who died
 	vector<int> vRetiredReinforce;  // battlefields whose Reinforce this command retired
+	vector<int> vRetiredWithdraw;  // battlefields whose Withdraw this command retired
+	// Vox Deorum: the removable exposure and the strength share a Withdraw ran at, after its check; 0 for other commands.
+	double fWithdrawExposure, fWithdrawShare;
 
 	// Creates an empty record.
 	SOperationalCommandRecord() : iCommand(-1), iStep(-1), iBattlefield(-1), iPlotIndex(-1), eKind(OPERATIONAL_KIND_UNIT_FIGHT),
-		eOwner(NO_PLAYER), fTheater(0.0), fSwing(1.0), bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false) {}
+		eOwner(NO_PLAYER), fTheater(0.0), fSwing(1.0), bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
+		fWithdrawExposure(0.0), fWithdrawShare(0.0) {}
 };
 
 // Vox Deorum: one pass's queue trace, built commands and checks, turn inputs and complete performance counters.
@@ -794,7 +863,8 @@ public:
 	static void RecordStep(const SOperationalTurn& turn, SOperationalTurnRecord& record);
 	// Vox Deorum: closes the last trace step before working-turn teardown, including exception unwinding.
 	static void CloseRecord(const SOperationalTurn& turn, SOperationalTurnRecord* pRecord);
-	// Vox Deorum: runs one pass and optionally retains its trace, settings and complete counters.
+	// Vox Deorum: runs one pass, selecting, checking and executing fights, Reinforce and Withdraw offers, and optionally
+	// retains its trace, settings and complete counters.
 	static void RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord = NULL, SOperationalPerformance* pPerformance = NULL, bool bTotalOnly = false);
 
 	// Resolves the turn's weights, typical unit worth Z_T, best city value Z_C, city allowance C and striking-distance scan.
@@ -802,6 +872,8 @@ public:
 	// Rebuilds each enemy unit's and city's share of our units' exposure, our endangered units, each city's approach
 	// list and each battlefield's bCanAttackOurUnits.
 	static void BuildThreats(SOperationalTurn& turn);
+	// Vox Deorum: a threat's largest allocations up to its attacks per turn, leaving out the victims in pExclude when set.
+	static double CappedExposure(const SOperationalThreatExposure& threat, const set<int>* pExclude);
 	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground,
 	// near-city flag and zone gates, then one per city of ours.
 	static void BuildBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
@@ -811,13 +883,14 @@ public:
 	static void AddOwnCityBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, CvCity& kCity);
 	// Vox Deorum: estimates cities before units with one fresh cache, then updates open offers.
 	static void EstimateOffers(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalChanges* pChanges);
-	// Vox Deorum: gathers one local set, computes theater, and can wake a waiting fight before estimating Reinforce.
-	// Returns false when the target died or its city changed owner. Closed cities need only their theater.
+	// Vox Deorum: gathers one local set, computes theater, and can wake a waiting fight before estimating Reinforce and
+	// the Withdraw. Returns false when the target died or its city changed owner. Closed cities need only their theater.
 	static bool EstimateBattlefield(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache,
-		SOperationalBattlefield& field, bool bStake, bool bReinforce, const SOperationalChanges* pChanges = NULL);
-	// Vox Deorum: tallies L, T and share for cities or open Reinforce, then computes the city's theater or inherits it.
+		SOperationalBattlefield& field, bool bStake, bool bReinforce, bool bWithdraw, const SOperationalChanges* pChanges = NULL);
+	// Vox Deorum: tallies L, T and the strength share for every battlefield, then computes the city's theater or inherits
+	// it. The share is saved before Reinforce bookkeeping can change it.
 	static void EstimateTheater(const SOperationalTurn& turn, const SOperationalEstimateCache& cache, const CvPlot& kPlot,
-		const SOperationalLocalSet& local, SOperationalBattlefield& field, bool bReinforce);
+		const SOperationalLocalSet& local, SOperationalBattlefield& field);
 	// The battlefield's center plot: a surviving target unit's current plot, which it records, or the city plot. NULL when
 	// the target unit or city is gone.
 	static CvPlot* BattlefieldPlot(SOperationalBattlefield& field);
@@ -829,6 +902,21 @@ public:
 	// Enemy centers require a border zone, a posture other than Withdraw and full selected strength covering need.
 	static void EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 		SOperationalBattlefield& field);
+	// Vox Deorum: our combat units at a battlefield that can leave: threat victims and local strength, on the start
+	// roster, outside armies, with movement left, outside friendly cities and held garrisons, and not already withdrawn.
+	// Sorted by ascending ID. Our own cities have no recruits.
+	static void GatherWithdrawRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		const SOperationalLocalSet& local, vector<CvUnit*>& vRecruits);
+	// Vox Deorum: X, the exposure a retreat removes: each threat's capped exposure minus its capped exposure over the
+	// victims that stay.
+	static double RemovableExposure(const SOperationalTurn& turn, const vector<CvUnit*>& vRecruits);
+	// Vox Deorum: the Withdraw priority from the removable exposure, the risk weight and the share help does not cover.
+	static void EstimateWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
+		SOperationalBattlefield& field);
+	// Vox Deorum: the Withdraw priority from an exposure list, the theater and the share help does not cover. The check
+	// reuses it when it drops recruits that cannot leave.
+	static double WithdrawPriority(const SOperationalTurn& turn, const SOperationalBattlefield& field, double fExposure,
+		double fShare);
 	// Vox Deorum: gathers available units outside armies in the destination's domains and recruit range.
 	// Local units qualify once the same-field fight releases them. Uses native's carrier, healing, siege, donor-zone
 	// and civilian-cover filters and excludes the battlefield's rejections. Enemy-city candidates must also pass
@@ -933,16 +1021,28 @@ public:
 	// safe enough first stop. Failures join the turn's rejections and the selection is made again until every selected
 	// unit passed. A selection checked since the last command passes at once.
 	static eOperationalCheckResult CheckReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Vox Deorum: the Withdraw's readiness check, with no orders issued: find the destination of each recruit domain from
+	// a plot that suits it, drop recruits that cannot leave from the estimate, then require one endangered recruit whose
+	// first stop passes the Withdraw march rule toward its destination.
+	static eOperationalCheckResult CheckWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
 	// True when the positioning copy's path move can take the unit toward the target this turn: a path within recruit
-	// range with safe embark, and danger at its first-turn stop within native's limit. Generates the unit's path.
-	static bool CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget);
+	// range with safe embark, and danger at its first-turn stop within native's limit. With bWithdraw, a stop safer than
+	// both the current plot and the unit's hit points also passes. Generates the unit's path.
+	static bool CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false);
 	// The positioning copy's path flags for a unit marching toward the target.
 	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget);
 	// Plots within the search's near distance of the target for one domain, measured as the search measures it.
 	static ReachablePlots SearchReachPlots(PlayerTypes ePlayer, CvPlot* pTarget, DomainTypes eDomain);
+	// Vox Deorum: the closest friendly city by path in one domain from the given start plot, within recruit range, or -1.
+	static int WithdrawDestination(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kStart, DomainTypes eDomain);
 	// Runs the checked Reinforce selection through the positioning copy with the Reinforce kind row. Fills the record's
-	// selection, search flag and whether a selected unit moved.
+	// selection, search flag and whether a selected unit moved. The command loop closes the battlefield's open Withdraw
+	// only when that move flag is set.
 	static void ExecuteReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		SOperationalCommandRecord& record);
+	// Vox Deorum: runs the Withdraw through the positioning copy once per domain with a destination, after clearing the
+	// processed flags of recruits an earlier command spent and restoring them on every exit.
+	static void ExecuteWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		SOperationalCommandRecord& record);
 
 	// The fight row of the overlap rule: an enemy-unit fight that ran its search retires an unexecuted enemy-unit fight
@@ -1046,7 +1146,8 @@ public:
 
 	// Copy of CvTacticalAI::PositionUnitsAroundTarget with the loop's engagement in place of AL_LOW and the search intent:
 	// the geometry, blend and aggression follow the spotter move. The spotter and path moves skip held garrisons, and
-	// path moves go through CanMarch.
+	// path moves go through CanMarch. A Withdraw skips the spotter move, sends every recruit that can still move, orders
+	// damaged units first and leaves civilians last.
 	static bool PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 		SOperationalEngagementReport& report, const SOperationalTurn* pTurn = NULL, SOperationalCommandRecord* pCommand = NULL);

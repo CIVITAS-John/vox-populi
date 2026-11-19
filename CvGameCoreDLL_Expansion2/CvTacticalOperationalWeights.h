@@ -23,7 +23,8 @@ enum eOperationalWeight
 	NUM_OPERATIONAL_WEIGHTS
 };
 
-// The theater floor and exponent, city allowance, Reinforce strength ratio and readiness failure limit, in row order
+// The theater floor and exponent, city allowance, Reinforce strength ratio, readiness failure limit, Withdraw switch
+// and exposure split switch, in row order
 enum eOperationalConstant
 {
 	OPERATIONAL_CONSTANT_THEATER_FLOOR,
@@ -31,6 +32,10 @@ enum eOperationalConstant
 	OPERATIONAL_CONSTANT_CITY_UNITS,
 	OPERATIONAL_CONSTANT_STRENGTH_RATIO,
 	OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES,
+	// Vox Deorum: 0 turns the Withdraw offer off.
+	OPERATIONAL_CONSTANT_WITHDRAW_ENABLED,
+	// Vox Deorum: 0 turns the fight exposure split off.
+	OPERATIONAL_CONSTANT_EXPOSURE_SPLIT,
 	NUM_OPERATIONAL_CONSTANTS
 };
 
