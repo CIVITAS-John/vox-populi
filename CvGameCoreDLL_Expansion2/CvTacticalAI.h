@@ -1494,6 +1494,10 @@ protected:
 	unsigned char nKilledEnemies;
 	CvPlot* pTargetPlot;
 	bool bTargetDistanceRelevant;
+	// Vox Deorum: the search runs as a Withdraw, which scores its own retreat objective
+	bool bWithdraw;
+	// Vox Deorum: the sum of the units' final placement gains, which a Withdraw reads as its progress test
+	int iWithdrawPlacementGain;
 	bool bReturnToStartPositions;
 	unsigned short nSaveMovement;
 	// Vox Deorum: per-slot score weights in thousandths, 1000 at a neutral flavor
@@ -1550,9 +1554,10 @@ public:
 
 	CvTacticalPosition();
 
-	// Vox Deorum: the trailing flavors default to neutral, which keeps native scoring unchanged
+	// Vox Deorum: the trailing flavors default to neutral, which keeps native scoring unchanged, and the
+	// trailing withdraw flag defaults to false
 	void initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
-		const STacticalFlavors& flavors = STacticalFlavors());
+		const STacticalFlavors& flavors = STacticalFlavors(), bool bWithdraw = false);
 	void initFromParent(const CvTacticalPosition& parent);
 
 	//pre-allocate the plot storage up to the hard cap. only the initial
@@ -1640,6 +1645,8 @@ public:
 	void ChangeCityDamage(int iCityID, int iChange);
 	void HealFriendlyUnit(int iUnitID, int iChange);
 	bool IsTargetToDistanceRelevant() const { return bTargetDistanceRelevant; }
+	// Vox Deorum: true when the search runs as a Withdraw
+	bool isWithdraw() const { return bWithdraw; }
 
 	// Vox Deorum: with the air search, aircraft never get the general bonus
 	bool HasSupport(DomainTypes eDomain) const { return (MOD_VOX_TACTICAL_AIR_SEARCH && eDomain == DOMAIN_AIR) ? false : (eDomain == DOMAIN_SEA ? bHasAdmiral : bHasGeneral); }
@@ -2062,7 +2069,7 @@ namespace TacticalAIHelpers
 	bool FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0,
-		const STacticalFlavors& flavors = STacticalFlavors()); // Vox Deorum: neutral flavors keep native scoring
+		const STacticalFlavors& flavors = STacticalFlavors(), bool bWithdraw = false); // Vox Deorum: neutral flavors keep native scoring, and the withdraw flag defaults off
 	// Vox Deorum: adds an intent's default points to a resolved vector, skipping slots the operation or zone
 	// modifier sets; true when it changes RISK
 	bool ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS],

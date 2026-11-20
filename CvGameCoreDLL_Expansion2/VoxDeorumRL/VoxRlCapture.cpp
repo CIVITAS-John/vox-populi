@@ -3688,11 +3688,11 @@ void VoxRlCapture::NoteExecutionResult(bool bSuccess)
 std::vector<STacticalAssignment> VoxRlCapture::RunNativeSearch(const std::vector<CvUnit*>& vUnits,
 	CvPlot* pTarget, int eAggression, std::set<int>& unuseableUnits,
 	bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
-	const STacticalFlavors& flavors)
+	const STacticalFlavors& flavors, bool bWithdraw)
 {
 	return TacticalAIHelpers::FindBestUnitAssignments(vUnits, pTarget,
 		static_cast<eAggressionLevel>(eAggression), unuseableUnits, bTargetDistanceRelevant,
-		bReturnToStartPositions, iSaveMovement, flavors);
+		bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 }
 
 std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,
@@ -3701,6 +3701,8 @@ std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType,
 	bool bReturnToStartPositions, int iSaveMovement, const STacticalFlavors& flavors)
 {
 	std::vector<STacticalAssignment> results;
+	// The withdraw retreat flag comes from the purpose this path already carries.
+	const bool bWithdraw = eSearchIntent == kSearchIntentWithdraw;
 	const bool ephemeral = m_engagement == NULL || !m_engagement->active || m_engagement->player != ePlayer;
 	if (ephemeral)
 	{
@@ -3717,7 +3719,7 @@ std::vector<STacticalAssignment> VoxRlCapture::SearchAssignments(int callerType,
 	else
 	{
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 	}
 	if (ephemeral)
 	{
@@ -3734,6 +3736,8 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 {
 	Segment& segment = *m_segment;
 	Engagement& engagement = *m_engagement;
+	// The withdraw retreat flag comes from the purpose this path already carries.
+	const bool bWithdraw = eSearchIntent == kSearchIntentWithdraw;
 	// 1. Carry pending board changes and danger dirty events in the decision
 	// request alongside its caller context. Refreshes and discoveries publish
 	// their event-time inputs at their own native boundaries.
@@ -3742,7 +3746,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	{
 		FailSegment("decisionDeltaCollect");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 		return;
 	}
 	InitializeRequestHeader(data);
@@ -3825,7 +3829,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	{
 		FailSegment("decisionRequestBuild");
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 		return;
 	}
 	if (m_config.timings)
@@ -3846,7 +3850,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 		if (m_segment == NULL || m_segment->failed)
 		{
 			results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-				bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+				bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 			return;
 		}
 	}
@@ -3854,7 +3858,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 		segment.nextDeltaSequence, engagement.decisionId, engagement.attemptIndex))
 	{
 		results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+			bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 		return;
 	}
 	const unsigned int requestFrameIndex = static_cast<unsigned int>(segment.frameTable.size() - 1);
@@ -3873,7 +3877,7 @@ void VoxRlCapture::RunCapturedSearch(int callerType, SearchIntent eSearchIntent,
 	// 2. Invoke native search exactly once, keeping nested refreshes in this decision.
 	m_searchActive = true;
 	results = RunNativeSearch(vUnits, pTarget, eAggression, unuseableUnits,
-		bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors);
+		bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, flavors, bWithdraw);
 	m_searchActive = false;
 
 	// 3. Snapshot assignments into the result block.

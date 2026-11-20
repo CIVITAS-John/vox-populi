@@ -31,7 +31,8 @@ enum SearchIntent
     kSearchIntentCityDefense = 16,
     kSearchIntentBattleNeutral = 17,
     kSearchIntentBattleEnemy = 18,
-    kSearchIntentCount = 19
+    kSearchIntentWithdraw = 19,
+    kSearchIntentCount = 20
 };
 
 static const char* const kSearchIntentNames[kSearchIntentCount] =
@@ -54,7 +55,8 @@ static const char* const kSearchIntentNames[kSearchIntentCount] =
     "CityAttack",
     "CityDefense",
     "BattleNeutral",
-    "BattleEnemy"
+    "BattleEnemy",
+    "Withdraw"
 };
 
 // Returns a stable display name, treating unvalidated values as unknown.

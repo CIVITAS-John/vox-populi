@@ -52,6 +52,29 @@ const int TACTSIM_POSITIONS_AIR_SEARCH = 10000;
 // Vox Deorum: assignment rows for one round of scoring; VP's 2000 for 13 units, scaled to the air search cap of 19
 const int TACTSIM_ASSIGNMENTS = 3000;
 
+// Vox Deorum: a Withdraw search scores the plain distance from the enemy in plot points, one table for land and
+// sea, indexed by enemy distance 0 to 4. Distance 0 reads as 1. The first line gains most from breaking contact
+// and nothing beyond three plots; every other line, which the search already treats as third line, keeps gaining
+// out to four plots.
+const int TACTICAL_WITHDRAW_ENEMY_DISTANCE_FIRSTLINE[5] = { 0, 0, 80, 120, 120 };
+const int TACTICAL_WITHDRAW_ENEMY_DISTANCE_OTHER[5] = { 0, 0, 30, 80, 120 };
+// Vox Deorum: a Withdraw search scores a friendly city as the sanctuary, as native does
+const int TACTICAL_WITHDRAW_ENEMY_DISTANCE_CITY = 120;
+// Vox Deorum: a Withdraw search pulls a unit toward the target by these plot points per step beyond the free
+// steps. The first line trails the other lines, which keeps it between the enemy and the retreat.
+const int TACTICAL_WITHDRAW_DESTINATION_FIRSTLINE = 30;
+const int TACTICAL_WITHDRAW_DESTINATION_OTHER = 40;
+// Vox Deorum: steps toward the target that a Withdraw search does not penalize, matching the ring-2 arrival of the
+// march path, and the most steps the destination term counts; an unreachable or invalid distance counts as the cap
+const int TACTICAL_WITHDRAW_DESTINATION_FREE_STEPS = 2;
+const int TACTICAL_WITHDRAW_DESTINATION_MAX_STEPS = 12;
+// Vox Deorum: a Withdraw attack that neither kills nor captures keeps this fraction of its damage and bonus score
+// (3 of 10 points per HP), while damage taken stays in full
+const int TACTICAL_WITHDRAW_ATTACK_SCALE = 3;
+const int TACTICAL_WITHDRAW_ATTACK_SCALE_BASE = 10;
+// Vox Deorum: a Withdraw heal credit on a plot with danger is divided by this, so the full credit needs a safe plot
+const int TACTICAL_WITHDRAW_HEAL_DIVISOR = 2;
+
 // Vox Deorum: default flavor adjustment for each search intent, in 0..100 points.
 // Applied last, after the game-scale civ, operation, and zone modifiers, and only when
 // VOX_TACTICAL_INTENT_FLAVORS is on. One row per SearchIntent, in enum order; one
@@ -79,6 +102,7 @@ const signed char TACTICAL_INTENT_FLAVOR_DEFAULTS[][STacticalFlavors::NUM_SLOTS]
 	/* CityDefense           */ {    0,     0,      0,      0,        0 },
 	/* BattleNeutral         */ {    0,     0,      0,      0,        0 },
 	/* BattleEnemy           */ {    0,     0,      0,      0,        0 },
+	/* Withdraw              */ {    0,     0,      0,      0,        0 },
 };
 
 // Vox Deorum: fails to compile when a SearchIntent is added or removed without a matching row
@@ -8338,8 +8362,16 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		iBonusScore += min(iCityThreatBonus, TACTICAL_FLAVOR_ATTACK_SHIFT_LIMIT);
 	}
 
-	result->SetScore(0, iBonusScore, iActualCityDamageDealt + iCityDamageShift
-		+ iTotalActualUnitDamageDealt + iUnitDamageShift - iActualDamageTaken);
+	// Vox Deorum: a Withdraw attack that neither kills nor captures keeps three tenths of the damage dealt and its
+	// bonus, while the damage taken stays in full. A kill or a capture keeps the full score.
+	int iDealtScore = iActualCityDamageDealt + iCityDamageShift + iTotalActualUnitDamageDealt + iUnitDamageShift;
+	int iDealtBonus = iBonusScore;
+	if (assumedPosition.isWithdraw() && !bCityKill && !bUnitKill)
+	{
+		iDealtScore = iDealtScore * TACTICAL_WITHDRAW_ATTACK_SCALE / TACTICAL_WITHDRAW_ATTACK_SCALE_BASE;
+		iDealtBonus = iDealtBonus * TACTICAL_WITHDRAW_ATTACK_SCALE / TACTICAL_WITHDRAW_ATTACK_SCALE_BASE;
+	}
+	result->SetScore(0, iDealtBonus, iDealtScore - iActualDamageTaken);
 
 	return bCityKill || bUnitKill;
 }
@@ -8789,9 +8821,13 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	//different contributions
 	int iDangerScore = 0;
 	int iPlotScore = 0;
+	// Vox Deorum: a Withdraw search's enemy distance and pull home, in the same plot points as danger
+	int iWithdrawScore = 0;
 	int iBonusScore = 0;
 	int iDamageDelta = 0;
 	int iSelfDamage = 0;
+	// Vox Deorum: the heal credit kept aside until the plot's danger is known
+	int iHealCredit = 0;
 	bool bUnsafeFinalPlot = false;
 
 	int iCurrentHealth = pUnit->GetCurrHitPoints() - unit.iSelfDamage;
@@ -8838,45 +8874,66 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	//even for intermediate plots, so as not to bias against them
 	if (assumedPosition.haveEnemies())
 	{
-		int iEnemyDistance = !pUnit->IsCanAttackRanged() || pUnit->IsRangeAttackIgnoreLOS() || pUnit->GetRange() < 2
-			? testPlot->getEnemyDistance(eRelevantDomain)
-			: testPlot->getRangedAttackEnemyDistance(eRelevantDomain);
-
-		iPlotScore = pUnit->getDomainType() != DOMAIN_SEA
-			? iPlotScoreForEnemyDistanceLandAttack[eMoveStrategy][iEnemyDistance]
-			: iPlotScoreForEnemyDistanceSeaAttack[eMoveStrategy][iEnemyDistance];
-
-		// Vox Deorum: HOLD_GROUND above 50 weakens the pull toward the enemy outside friendly territory
-		if (iPlotScore > 0 && assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND) > 1000
-			&& pUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() != pUnit->getTeam())
-			iPlotScore = assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, iPlotScore, true);
-
-		if (pTestPlot->isFriendlyCity(*pUnit))
-			iPlotScore = 12;
-		// wounded units and scouts can go wherever as long as they don't die (danger checked later)
-		else if (iCurrentHealth < gMinHpForTactsim || pUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_EXPLORE)
-			iPlotScore = 12;
-
-		// move skirmishers in to fire
-		if (bSkirmisher && iEnemyDistance == 1)
-			iPlotScore += 3;
-
-		// if we are not in a good spot, try moving
-		if (!bPlacementOnly && iPlotScore <= 6 && pTestPlot == pUnit->plot() && pUnit->getDamage() + unit.iSelfDamage < 10)
-			iPlotScore -= 2;
-
-		// Move melee units in to capture cities
-		if (!pUnit->IsCanAttackRanged() && testPlot->getEnemyDistance() == 1)
+		// Vox Deorum: a Withdraw search reads the plain enemy distance for every unit, without the line-of-sight
+		// filter, and scores it from its own rows.
+		if (assumedPosition.isWithdraw())
 		{
-			CvCity* pAdjacentCity = pTestPlot->GetAdjacentCity();
-			if (pAdjacentCity && pAdjacentCity->GetMaxHitPoints() - pAdjacentCity->getDamage() <= 5 && GET_PLAYER(pAdjacentCity->getOwner()).IsAtWarWith(pUnit->getOwner()))
-				iPlotScore += 5;
-		}
+			int iWithdrawDistance = testPlot->getEnemyDistance(eRelevantDomain);
+			// distance 0 scores as 1
+			if (iWithdrawDistance < 1)
+				iWithdrawDistance = 1;
+			// the first row follows the unit's assigned move strategy; a skirmisher's first-line override belongs to the fight search
+			const int* aiWithdrawDistanceScore = unit.eMoveStrategy == MS_FIRSTLINE
+				? TACTICAL_WITHDRAW_ENEMY_DISTANCE_FIRSTLINE
+				: TACTICAL_WITHDRAW_ENEMY_DISTANCE_OTHER;
+			iWithdrawScore = aiWithdrawDistanceScore[iWithdrawDistance];
 
-		//if we made a kill, assume we are in a good plot
-		//this is very important because enemy distance changes and we might end up with -1
-		if (isKillAssignment(unit.eLastAssignment))
-			iPlotScore = max(6, iPlotScore);
+			// the city is the sanctuary
+			if (pTestPlot->isFriendlyCity(*pUnit))
+				iWithdrawScore = TACTICAL_WITHDRAW_ENEMY_DISTANCE_CITY;
+		}
+		else
+		{
+			int iEnemyDistance = !pUnit->IsCanAttackRanged() || pUnit->IsRangeAttackIgnoreLOS() || pUnit->GetRange() < 2
+				? testPlot->getEnemyDistance(eRelevantDomain)
+				: testPlot->getRangedAttackEnemyDistance(eRelevantDomain);
+
+			iPlotScore = pUnit->getDomainType() != DOMAIN_SEA
+				? iPlotScoreForEnemyDistanceLandAttack[eMoveStrategy][iEnemyDistance]
+				: iPlotScoreForEnemyDistanceSeaAttack[eMoveStrategy][iEnemyDistance];
+
+			// Vox Deorum: HOLD_GROUND above 50 weakens the pull toward the enemy outside friendly territory
+			if (iPlotScore > 0 && assumedPosition.getFlavorWeight(STacticalFlavors::HOLD_GROUND) > 1000
+				&& pUnit->getDomainType() == DOMAIN_LAND && pTestPlot->getTeam() != pUnit->getTeam())
+				iPlotScore = assumedPosition.scaleByFlavor(STacticalFlavors::HOLD_GROUND, iPlotScore, true);
+
+			if (pTestPlot->isFriendlyCity(*pUnit))
+				iPlotScore = 12;
+			// wounded units and scouts can go wherever as long as they don't die (danger checked later)
+			else if (iCurrentHealth < gMinHpForTactsim || pUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_EXPLORE)
+				iPlotScore = 12;
+
+			// move skirmishers in to fire
+			if (bSkirmisher && iEnemyDistance == 1)
+				iPlotScore += 3;
+
+			// if we are not in a good spot, try moving
+			if (!bPlacementOnly && iPlotScore <= 6 && pTestPlot == pUnit->plot() && pUnit->getDamage() + unit.iSelfDamage < 10)
+				iPlotScore -= 2;
+
+			// Move melee units in to capture cities
+			if (!pUnit->IsCanAttackRanged() && testPlot->getEnemyDistance() == 1)
+			{
+				CvCity* pAdjacentCity = pTestPlot->GetAdjacentCity();
+				if (pAdjacentCity && pAdjacentCity->GetMaxHitPoints() - pAdjacentCity->getDamage() <= 5 && GET_PLAYER(pAdjacentCity->getOwner()).IsAtWarWith(pUnit->getOwner()))
+					iPlotScore += 5;
+			}
+
+			//if we made a kill, assume we are in a good plot
+			//this is very important because enemy distance changes and we might end up with -1
+			if (isKillAssignment(unit.eLastAssignment))
+				iPlotScore = max(6, iPlotScore);
+		}
 	}
 	else
 	{
@@ -8884,6 +8941,27 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 		int iTargetDistance = min(plotDistance(*assumedPosition.getTarget(), *pTestPlot), (int)TACTICAL_COMBAT_MAX_TARGET_DISTANCE);
 
 		iPlotScore += iPlotScoreForTargetDistanceEscort[eMoveStrategy][iTargetDistance];
+	}
+
+	// Vox Deorum: a Withdraw search pulls each unit toward the target by the steps beyond the free ones, capped,
+	// and treats an unreachable or invalid distance as the cap. The first line trails so that it stays between the
+	// enemy and the retreating units.
+	if (assumedPosition.isWithdraw())
+	{
+		int iSteps = TACTICAL_WITHDRAW_DESTINATION_MAX_STEPS;
+		if (assumedPosition.getTarget())
+		{
+			const int iDistance = TacticalAIHelpers::GetPlotDistanceToTarget(pTestPlot->GetPlotIndex(), pUnit->getDomainType());
+			// count only the steps beyond the free ones, then cap. The INT_MAX check avoids overflow in the subtraction.
+			if (iDistance != INT_MAX)
+				iSteps = max(iDistance - TACTICAL_WITHDRAW_DESTINATION_FREE_STEPS, 0);
+			if (iSteps > TACTICAL_WITHDRAW_DESTINATION_MAX_STEPS)
+				iSteps = TACTICAL_WITHDRAW_DESTINATION_MAX_STEPS;
+		}
+		const int iPullPerStep = unit.eMoveStrategy == MS_FIRSTLINE
+			? TACTICAL_WITHDRAW_DESTINATION_FIRSTLINE
+			: TACTICAL_WITHDRAW_DESTINATION_OTHER;
+		iWithdrawScore -= iPullPerStep * iSteps;
 	}
 
 	if (bMoving && testPlot->isEnemyCivilian()) //unescorted civilian
@@ -8931,6 +9009,8 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 						iHealRate = pUnit->getDamage() + unit.iSelfDamage;
 
 					iDamageDelta += iHealRate;
+					// Vox Deorum: the credit a Withdraw search may halve once the plot's danger is known
+					iHealCredit = iHealRate;
 					iSelfDamage -= iHealRate;
 
 					result->eAssignmentType = A_HEAL;
@@ -8988,6 +9068,10 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 
 	// assume difference in danger from AoE damage on move is negligible (it's definitely not worth the CPU time)
 	int iDanger = GetUnitDangerForPlot(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition);
+
+	// Vox Deorum: a Withdraw heal credit is full on a plot with zero danger and halved on a plot with danger
+	if (iHealCredit > 0 && assumedPosition.isWithdraw() && iDanger > 0)
+		iDamageDelta -= iHealCredit - iHealCredit / TACTICAL_WITHDRAW_HEAL_DIVISOR;
 
 	//many considerations are only relevant if we end the turn here (critical for skirmishers which can move after attacking ...)
 	//we only consider this when explicitly ending the turn!
@@ -9073,7 +9157,8 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	// Finish validation can still allow some unsafe positions, or a unit may have no safe tile.
 	if (bUnsafeFinalPlot && gSafePlotCount[unit.iUnitID] > 0)
 		iDamageDelta = TACTICAL_COMBAT_IMPOSSIBLE_SCORE;
-	const int iPlotValue = iPlotScore * 10 + iDangerScore + iExtra;
+	// Vox Deorum: a Withdraw search adds its enemy and destination distances at the danger scale
+	const int iPlotValue = iPlotScore * 10 + iDangerScore + iExtra + iWithdrawScore;
 	result->SetScore(iPlotValue, iBonusScore, iDamageDelta);
 	// Vox Deorum: discount only the danger penalty that fits in the stored plot score.
 	if (piDangerPenalty)
@@ -9924,7 +10009,10 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 					if (enemyPlot && enemyPlot->isEnemy())
 					{
 						STacticalAssignment* rangedAttack = ScorePlotForRangedAttack(unit, assumedUnitPlot, enemyPlot, *this);
-						if (rangedAttack->Score() <= 0 || !rangedAttack->IsAcceptable())
+						// Vox Deorum: a Withdraw search tests the shot on its damage and bonus alone. The total also
+						// gives up the current plot score, which the stay or move after the shot returns.
+						const int iShotScore = isWithdraw() ? rangedAttack->GetBonusScore() + rangedAttack->GetDamageDelta() : rangedAttack->Score();
+						if (iShotScore <= 0 || !rangedAttack->IsAcceptable())
 							continue;
 
 						GetNextPosition(*this, rangedAttack, tempPosition);
@@ -9962,7 +10050,8 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 				}
 			}
 
-			if (gPossibleRangedAttacks.empty())
+			// Vox Deorum: in a Withdraw, staying or healing competes with a parting shot
+			if (gPossibleRangedAttacks.empty() || isWithdraw())
 			{
 				//what is the score for simply staying put and not attacking anybody?
 				//use EM_INTERMEDIATE so we're less strict concerning danger, enemies might be killed in the course of the sim
@@ -10071,7 +10160,9 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 	//could also sort the moves by a secondary criterion, but best solution seems to be the "bad unit' mechanism to restart the sim
 	STacticalAssignment* blocked = gAssignmentStorage.peekNext();
 	blocked->init(unit.iPlotIndex, unit.iPlotIndex, unit.iUnitID, unit.iMovesLeft, unit.eMoveStrategy, A_BLOCKED, GetPrevPlotScore(unit.iUnitID, *this));
-	blocked->SetScore(-10, 0, 0);
+	// Vox Deorum: a Withdraw plot score is often negative, so its block stays 10 points below the current plot
+	// score. A plain -10 would rank the block above every retreat from a plot worth less than that.
+	blocked->SetScore(isWithdraw() ? blocked->GetOldPlotScore() - 10 : -10, 0, 0);
 	gPossibleMoves.push_back(OptionWithScore<STacticalAssignment*>(blocked, blocked->Score()));
 	gAssignmentStorage.consumeOne();
 }
@@ -10623,6 +10714,8 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 
 	// Vox Deorum: replace provisional scores only after the safety checks pass. Early completion also releases units.
 	int iPlotAdjustment = 0;
+	// Vox Deorum: a Withdraw tests these gains alone, because the ranking value also subtracts the stored scores
+	int iPlacementGain = 0;
 	for (int iList = 0; iList < 2; ++iList)
 	{
 		const bool bEarlyRelease = iList == 1;
@@ -10633,12 +10726,16 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 			if (unit.eLastAssignment == A_INITIAL)
 				continue;
 			const int iMovesLeft = bEarlyRelease || unit.eLastAssignment == A_BLOCKED ? unit.iMovesLeft : 0;
-			iPlotAdjustment += getFinalPlotAdjustment(unit.iUnitID, RelativeUnitPlacement(unit, iMovesLeft, *this, cargoSnapshot));
+			const int iGain = RelativeUnitPlacement(unit, iMovesLeft, *this, cargoSnapshot);
+			iPlotAdjustment += getFinalPlotAdjustment(unit.iUnitID, iGain);
+			iPlacementGain += iGain;
 		}
 	}
 
 	// Rank the completed plan and the no-progress floor on the same positioning values.
 	iFinalPlotAdjustment = iPlotAdjustment;
+	// Vox Deorum: the gains a Withdraw search tests for progress
+	iWithdrawPlacementGain = iPlacementGain;
 	//scores look good and target was killed, we're done
 	//second chance: did we kill anything (offensive), heal a unit, or at least improve the arrangement of our units (defensive)?
 	//order is important here, need to add finish moves first!
@@ -10660,6 +10757,21 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 //although we try to pick "positive" moves only sometimes there are only bad choices
 bool CvTacticalPosition::isKillOrImprovedPosition() const
 {
+	// Vox Deorum: a Withdraw search makes progress with a kill, a ranged or melee attack, a heal, or a positive
+	// sum of the units' placement gains. The gains hold danger, enemy distance and the pull home, so a real retreat
+	// counts even when its ranking value stays negative.
+	if (isWithdraw())
+	{
+		const vector<STacticalAssignment>& withdrawMoves = assignedMoves.read();
+		for (size_t i = nFirstInterestingAssignment; i < withdrawMoves.size(); i++)
+		{
+			const eUnitAssignmentType eType = withdrawMoves[i].eAssignmentType;
+			if (isKillAssignment(eType) || eType == A_RANGEATTACK || eType == A_MELEEATTACK || eType == A_HEAL)
+				return true;
+		}
+		return iWithdrawPlacementGain > 0;
+	}
+
 	const vector<STacticalAssignment>& assignedMoves_r = assignedMoves.read();
 	//if we made a kill, that is always good
 	//on the other hand it messes up the enemy distance, so we cannot really compare before/after in that case!
@@ -11045,7 +11157,7 @@ CvTacticalPosition::CvTacticalPosition()
 }
 
 void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eAggLvl, CvPlot* pTarget, bool bTargetDistanceRelevant_, bool bReturnToStartPositions_, int iSaveMovement_,
-	const STacticalFlavors& flavors)
+	const STacticalFlavors& flavors, bool bWithdraw_)
 {
 	// Vox Deorum: turn each flavor into a score weight; a neutral flavor skips the math, and RISK only weighs
 	// the danger penalty when it is set
@@ -11078,6 +11190,9 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	ePlayer = player;
 	pTargetPlot = pTarget;
 	bTargetDistanceRelevant = bTargetDistanceRelevant_;
+	// Vox Deorum: the retreat objective follows the root into every child
+	bWithdraw = bWithdraw_;
+	iWithdrawPlacementGain = 0;
 	bReturnToStartPositions = bReturnToStartPositions_;
 	bHasGeneral = false;
 	bHasAdmiral = false;
@@ -11124,6 +11239,9 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	ePlayer = parent.ePlayer;
 	pTargetPlot = parent.pTargetPlot;
 	bTargetDistanceRelevant = parent.bTargetDistanceRelevant;
+	// Vox Deorum: children keep the root's Withdraw scoring
+	bWithdraw = parent.bWithdraw;
+	iWithdrawPlacementGain = parent.iWithdrawPlacementGain;
 	bReturnToStartPositions = parent.bReturnToStartPositions;
 	bHasGeneral = parent.bHasGeneral;
 	bHasAdmiral = parent.bHasAdmiral;
@@ -13440,7 +13558,9 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 		}
 		else
 		{
-			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true, false, 0, flavors);
+			// Vox Deorum: a Withdraw purpose turns on the retreat scoring
+			vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true, false, 0, flavors,
+				eSearchIntent == kSearchIntentWithdraw);
 		}
 		if (vAssignments.empty())
 		{
@@ -13719,7 +13839,7 @@ void TacticalAIHelpers::SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot
 //try to find a combination of unit actions (move, attack etc) which does maximal damage to the enemy while exposing us to minimal risk
 vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
-	const STacticalFlavors& flavors)
+	const STacticalFlavors& flavors, bool bWithdraw)
 {
 	/*
 	abstract:
@@ -13823,8 +13943,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if (!initialPosition)
 		return result;
 
-	// Vox Deorum: the root carries the flavor weights its children score with
-	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, searchFlavors);
+	// Vox Deorum: the root carries the flavor weights its children score with, and the withdraw flag
+	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement, searchFlavors, bWithdraw);
 
 	//the initial position absorbs all the tactical plots (up to the hard cap)
 	//in the passes below; reserve up front so the setup never reallocates.

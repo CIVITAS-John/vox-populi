@@ -364,7 +364,7 @@ private:
 	std::vector<STacticalAssignment> RunNativeSearch(const std::vector<CvUnit*>& vUnits,
 		class CvPlot* pTarget, int eAggression, std::set<int>& unuseableUnits,
 		bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
-		const STacticalFlavors& flavors);
+		const STacticalFlavors& flavors, bool bWithdraw);
 	// Builds and closes a purpose-labeled decision request/result pair around
 	// one native search invocation.
 	void RunCapturedSearch(int callerType, SearchIntent eSearchIntent, PlayerTypes ePlayer,

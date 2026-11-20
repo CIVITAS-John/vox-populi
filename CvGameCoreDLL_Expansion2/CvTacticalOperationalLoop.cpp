@@ -90,11 +90,11 @@ const char* const OPERATIONAL_KIND_NAMES[] =
 typedef char OperationalKindNamesMatchKinds[(sizeof(OPERATIONAL_KIND_NAMES) / sizeof(OPERATIONAL_KIND_NAMES[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
 
 // Vox Deorum: default search purposes in command kind order. Unit battles refine BattleNeutral by target territory.
-// Operational reinforcement and Withdraw share native's Reinforce purpose.
+// Operational reinforcement shares native's Reinforce purpose; Withdraw has its own purpose and retreat scoring.
 static const SearchIntent OPERATIONAL_KIND_SEARCH_INTENTS[] =
 {
 	kSearchIntentBattleNeutral, kSearchIntentCityAttack, kSearchIntentReinforce,
-	kSearchIntentCityDefense, kSearchIntentReinforce,
+	kSearchIntentCityDefense, kSearchIntentWithdraw,
 };
 typedef char OperationalKindIntentsMatchKinds[(sizeof(OPERATIONAL_KIND_SEARCH_INTENTS) / sizeof(OPERATIONAL_KIND_SEARCH_INTENTS[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
 
@@ -4331,6 +4331,9 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, eKind, eCounterpart, VoxRlCurrentOperationId(ePlayer),
 		aiMapped, settings, report.iRepresentativeZone, report.iAggressionRisk);
 	report.eAggLvl = AggressionFromRisk(report.iAggressionRisk, settings);
+	// Vox Deorum: a Withdraw never plans a risky melee trade
+	if (eKind == OPERATIONAL_KIND_WITHDRAW && report.eAggLvl > AL_LOW)
+		report.eAggLvl = AL_LOW;
 	SOperationalFlavorRequest& request = report.flavorRequest;
 	if (pTurn)
 	{
@@ -4405,8 +4408,9 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 			}
 			else
 			{
+				// Vox Deorum: a Withdraw purpose turns on the retreat scoring
 				vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, bTargetDistanceRelevant,
-					false, 0, flavors);
+					false, 0, flavors, eSearchIntent == kSearchIntentWithdraw);
 			}
 		}
 		if (vAssignments.empty())
@@ -4675,7 +4679,8 @@ bool CvTacticalOperationalLoop::CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit,
 // and path moves skip held garrisons; path moves go through CanMarch and MarchFlags, whose land units use
 // MOVEFLAG_SAFE_EMBARK_ONLY in place of native's two MOVEFLAG_NO_EMBARK rules (no naval escort in the list, or a first
 // turn ending outside a zone we dominate). A Withdraw skips the spotter, records each unit's starting plot, sends every
-// recruit that can still move and orders damaged units first.
+// recruit that can still move and orders damaged units first. After a successful Withdraw search a recruit it used
+// on a plot with no danger stays.
 bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
 	eOperationalKind eKind, PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 	SOperationalEngagementReport& report, const SOperationalTurn* pTurn, SOperationalCommandRecord* pCommand)
@@ -4707,13 +4712,14 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 		if ((*it)->canUseNow())
 			vSimUnits.push_back(*it);
 	bool bTactSimSuccess = vSimUnits.empty() ? false : ExecuteEngagement(kTactical.m_pPlayer->GetID(), vSimUnits, pTarget, eKind, eCounterpart,
-		aiMapped, settings, true, report, pTurn, pCommand);
+		aiMapped, settings, !bWithdraw, report, pTurn, pCommand); // Vox Deorum: a Withdraw puts the retreat objective in the plot score
 
 	SOperationalTimer marchingTimer(pTurn && pTurn->bTiming ? &pTurn->performance.marchingNs : NULL);
 	//sometimes tactsim cannot use all units, eg if they are too far out
 	vector<CvUnit*> farout;
-	//the search clears its distance map when it finishes, so rebuild it for the distance check below
-	if (bTactSimSuccess)
+	//the search clears its distance map when it finishes, so rebuild it for the distance check below.
+	// Vox Deorum: the Withdraw branch reads only danger, never this map.
+	if (bTactSimSuccess && !bWithdraw)
 		TacticalAIHelpers::UpdatePlotDistanceToTarget(kTactical.m_pPlayer->GetID(), pTarget);
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
 	{
@@ -4731,6 +4737,10 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 				map<int, int>::const_iterator start = startPlots.find(pUnit->GetID());
 				bMarch = start != startPlots.end() && start->second == pUnit->plot()->GetPlotIndex();
 			}
+			// Vox Deorum: after a successful search a recruit it used stays when its plot has no danger, so a chosen
+			// safe heal stands. A recruit the search did not use still marches.
+			if (bTactSimSuccess && pUnit->TurnProcessed() && (!pUnit->plot() || pUnit->GetDanger() <= 0))
+				bMarch = false;
 			if (bMarch)
 				farout.push_back(pUnit);
 			continue;
