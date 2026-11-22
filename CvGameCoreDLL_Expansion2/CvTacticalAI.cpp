@@ -13839,8 +13839,12 @@ void TacticalAIHelpers::SetSearchCityFlavorTerms(const CvTacticalPosition* pRoot
 //try to find a combination of unit actions (move, attack etc) which does maximal damage to the enemy while exposing us to minimal risk
 vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions, int iSaveMovement,
-	const STacticalFlavors& flavors, bool bWithdraw)
+	const STacticalFlavors& flavors, bool bWithdraw, vector<STacticalSearchCandidate>* pCandidates, int iMaxCandidates)
 {
+	// Vox Deorum: every search replaces the caller's ranked result, including when nothing is accepted.
+	if (pCandidates != NULL)
+		pCandidates->clear();
+
 	/*
 	abstract:
 
@@ -14177,11 +14181,38 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 		// Compare before support placement; a declined search leaves its participants available.
 		// Vox Deorum: Match or beat a negative rejected score, or reach 80% of a nonnegative one.
-		if (iBestNoProgressScore == INT_MIN || pBestPosition->getScoreTotal() >= (iBestNoProgressScore < 0 ? iBestNoProgressScore : 0.8 * iBestNoProgressScore))
+		const double fAcceptedScore = iBestNoProgressScore < 0 ? iBestNoProgressScore : 0.8 * iBestNoProgressScore;
+		if (iBestNoProgressScore == INT_MIN || pBestPosition->getScoreTotal() >= fAcceptedScore)
 		{
-			if (pBestPosition->HasSupport(DOMAIN_LAND) || pBestPosition->HasSupport(DOMAIN_SEA) || pBestPosition->HasCitySupport())
-				TacticalAIHelpers::AddSupportMoves(*pBestPosition, ourUnits);
-			result = pBestPosition->getAssignments();
+			// Vox Deorum: rank only when asked for alternatives. Stable ordering keeps the
+			// same first-of-equals winner as the ordinary min_element path.
+			vector<CvTacticalPosition*> ranked;
+			if (pCandidates != NULL && iMaxCandidates > 1 && completedPositions.size() > 1)
+			{
+				ranked = completedPositions;
+				std::stable_sort(ranked.begin(), ranked.end(), CvTacticalPosition::PrPositionSortArrayTotalScore());
+			}
+			const size_t iNumPlans = ranked.empty() ? 1 : min(ranked.size(), (size_t)iMaxCandidates);
+			for (size_t i = 0; i < iNumPlans; i++)
+			{
+				CvTacticalPosition* pCandidate = ranked.empty() ? pBestPosition : ranked[i];
+				const int iScore = pCandidate->getScoreTotal();
+				if (iBestNoProgressScore != INT_MIN && iScore < fAcceptedScore)
+					break;
+
+				if (pCandidate->HasSupport(DOMAIN_LAND) || pCandidate->HasSupport(DOMAIN_SEA) || pCandidate->HasCitySupport())
+					TacticalAIHelpers::AddSupportMoves(*pCandidate, ourUnits);
+				if (i == 0)
+					result = pCandidate->getAssignments();
+				if (pCandidates != NULL)
+				{
+					pCandidates->push_back(STacticalSearchCandidate());
+					STacticalSearchCandidate& candidate = pCandidates->back();
+					candidate.iRank = (int)i + 1;
+					candidate.iScore = iScore;
+					candidate.vAssignments = pCandidate->getAssignments();
+				}
+			}
 		}
 	}
 

@@ -688,6 +688,15 @@ protected:
 	short iRankBonus; // Vox Deorum: see RankScore()
 };
 
+// Vox Deorum: one accepted plan a teacher search reports beside its winner. The rank is one-based
+// and the score is the completed position's total before support placement.
+struct STacticalSearchCandidate
+{
+	vector<STacticalAssignment> vAssignments;
+	int iRank;
+	int iScore;
+};
+
 struct SComboMove
 {
 	const STacticalAssignment* aPtr;
@@ -2069,7 +2078,8 @@ namespace TacticalAIHelpers
 	bool FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 		set<int>& unuseableUnits, bool bTargetDistanceRelevant, bool bReturnToStartPositions = false, int iSaveMovement = 0,
-		const STacticalFlavors& flavors = STacticalFlavors(), bool bWithdraw = false); // Vox Deorum: neutral flavors keep native scoring, and the withdraw flag defaults off
+		const STacticalFlavors& flavors = STacticalFlavors(), bool bWithdraw = false,
+		vector<STacticalSearchCandidate>* pCandidates = NULL, int iMaxCandidates = 1); // Vox Deorum: neutral flavors keep native scoring, the withdraw flag defaults off, and the candidate list is an optional output seam
 	// Vox Deorum: adds an intent's default points to a resolved vector, skipping slots the operation or zone
 	// modifier sets; true when it changes RISK
 	bool ApplyIntentFlavorDefaults(SearchIntent eSearchIntent, int (&aiFlavor)[STacticalFlavors::NUM_SLOTS],
