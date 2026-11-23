@@ -11217,6 +11217,7 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 
 	childPositions.clear();
 	tactPlotLookup.clear();
+	pRootTactPlotSlots = NULL;
 	tactPlots.clear();
 	availableUnits.clear();
 	notQuiteFinishedUnits.clear();
@@ -11283,6 +11284,7 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 
 	//copied from parent, modified when addAssignment is called
 	tactPlotLookup.inheritFrom(parent.tactPlotLookup.read());
+	pRootTactPlotSlots = parent.pRootTactPlotSlots;
 	tactPlots.inheritFrom(parent.tactPlots.read());
 	assignedMoves.inheritFrom(parent.assignedMoves.read());
 	availableUnits.inheritFrom(parent.availableUnits.read());
@@ -12060,6 +12062,10 @@ struct TacticalPosition_EqualRangeComparison
 
 CvTacticalPlot* CvTacticalPosition::findTactPlotMutable(int iPlotIndex)
 {
+	const unsigned char slot = findRootTactPlotSlot(iPlotIndex);
+	if (slot != UCHAR_MAX)
+		return &tactPlots.write()[slot];
+
 	if (iPlotIndex >= 0 && iPlotIndex < USHRT_MAX)
 	{
 		const TactPlotIndexByPlotIndex& tactPlotLookup_r = tactPlotLookup.read();
@@ -12074,6 +12080,10 @@ CvTacticalPlot* CvTacticalPosition::findTactPlotMutable(int iPlotIndex)
 
 const CvTacticalPlot* CvTacticalPosition::findTactPlot(int iPlotIndex) const
 {
+	const unsigned char slot = findRootTactPlotSlot(iPlotIndex);
+	if (slot != UCHAR_MAX)
+		return &tactPlots.read()[slot];
+
 	if (iPlotIndex >= 0 && iPlotIndex < USHRT_MAX)
 	{
 		const TactPlotIndexByPlotIndex& tactPlotLookup_r = tactPlotLookup.read();
@@ -14049,6 +14059,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 			}
 		}
 	}
+
+	gTactPosStorage.buildRootTactPlotSlots(*initialPosition, GC.getMap().numPlots());
 
 	// Vox Deorum: a loaded ship's danger counts all its cargo, including aircraft that already acted or were not
 	// recruited. Recorded before any scoring, and again once the cap has dropped units.

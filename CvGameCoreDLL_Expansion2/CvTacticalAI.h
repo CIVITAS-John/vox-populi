@@ -1485,6 +1485,8 @@ protected:
 	typedef vector<pair<unsigned short, unsigned char>> TactPlotIndexByPlotIndex; //save some bits
 	SCoWField<TactPlotIndexByPlotIndex> tactPlotLookup; //map from plot index to storage index
 	SCoWField<vector<CvTacticalPlot>> tactPlots; //storage for tactical plots (complete, mostly redundant with parent)
+	//root plots keep their storage slots in every child, so their lookups skip the binary search
+	const vector<unsigned char>* pRootTactPlotSlots;
 
 	SCoWField<PlotIndexContainer> enemyPlots; //plot indices for enemy units, to be checked for potential attacks
 	SCoWField<SUnitIDValueContainer> unitDamageDealt; //how much damage we've dealt to enemy units, to be included in danger calculations
@@ -1531,6 +1533,13 @@ protected:
 	void updateMoveAndAttackPlotsForUnit(SUnitStats unit);
 	CvTacticalPlot* findTactPlotMutable(int iPlotIndex);
 	const CvTacticalPlot* findTactPlot(int iPlotIndex) const;
+	//returns the root's storage slot for a plot, UCHAR_MAX when the root has no slot for it
+	unsigned char findRootTactPlotSlot(int iPlotIndex) const
+	{
+		if (!pRootTactPlotSlots || (size_t)iPlotIndex >= pRootTactPlotSlots->size())
+			return UCHAR_MAX;
+		return (*pRootTactPlotSlots)[iPlotIndex];
+	}
 	// Vox Deorum: the unit lists that hold the aircraft the search tracks, in lifecycle order
 	void getTrackedUnitLists(const vector<SUnitStats>* lists[3]) const
 	{
@@ -1543,6 +1552,7 @@ protected:
 	{
 		tactPlotLookup.wipe();
 		tactPlots.wipe();
+		pRootTactPlotSlots = NULL;
 		enemyPlots.wipe();
 		unitDamageDealt.wipe();
 		uncertainDamage.wipe();
@@ -1875,12 +1885,26 @@ public:
 	// Vox Deorum: the planned-board index of the held position, bound by its first record
 	CvPlannedPlacement& getHeldPlacement() { return heldPlacement; }
 
+	//gives the root's plots their storage slots in every child, so their lookups skip the binary search
+	void buildRootTactPlotSlots(CvTacticalPosition& root, int iMapPlots)
+	{
+		if (iMapPlots <= 0 || iMapPlots > USHRT_MAX)
+			return;
+
+		rootTactPlotSlots.assign(iMapPlots, UCHAR_MAX);
+		const CvTacticalPosition::TactPlotIndexByPlotIndex& lookup = root.tactPlotLookup.read();
+		for (CvTacticalPosition::TactPlotIndexByPlotIndex::const_iterator it = lookup.begin(); it != lookup.end(); ++it)
+			rootTactPlotSlots[it->first] = it->second;
+		root.pRootTactPlotSlots = &rootTactPlotSlots;
+	}
+
 	// frees the state only an open position needs, once its children exist. Later
 	// steps read just the assignments and freed plots of a non-root ancestor, so its plots, units,
 	// plot scores and, without the air search, damage go. Most of the pool is expanded positions, so this cuts search
 	// memory, and the plot and unit buffers return to the spare lists for new children.
 	void releaseScratch(CvTacticalPosition* pPos)
 	{
+		pPos->pRootTactPlotSlots = NULL;
 		recycleUnlessBorrowed(pPos, &CvTacticalPosition::tactPlots, spareTactPlots);
 		recycleUnlessBorrowed(pPos, &CvTacticalPosition::availableUnits, spareUnitLists);
 		recycleUnlessBorrowed(pPos, &CvTacticalPosition::notQuiteFinishedUnits, spareUnitLists);
@@ -1955,6 +1979,9 @@ protected:
 	}
 
 private:
+	//root plot slots shared with every child position of the current search
+	vector<unsigned char> rootTactPlotSlots;
+
 	//hide copy constructor and assignment operator
 	CvTactPosStorage(const CvTactPosStorage& other);
 	const CvTactPosStorage& operator=(const CvTactPosStorage& rhs);
