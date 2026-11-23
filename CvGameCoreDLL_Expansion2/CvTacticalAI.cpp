@@ -6843,12 +6843,16 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, c
 //helper function for unit threat calculation
 int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefender, const CvUnit* pAttacker, 
 				const CvPlot* pDefenderPlot, const CvPlot* pAttackerPlot, int& iAttackerDamage, 
-				bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraDefenderDamage, bool bQuickAndDirty, const SCombatNeighborhood* pNeighborhood)
+				bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraDefenderDamage, bool bQuickAndDirty, const SCombatNeighborhood* pNeighborhood, int* piTileDamage)
 {
+	// Vox Deorum: report separately the damage that applies to the whole target tile.
+	if (piTileDamage)
+		*piTileDamage = 0;
 	if (!pAttacker || !pDefender || pDefender->isDelayedDeath() || pDefender->IsDead() || pAttacker->isDelayedDeath() || pAttacker->IsDead())
 		return 0;
 		
 	int iDamage = 0;
+	int iTileDamage = 0;
 	int iUnusedReferenceVariable = 0;
 	if (pAttacker->IsCanAttackRanged())
 	{
@@ -6869,7 +6873,7 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 
 			iDamage += pAttacker->GetRangeCombatDamage(pDefender, NULL, 0, iUnusedReferenceVariable, false, iExtraSelfDamage, iExtraDefenderDamage,
 							pDefenderPlot, pAttackerPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, pNeighborhood);
-			iDamage += (pAttacker->hasMoved() || pAttacker->plot() != pAttackerPlot) ? 0 : pAttacker->GetTileDamageIfNotMoved();
+			iTileDamage = (pAttacker->hasMoved() || pAttacker->plot() != pAttackerPlot) ? 0 : pAttacker->GetTileDamageIfNotMoved();
 			iAttackerDamage = 0;
 		}
 	}
@@ -6900,11 +6904,13 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 				iExtraSelfDamage,
 				iExtraDefenderDamage + iDamage);
 
-			iDamage += (pAttacker->hasMoved() || pAttacker->plot() != pAttackerPlot) ? 0 : pAttacker->GetTileDamageIfNotMoved();
+			iTileDamage = (pAttacker->hasMoved() || pAttacker->plot() != pAttackerPlot) ? 0 : pAttacker->GetTileDamageIfNotMoved();
 		}
 	}
 
-	return iDamage;
+	if (piTileDamage)
+		*piTileDamage = iTileDamage;
+	return iDamage + iTileDamage;
 }
 
 // Vox Deorum: the cap on search participants. With the air search land, sea and air participants share one cap,

@@ -138,13 +138,17 @@ struct SOperationalZoneFlavors
 void BlendZoneFlavors(const vector<SOperationalZoneFlavors>& zones, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
 	const int (&aiKindRow)[STacticalFlavors::NUM_SLOTS], int (&aiFlavors)[STacticalFlavors::NUM_SLOTS], int& iRepresentativeZone);
 
-// One threat's part of a unit's danger: an enemy unit or city and the damage it adds
+// One threat's damage, split between the selected defender and the tile's other occupants.
 struct SOperationalThreatDamage
 {
 	PlayerTypes eOwner;
 	int iID;
 	bool bCity;
-	int iDamage;
+	int iDirectDamage;
+	int iAreaDamage;
+
+	// Returns this victim's damage from the threat after applying cover.
+	int TotalDamage() const { return iDirectDamage + iAreaDamage; }
 };
 
 // Vox Deorum: one city's standard danger result and its per-threat contributions for the current estimate pass.
@@ -356,6 +360,17 @@ struct SOperationalCandidate
 	SOperationalCandidate() : iUnitID(-1), fStrength(0.0), iTravelTurns(1), iJoinTurns(1), bCapturer(false), bHeldGarrison(false) {}
 };
 
+// Vox Deorum: a Reinforce verdict; a competing target also records the plot that blocked the march.
+struct SOperationalReinforceReach
+{
+	enum Result { PASSED, INITIAL_REACH, MARCH, COMPETING_TARGET };
+	Result eResult;
+	int iCompetingPlot;
+	// Stores the failed gate and, when applicable, the competing target.
+	SOperationalReinforceReach(Result eResult_ = PASSED, int iCompetingPlot_ = -1)
+		: eResult(eResult_), iCompetingPlot(iCompetingPlot_) {}
+};
+
 // One battlefield's Reinforce: strength tallies, the nearest-first selection, its score and the turn's rejections
 struct SOperationalReinforce
 {
@@ -373,12 +388,23 @@ struct SOperationalReinforce
 	double fSwing;               // s+ - s
 	set<pair<int, int> > countedUnits;   // the enemy units counted in T, by (owner, ID)
 	set<pair<int, int> > countedCities;  // the enemy cities counted in T, by (owner, ID)
-	set<int> rejected;           // units that failed a reach check this turn
+	map<int, SOperationalReinforceReach> rejected;
 	bool bChecked;               // the selection passed its reach checks since the last command
 
 	// Creates an empty Reinforce.
 	SOperationalReinforce() : fLocal(0.0), fEnemy(0.0), fNeed(0.0), fSelectedStrength(0.0), fHelp(0.0), fRoleHelp(0.0), iRoleUnit(-1),
 		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), bChecked(false) {}
+};
+
+// Vox Deorum: one checked Withdraw recruit, with its city and first-turn stop.
+struct SOperationalMarch
+{
+	int iUnitID;
+	int iDestination;
+	int iStop;
+
+	// Orders marches by recruit ID so readiness and admission use the same tie break.
+	bool operator<(const SOperationalMarch& other) const { return iUnitID < other.iUnitID; }
 };
 
 // The turns a unit needs for a plain distance at its moves per turn: max(1, ceil(distance / moves)).
@@ -700,12 +726,20 @@ struct SOperationalBoard
 	map<int, int> ourUnitPlots;               // our units by ID, and their plots
 };
 
+// Vox Deorum: both ends of a friendly plot change; -1 means the unit was absent on that board.
+struct SOperationalFriendlyMove
+{
+	int iUnitID;
+	int iFrom;
+	int iTo;
+};
+
 // What one command changed, from the board diff
 struct SOperationalChanges
 {
 	vector<int> vEnemyPlots;        // plots where a visible enemy unit died, left, arrived or was revealed
 	vector<int> vCapturedPlots;     // city battlefields whose owner changed
-	vector<int> vAvailableUnitIDs;  // our units that moved and can still be used
+	vector<SOperationalFriendlyMove> vFriendlyMoves;
 };
 
 // The result of one readiness check: a pass, or the first condition that failed
@@ -718,8 +752,8 @@ enum eOperationalCheckResult
 	OPERATIONAL_CHECK_NO_CAPTURER,  // the city is at 1 HP or less and no recruit can capture it
 	OPERATIONAL_CHECK_NO_DEFENDERS, // own city: no local defender and no endangered recruit can still act
 	OPERATIONAL_CHECK_NO_NEARBY_ENEMY, // own city: no visible enemy within 5 plots and no endangered recruit
-	OPERATIONAL_CHECK_NO_REACHABLE,    // Reinforce: no selected unit passed its reach checks
-	OPERATIONAL_CHECK_REDUCED          // Vox Deorum: forecast or reinforcement readiness lowered the offer estimate
+	OPERATIONAL_CHECK_NO_REACHABLE,    // Reinforce has no reachable recruit, or Withdraw has no march worth taking
+	OPERATIONAL_CHECK_REDUCED         // Vox Deorum: readiness lowered a viable offer's estimate
 };
 
 // Vox Deorum: one offer identity, written once when its battlefield enters the pass.
@@ -872,6 +906,10 @@ public:
 	// Rebuilds each enemy unit's and city's share of our units' exposure, our endangered units, each city's approach
 	// list and each battlefield's bCanAttackOurUnits.
 	static void BuildThreats(SOperationalTurn& turn);
+	// Vox Deorum: allocates the threats on one tile against its live or projected occupants.
+	static void AllocatePlotExposure(PlayerTypes ePlayer, const CvPlot& kPlot, vector<SPlacedUnit>& occupants, int iRisk,
+		map<pair<int, int>, SOperationalThreatExposure>& units, map<pair<int, int>, SOperationalThreatExposure>& cities,
+		map<int, int>* pEndangered);
 	// Vox Deorum: a threat's largest allocations up to its attacks per turn, leaving out the victims in pExclude when set.
 	static double CappedExposure(const SOperationalThreatExposure& threat, const set<int>* pExclude);
 	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground,
@@ -907,9 +945,8 @@ public:
 	// Sorted by ascending ID. Our own cities have no recruits.
 	static void GatherWithdrawRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		const SOperationalLocalSet& local, vector<CvUnit*>& vRecruits);
-	// Vox Deorum: X, the exposure a retreat removes: each threat's capped exposure minus its capped exposure over the
-	// victims that stay.
-	static double RemovableExposure(const SOperationalTurn& turn, const vector<CvUnit*>& vRecruits);
+	// Vox Deorum: the change in capped exposure; the opening estimate omits the recruits without projecting stops.
+	static double WithdrawExposureSaved(const SOperationalTurn& turn, const vector<SOperationalMarch>& marches, bool bProjectStops);
 	// Vox Deorum: the Withdraw priority from the removable exposure, the risk weight and the share help does not cover.
 	static void EstimateWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 		SOperationalBattlefield& field);
@@ -1021,29 +1058,20 @@ public:
 	// safe enough first stop. Failures join the turn's rejections and the selection is made again until every selected
 	// unit passed. A selection checked since the last command passes at once.
 	static eOperationalCheckResult CheckReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
-	// Vox Deorum: the Withdraw's readiness check, with no orders issued: find the destination of each recruit domain from
-	// a plot that suits it, drop recruits that cannot leave from the estimate, then require one endangered recruit whose
-	// first stop passes the Withdraw march rule toward its destination.
-	static eOperationalCheckResult CheckWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
-	// True when the positioning copy's path move can take the unit toward the target this turn: a path within recruit
-	// range with safe embark, and danger at its first-turn stop within native's limit. With bWithdraw, a stop safer than
-	// both the current plot and the unit's hit points also passes. Generates the unit's path.
-	static bool CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false);
+	// Vox Deorum: finds destinations by domain, then scores the available first-turn stops together.
+	static eOperationalCheckResult CheckWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field,
+		vector<SOperationalMarch>& marches);
+	// Vox Deorum: returns the first safe stop; a recruit already in reach may hold for a Reinforce search.
+	static CvPlot* CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false);
 	// The positioning copy's path flags for a unit marching toward the target.
-	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget);
+	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw = false);
 	// Plots within the search's near distance of the target for one domain, measured as the search measures it.
 	static ReachablePlots SearchReachPlots(PlayerTypes ePlayer, CvPlot* pTarget, DomainTypes eDomain);
-	// Vox Deorum: the closest friendly city by path in one domain from the given start plot, within recruit range, or -1.
+	// Vox Deorum: picks a reachable friendly city for one domain, preferring shelter on routes of similar length.
 	static int WithdrawDestination(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kStart, DomainTypes eDomain);
-	// Runs the checked Reinforce selection through the positioning copy with the Reinforce kind row. Fills the record's
-	// selection, search flag and whether a selected unit moved. The command loop closes the battlefield's open Withdraw
-	// only when that move flag is set.
-	static void ExecuteReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
-		SOperationalCommandRecord& record);
-	// Vox Deorum: runs the Withdraw through the positioning copy once per domain with a destination, after clearing the
-	// processed flags of recruits an earlier command spent and restoring them on every exit.
-	static void ExecuteWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
-		SOperationalCommandRecord& record);
+	// Vox Deorum: admits a checked march once, then positions the admitted units in groups by destination.
+	static void ExecuteMarch(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		const vector<SOperationalMarch>& withdraw, SOperationalCommandRecord& record);
 
 	// The fight row of the overlap rule: an enemy-unit fight that ran its search retires an unexecuted enemy-unit fight
 	// within 2 plots of its target in a compatible zone, unless that fight's target can attack our units or stands near
@@ -1055,8 +1083,9 @@ public:
 	// Records the board facts the wake rule compares before and after a command.
 	static void SnapshotBoard(const SOperationalTurn& turn, SOperationalBoard& board);
 	// Compares two snapshots into the changes a command made.
-	static void DiffBoard(PlayerTypes ePlayer, const SOperationalBoard& before, const SOperationalBoard& after,
-		SOperationalChanges& changes);
+	static void DiffBoard(const SOperationalBoard& before, const SOperationalBoard& after, SOperationalChanges& changes);
+	// Vox Deorum: drops temporary march and competing-target failures affected by the last command.
+	static void RetryReinforce(const CvPlot& kTarget, int iRange, const SOperationalChanges& changes, SOperationalReinforce& reinforce);
 	// True when a change can turn the waiting fight's failed check into a pass: an enemy change or capture within
 	// striking distance of its target, or a unit of ours that moved within its own striking distance and is available.
 	// An own-city fight wakes on an enemy change within 5 plots, an available unit of ours now within its strike reach, or
@@ -1089,7 +1118,7 @@ public:
 	static bool AdmitParticipants(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		vector<CvUnit*>& vUnits, SOperationalCommandRecord& record);
 	// Vox Deorum: the common Reinforce reach test for checked proposals and provider additions.
-	static bool ReinforceReach(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget,
+	static SOperationalReinforceReach ReinforceReach(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget,
 		const ReachablePlots& relevantPlots, map<int, ReachablePlots>& searchPlots);
 	// Vox Deorum: recomputes admitted strength, help, swing and capture role without changing command priority.
 	static void AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, bool bNeedCapturer,

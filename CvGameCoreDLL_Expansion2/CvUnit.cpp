@@ -4382,7 +4382,8 @@ void CvUnit::DoLocationPromotions(bool bSpawn, CvPlot* pOldPlot, CvPlot* pNewPlo
 	}
 }
 //	--------------------------------------------------------------------------------
-bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker) const
+bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker,
+	const SPlacedUnit* pPlaced, const SPlacedUnit* pPlacedDefender) const
 {
 	VALIDATE_OBJECT();
 	if(pDefender == NULL)
@@ -4412,12 +4413,16 @@ bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttack
 	}
 
 	// Don't let embarked units be best
-	if(isEmbarked() && !pDefender->isEmbarked())
+	// Vox Deorum: use the supplied tile and embarkation when comparing projected defenders.
+	const CvPlot* pAtPlot = pPlaced ? pPlaced->pPlot : plot();
+	const CvPlot* pAttackerPlot = pAttacker ? pAttacker->plot() : NULL;
+	if((pPlaced ? pPlaced->bEmbarked : isEmbarked()) &&
+		!(pPlacedDefender ? pPlacedDefender->bEmbarked : pDefender->isEmbarked()))
 	{
 		return false;
 	}
 
-	int iOurDefense = GetMaxDefenseStrength(plot(), pAttacker, pAttacker ? pAttacker->plot() : NULL, false, true);
+	int iOurDefense = GetMaxDefenseStrength(pAtPlot, pAttacker, pAttackerPlot, false, true, pPlaced ? pPlaced->iExtraDamage : 0);
 	if(::isWorldUnitClass(getUnitClassType()))
 	{
 		iOurDefense /= 2;
@@ -4434,14 +4439,15 @@ bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttack
 
 	iOurDefense /= (getCargo() + 1);
 
-	int iTheirDefense = pDefender->GetMaxDefenseStrength(plot(), pAttacker, pAttacker ? pAttacker->plot() : NULL, false, true);
+	int iTheirDefense = pDefender->GetMaxDefenseStrength(pAtPlot, pAttacker, pAttackerPlot, false, true,
+		pPlacedDefender ? pPlacedDefender->iExtraDamage : 0);
 	if(::isWorldUnitClass(pDefender->getUnitClassType()))
 	{
 		iTheirDefense /= 2;
 	}
 
 	//special check for naval garrison in city
-	if (pDefender->getDomainType()==DOMAIN_SEA && !pDefender->plot()->isWater())
+	if (pDefender->getDomainType()==DOMAIN_SEA && !(pPlacedDefender ? pPlacedDefender->pPlot : pDefender->plot())->isWater())
 	{
 		iTheirDefense /= 2;
 	}

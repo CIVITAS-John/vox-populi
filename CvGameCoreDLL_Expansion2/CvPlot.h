@@ -180,7 +180,8 @@ public:
 	int getBuildTurnsLeft(BuildTypes eBuild, PlayerTypes ePlayer, int iNowExtra = 0, int iThenExtra = 0) const;
 	int getFeatureProduction(BuildTypes eBuild, PlayerTypes ePlayer, CvCity** ppCity) const;
 
-	CvUnit* getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer = NO_PLAYER, const CvUnit* pAttacker = NULL, bool bTestAtWar = false, bool bIgnoreVisibility = false, bool bTestCanMove = false, bool bNoncombatAllowed = false, const CvUnit* pIgnoreUnit = NULL) const;
+	// Vox Deorum: projected occupants can use the same selection as the live plot.
+	CvUnit* getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer = NO_PLAYER, const CvUnit* pAttacker = NULL, bool bTestAtWar = false, bool bIgnoreVisibility = false, bool bTestCanMove = false, bool bNoncombatAllowed = false, const CvUnit* pIgnoreUnit = NULL, const std::vector<struct SPlacedUnit>* pPlacedUnits = NULL) const;
 	CvUnit* getBestGarrison(PlayerTypes eOwner) const;
 	CvUnit* getSelectedUnit() const;
 	int getUnitPower(PlayerTypes eOwner = NO_PLAYER) const;
@@ -287,6 +288,8 @@ public:
 	bool isCity() const;
 	bool isEnemyCity(const CvUnit& kUnit) const;
 	bool isFriendlyCity(const CvUnit& kUnit) const;
+	// Vox Deorum: tests city sanctuary for a team before a particular unit is chosen.
+	bool isFriendlyCityForTeam(TeamTypes eTeam) const;
 	bool isCoastalCityOrPassableImprovement(PlayerTypes ePlayer, bool bCityMustBeFriendly, bool bImprovementMustBeFriendly) const;
 	bool IsFriendlyTerritory(PlayerTypes ePlayer) const;
 

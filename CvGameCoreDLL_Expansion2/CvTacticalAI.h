@@ -2103,10 +2103,11 @@ namespace TacticalAIHelpers
 	bool IsCloseToContestedBorder(CvPlayer* pPlayer, CvPlot* pPlot);
 
 	std::vector<CvPlot*> GetPlotsForRangedAttack(const CvPlot* pTarget, const CvUnit* pUnit, int iRange, bool bCheckOccupied);
-	// Vox Deorum: a neighborhood record, if given, supplies every term that depends on other units (see SCombatNeighborhood)
+	// Vox Deorum: an optional neighborhood supplies the terms that depend on other units. The reported tile damage
+	// is already included in the returned total.
 	int GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefender, const CvUnit* pAttacker, const CvPlot* pDefenderPlot, const CvPlot* pAttackerPlot, int& iAttackerDamage, 
 									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraDefenderDamage=0, bool bQuickAndDirty = false,
-									const SCombatNeighborhood* pNeighborhood = NULL);
+									const SCombatNeighborhood* pNeighborhood = NULL, int* piTileDamage = NULL);
 	int GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, int& iAttackerDamage, int& iGarrisonDamage,
 									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraCityDamage=0, int iExtraGarrisonDamage=0, bool bQuickAndDirty = false,
 									bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL, const SCombatNeighborhood* pNeighborhood = NULL);

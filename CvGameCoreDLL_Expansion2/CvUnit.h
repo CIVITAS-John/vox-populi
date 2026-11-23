@@ -163,13 +163,14 @@ struct SStrengthModifierInput
 // Vox Deorum: a unit where a placement puts it
 struct SPlacedUnit
 {
-	SPlacedUnit() : pUnit(NULL), pPlot(NULL), iMoves(0), bEmbarked(false) {}
-	SPlacedUnit(const CvUnit* pUnit_, const CvPlot* pPlot_, int iMoves_, bool bEmbarked_) : pUnit(pUnit_), pPlot(pPlot_), iMoves(iMoves_), bEmbarked(bEmbarked_) {}
+	SPlacedUnit() : pUnit(NULL), pPlot(NULL), iMoves(0), bEmbarked(false), iExtraDamage(0) {}
+	SPlacedUnit(const CvUnit* pUnit_, const CvPlot* pPlot_, int iMoves_, bool bEmbarked_) : pUnit(pUnit_), pPlot(pPlot_), iMoves(iMoves_), bEmbarked(bEmbarked_), iExtraDamage(0) {}
 
 	const CvUnit* pUnit;
 	const CvPlot* pPlot;
 	int iMoves;
 	bool bEmbarked;
+	int iExtraDamage;  // damage already assigned before choosing the next defender
 };
 
 // Vox Deorum: where units stand when a neighborhood record is built. The real board puts every unit where it is. The
@@ -720,7 +721,9 @@ public:
 
 	void DoLocationPromotions(bool bSpawn, CvPlot* pOldPlot = NULL, CvPlot* pNewPlot = NULL);
 
-	bool isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker) const;
+	// Vox Deorum: compares live defenders or the same units in a supplied placement.
+	bool isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker,
+		const SPlacedUnit* pPlaced = NULL, const SPlacedUnit* pPlacedDefender = NULL) const;
 
 	bool canDoCommand(CommandTypes eCommand, int iData1, int iData2, bool bTestVisible = false, bool bTestBusy = true) const;
 	void doCommand(CommandTypes eCommand, int iData1, int iData2);

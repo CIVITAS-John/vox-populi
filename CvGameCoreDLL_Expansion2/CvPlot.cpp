@@ -3589,27 +3589,29 @@ CvUnit* CvPlot::getBestGarrison(PlayerTypes eOwner) const
 }
 
 //	--------------------------------------------------------------------------------
-CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer, const CvUnit* pAttacker, bool bTestAtWar, bool bIgnoreVisibility, bool bTestCanMove, bool bNoncombatAllowed, const CvUnit* pIgnoreUnit) const
+CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer, const CvUnit* pAttacker, bool bTestAtWar, bool bIgnoreVisibility, bool bTestCanMove, bool bNoncombatAllowed, const CvUnit* pIgnoreUnit, const std::vector<SPlacedUnit>* pPlacedUnits) const
 {
-	const IDInfo* pUnitNode = headUnitNode();
-	CvUnit* pLoopUnit = NULL;
+	const IDInfo* pUnitNode = pPlacedUnits ? NULL : headUnitNode();
 	CvUnit* pBestUnit = NULL;
+	const SPlacedUnit* pBestPlaced = NULL;
 
 	//early out
 	if (eAttackingPlayer != NO_PLAYER && !bIgnoreVisibility && !isVisible(GET_PLAYER(eAttackingPlayer).getTeam()))
 		return NULL;
 
-	while(pUnitNode != NULL)
+	// Vox Deorum: read the supplied occupants in place of the plot list, then run the common filters and ranking.
+	for (size_t i = 0; pPlacedUnits ? i < pPlacedUnits->size() : pUnitNode != NULL; i++)
 	{
 		//for performance, avoid looking up unit pointers if we can
-		if ((eOwner != NO_PLAYER && pUnitNode->eOwner != eOwner) || (eAttackingPlayer != NO_PLAYER && pUnitNode->eOwner == eAttackingPlayer))
-		{
+		const SPlacedUnit* pPlaced = pPlacedUnits ? &(*pPlacedUnits)[i] : NULL;
+		const IDInfo& kID = pPlaced ? pPlaced->pUnit->GetIDInfo() : *pUnitNode;
+		if (pUnitNode)
 			pUnitNode = nextUnitNode(pUnitNode);
+		if ((eOwner != NO_PLAYER && kID.eOwner != eOwner) || (eAttackingPlayer != NO_PLAYER && kID.eOwner == eAttackingPlayer))
 			continue;
-		}
-
-		pLoopUnit = GetPlayerUnit(*pUnitNode);
-		pUnitNode = nextUnitNode(pUnitNode);
+		CvUnit* pLoopUnit = pPlaced ? const_cast<CvUnit*>(pPlaced->pUnit) : GetPlayerUnit(kID);
+		if (pPlaced && pPlaced->iExtraDamage >= pLoopUnit->GetCurrHitPoints())
+			continue;
 
 		if (pLoopUnit && pLoopUnit == pIgnoreUnit)
 			continue;
@@ -3622,9 +3624,10 @@ CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer
 				{
 					if(!bTestCanMove || (pLoopUnit->canMove() && !(pLoopUnit->isCargo())))
 					{
-						if(pLoopUnit->isBetterDefenderThan(pBestUnit, pAttacker))
+						if(pLoopUnit->isBetterDefenderThan(pBestUnit, pAttacker, pPlaced, pBestPlaced))
 						{
 							pBestUnit = pLoopUnit;
+							pBestPlaced = pPlaced;
 						}
 					}
 				}
@@ -4869,29 +4872,16 @@ bool CvPlot::isEnemyCity(const CvUnit& kUnit) const
 //	--------------------------------------------------------------------------------
 bool CvPlot::isFriendlyCity(const CvUnit& kUnit) const
 {
-	if(!isCity())
-	{
+	if (!isCity() || getTeam() == NO_TEAM)
 		return false;
-	}
+	return isFriendlyCityForTeam(GET_PLAYER(kUnit.getCombatOwner(getTeam(), *this)).getTeam());
+}
 
-	TeamTypes ePlotTeam = getTeam();
-
-	if(NO_TEAM != ePlotTeam)
-	{
-		TeamTypes eTeam = GET_PLAYER(kUnit.getCombatOwner(ePlotTeam, *this)).getTeam();
-
-		if(eTeam == ePlotTeam)
-		{
-			return true;
-		}
-
-		if(GET_TEAM(ePlotTeam).IsAllowsOpenBordersToTeam(eTeam))
-		{
-			return true;
-		}
-	}
-
-	return false;
+// Vox Deorum: the city shelter rule used by unit danger, tactical searches and retreat destinations.
+bool CvPlot::isFriendlyCityForTeam(TeamTypes eTeam) const
+{
+	const TeamTypes ePlotTeam = getTeam();
+	return isCity() && ePlotTeam != NO_TEAM && (ePlotTeam == eTeam || GET_TEAM(ePlotTeam).IsAllowsOpenBordersToTeam(eTeam));
 }
 
 bool CvPlot::isFortification(TeamTypes eOccupyingTeam) const
