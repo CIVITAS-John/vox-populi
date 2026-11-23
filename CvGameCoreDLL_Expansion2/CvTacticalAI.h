@@ -1163,12 +1163,36 @@ struct AttackResult
 
 class CDangerCache {
 public:
+	CDangerCache() : iGeneration(1), iSize(0) {}
+
 	void clear();
 	void storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger);
 	bool findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const;
-protected:
+private:
+	struct Slot
+	{
+		DefendKey key;
+		int iDanger;
+		unsigned iGeneration;
+
+		Slot() : iDanger(0), iGeneration(0)
+		{
+			key.iDefenderId = 0;
+			key.iPlotId = 0;
+			key.iPrevDamage = 0;
+			key.iDamageHash = 0;
+		}
+	};
+
+	//returns the matching live slot or the first empty slot on its probe chain
+	size_t Probe(const DefendKey& key) const;
+	//rebuilds the table at a new power-of-two size, reinserting only live entries
+	void Resize(size_t iNewSize);
+
 	//key is defender id, plot, previous damage and a hash of unit damage dealt
-	std::tr1::unordered_map<DefendKey, int, DefendKeyHash> dangerStats;
+	std::vector<Slot> slots;
+	unsigned iGeneration; //slots carrying this stamp are live
+	size_t iSize; //number of live slots
 };
 
 class CAttackCache {

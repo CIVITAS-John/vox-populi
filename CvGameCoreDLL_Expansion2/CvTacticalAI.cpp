@@ -7161,9 +7161,42 @@ CvTacticalPlot::eTactPlotDomain DomainForUnit(const CvUnit* pUnit)
 	}
 }
 
+size_t CDangerCache::Probe(const DefendKey& key) const
+{
+	DefendKeyHash hash;
+	size_t iMask = slots.size() - 1;
+	size_t i = hash(key) & iMask;
+
+	//a stale slot is empty in the current generation, so the probe stops there
+	while (slots[i].iGeneration == iGeneration && !(slots[i].key == key))
+		i = (i + 1) & iMask;
+
+	return i;
+}
+
+void CDangerCache::Resize(size_t iNewSize)
+{
+	std::vector<Slot> oldSlots(iNewSize);
+	oldSlots.swap(slots);
+
+	for (size_t i = 0; i < oldSlots.size(); ++i)
+	{
+		if (oldSlots[i].iGeneration == iGeneration)
+			slots[Probe(oldSlots[i].key)] = oldSlots[i];
+	}
+}
+
 void CDangerCache::clear()
 {
-	dangerStats.clear();
+	//older generations become stale; only a wrap needs to visit the slots
+	++iGeneration;
+	if (iGeneration == 0)
+	{
+		for (size_t i = 0; i < slots.size(); ++i)
+			slots[i].iGeneration = 0;
+		iGeneration = 1;
+	}
+	iSize = 0;
 }
 
 void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger)
@@ -7174,7 +7207,27 @@ void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDama
 	key.iPrevDamage = iPrevDamage;
 	key.iDamageHash = unitDamageDealt.GetHash();
 
-	dangerStats[key] = iDanger;
+	if (slots.empty())
+		Resize(64);
+
+	size_t i = Probe(key);
+	if (slots[i].iGeneration == iGeneration)
+	{
+		slots[i].iDanger = iDanger;
+		return;
+	}
+
+	//grow before the new entry reaches 75% load
+	if (iSize + 1 >= slots.size() - slots.size() / 4)
+	{
+		Resize(slots.size() * 2);
+		i = Probe(key);
+	}
+
+	slots[i].key = key;
+	slots[i].iDanger = iDanger;
+	slots[i].iGeneration = iGeneration;
+	++iSize;
 }
 
 bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const
@@ -7185,14 +7238,15 @@ bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamag
 	key.iPrevDamage = iPrevDamage;
 	key.iDamageHash = unitDamageDealt.GetHash();
 
-	std::tr1::unordered_map<DefendKey, int, DefendKeyHash>::const_iterator it =
-		dangerStats.find(key);
-
-	if (it != dangerStats.end())
+	if (!slots.empty())
 	{
-		iDanger = it->second;
-		gDangerCacheHit++;
-		return true;
+		size_t i = Probe(key);
+		if (slots[i].iGeneration == iGeneration)
+		{
+			iDanger = slots[i].iDanger;
+			gDangerCacheHit++;
+			return true;
+		}
 	}
 
 	iDanger = 0;
