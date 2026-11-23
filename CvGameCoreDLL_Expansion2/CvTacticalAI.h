@@ -1267,7 +1267,6 @@ protected:
 	SCoWField<map<int, short>> plotScores;
 	int iDamageDelta; //damage dealt - damage received
 	int iBonusScore; // additive
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	int iTotalScore; // weighted damage and bonus plus the stored plot scores
 	// Vox Deorum: final plot values minus their stored values, applied only at completion.
 	int iFinalPlotAdjustment;
@@ -1412,7 +1411,6 @@ public:
 
 	int getGeneration() const { return iGeneration; }
 	PlayerTypes getPlayer() const { return ePlayer; }
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	// Vox Deorum: include final positioning and trade gain in the cached position score.
 	int getScoreTotal() const { return iTotalScore + iFinalPlotAdjustment + iTradeGain; }
 	int getScoreLastRound() const { return iScoreOverParent; }
@@ -1509,7 +1507,7 @@ protected:
 	typedef vector<pair<unsigned short, unsigned char>> TactPlotIndexByPlotIndex; //save some bits
 	SCoWField<TactPlotIndexByPlotIndex> tactPlotLookup; //map from plot index to storage index
 	SCoWField<vector<CvTacticalPlot>> tactPlots; //storage for tactical plots (complete, mostly redundant with parent)
-	//root plots keep their storage slots in every child, so their lookups skip the binary search
+	//root plots keep their storage slots in every child
 	const vector<unsigned char>* pRootTactPlotSlots;
 
 	SCoWField<PlotIndexContainer> enemyPlots; //plot indices for enemy units, to be checked for potential attacks
@@ -1557,7 +1555,7 @@ protected:
 	void updateMoveAndAttackPlotsForUnit(SUnitStats unit);
 	CvTacticalPlot* findTactPlotMutable(int iPlotIndex);
 	const CvTacticalPlot* findTactPlot(int iPlotIndex) const;
-	//returns the root's storage slot for a plot, UCHAR_MAX when the root has no slot for it
+	//returns the root's storage slot for a plot, or UCHAR_MAX if the root has no slot for it
 	unsigned char findRootTactPlotSlot(int iPlotIndex) const
 	{
 		if (!pRootTactPlotSlots || (size_t)iPlotIndex >= pRootTactPlotSlots->size())
@@ -1909,7 +1907,7 @@ public:
 	// Vox Deorum: the planned-board index of the held position, bound by its first record
 	CvPlannedPlacement& getHeldPlacement() { return heldPlacement; }
 
-	//gives the root's plots their storage slots in every child, so their lookups skip the binary search
+	//builds the shared lookup once the root has added its initial plots
 	void buildRootTactPlotSlots(CvTacticalPosition& root, int iMapPlots)
 	{
 		if (iMapPlots <= 0 || iMapPlots > USHRT_MAX)

@@ -3452,6 +3452,30 @@ void CvTacticalAI::ExecuteAirSweep(CvPlot* pTargetPlot)
 	}
 }
 
+//an executed move can delete one of our units at once: an enemy that falls back after our attack onto a lone civilian
+//of ours enters its plot, and CvUnit::setXY kills the civilian with kill(false). so keep IDs, not pointers, across
+//executed moves, and look the units up again afterwards
+vector<int> GetUnitIDs(const vector<CvUnit*>& vUnits)
+{
+	vector<int> vIDs;
+	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
+		if (*it)
+			vIDs.push_back((*it)->GetID());
+	return vIDs;
+}
+
+// Rebuild the list in order, omitting units that have been deleted.
+void GetUnitsByID(PlayerTypes ePlayer, const vector<int>& vIDs, vector<CvUnit*>& vUnits)
+{
+	vUnits.clear();
+	for (vector<int>::const_iterator it = vIDs.begin(); it != vIDs.end(); ++it)
+	{
+		CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(*it);
+		if (pUnit)
+			vUnits.push_back(pUnit);
+	}
+}
+
 bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot)
 {
 	if (pTargetPlot->isVisible(m_pPlayer->getTeam()))
@@ -3462,6 +3486,8 @@ bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTa
 	for (size_t i = 0; i < vUnits.size(); i++)
 	{
 		CvUnit* pUnit = vUnits[i];
+		if (!pUnit)
+			continue;
 
 		// we want fast units or tanks
 		// (unitai defense includes ranged units ... don't use it here)
@@ -3574,12 +3600,16 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 		if (m_CurrentMoveUnits[i].GetAttackStrength()>=0) //sometimes we mark units as unnecessary
 			vUnits.push_back( m_pPlayer->getUnit( m_CurrentMoveUnits[i].GetID() ) );
 
+	const vector<int> vUnitIDs = GetUnitIDs(vUnits);
+
 	//try to improve visibility
 	if (!ExecuteSpotterMove(vUnits,pTargetPlot))
 		return false;
 
 	if (MOD_VOX_TACTICAL_AIR_SEARCH)
 	{
+		GetUnitsByID(m_pPlayer->GetID(), vUnitIDs, vUnits);
+
 		// Vox Deorum: aircraft and missiles are planned together with the ground and naval units, so the greedy air passes
 		// and the early return are skipped. Fighters recruited for sweeps join the search, and so do the ships
 		// carrying aircraft, because a carrier may move before it launches.
@@ -3607,6 +3637,8 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 		//did the air attack already kill the enemy?
 		if (pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), NULL, true, true) == NULL && !pTargetPlot->isCity())
 			return true;
+
+		GetUnitsByID(m_pPlayer->GetID(), vUnitIDs, vUnits);
 	}
 
 #if defined(MOD_CORE_DEBUGGING)
@@ -3619,10 +3651,15 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 
 //target can be friendly, neutral or hostile
 // Vox Deorum: preserve the caller's reinforcement, gathering, or camp purpose.
-bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget, SearchIntent eSearchIntent)
+bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnitsIn, CvPlot* pTarget, SearchIntent eSearchIntent)
 {
+	const vector<int> vUnitIDs = GetUnitIDs(vUnitsIn);
+
 	//try to improve visibility. however, if the target is too far away this may fail ... in that case we chance it
-	ExecuteSpotterMove(vUnits, pTarget);
+	ExecuteSpotterMove(vUnitsIn, pTarget);
+
+	vector<CvUnit*> vUnits;
+	GetUnitsByID(m_pPlayer->GetID(), vUnitIDs, vUnits);
 
 	if (MOD_CORE_DEBUGGING)
 		LogTacticalMessage(CvString::format("seeking defensive positioning around %d:%d", pTarget->getX(), pTarget->getY()));
@@ -3630,6 +3667,7 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 	//first round: in case there are enemies around, do a combat simulation
 	vector<CvUnit*> vSimUnits = vUnits; //make a copy we can modify!
 	bool bTactSimSuccess = TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vSimUnits, pTarget, AL_LOW, eSearchIntent);
+	GetUnitsByID(m_pPlayer->GetID(), vUnitIDs, vUnits);
 
 	//sometimes tactsim cannot use all units, eg if they are too far out
 	vector<CvUnit*> farout;
@@ -3664,12 +3702,15 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 			{ return (lhs->IsCivilianUnit() ? 2 : lhs->AI_getUnitAIType()==UNITAI_CITY_BOMBARD ? 1 : 0) < (rhs->IsCivilianUnit() ? 2 : rhs->AI_getUnitAIType() == UNITAI_CITY_BOMBARD ? 1 : 0); }
 	};
 	std::stable_sort(farout.begin(), farout.end(), PrSortCombatFirst());
+	const vector<int> vFaroutIDs = GetUnitIDs(farout);
 
 	//second round: move in as long as there is no danger and we're still far away
-	for (vector<CvUnit*>::const_iterator it = farout.begin(); it != farout.end(); ++it)
+	for (vector<int>::const_iterator it = vFaroutIDs.begin(); it != vFaroutIDs.end(); ++it)
 	{
 		//lots of flags ...
-		CvUnit* pUnit = *it;
+		CvUnit* pUnit = m_pPlayer->getUnit(*it);
+		if (!pUnit)
+			continue;
 		int	iFlags = CvUnit::MOVEFLAG_NO_STOPNODES | CvUnit::MOVEFLAG_APPROX_TARGET_RING2;
 		if (pUnit->isNativeDomain(pTarget)) //don't embark if we don't have to
 			iFlags |= CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN;
@@ -3698,6 +3739,7 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 	}
 
 	//third round: if the unit is in an army (no tactical moves) and did not move yet, move it to safety now
+	GetUnitsByID(m_pPlayer->GetID(), vUnitIDs, vUnits);
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
 	{
 		CvUnit* pUnit = *it;
@@ -5953,14 +5995,15 @@ void TacticalAIHelpers::UpdatePlotDistanceToTarget(PlayerTypes ePlayer, CvPlot* 
 	if (!GET_PLAYER(ePlayer).CanEmbark())
 		data.iFlags |= CvUnit::MOVEFLAG_NO_EMBARK;
 
-	ReachablePlots eReachablePlots = GC.GetStepFinder().GetPlotsInReach(pTargetPlot, data);
+	//same result as GC.GetStepFinder().GetPlotsInReach(pTargetPlot, data), see GetPlotsInReachSimple
+	ReachablePlots eReachablePlots = GetPlotsInReachSimple(pTargetPlot, data);
 	gDistanceToTargetPlots[DOMAIN_LAND] = eReachablePlots;
 
 	data.ePath = PT_NAVAL_UNIT_SIMPLE;
 	if (!GET_TEAM(GET_PLAYER(ePlayer).getTeam()).CanBuildOceanCrossingUnit())
 		data.iFlags |= CvUnit::MOVEFLAG_NO_OCEAN;
 
-	eReachablePlots = GC.GetStepFinder().GetPlotsInReach(pTargetPlot, data);
+	eReachablePlots = GetPlotsInReachSimple(pTargetPlot, data);
 	gDistanceToTargetPlots[DOMAIN_SEA] = eReachablePlots;
 	gTargetPlot = pTargetPlot;
 }
@@ -7607,7 +7650,6 @@ void CvBasePosition::UpdateScore(const STacticalAssignment& assignment)
 	UpdateScore(assignment.iUnitID, assignment.GetPlotScore(), assignment.GetOldPlotScore(), assignment.GetDamageDelta(), assignment.GetBonusScore());
 }
 
-// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore, int iDamageDelta_, int iBonusScore_)
 {
 	iScoreOverParent += iBonusScore_ + iPlotScore - iOldPlotScore + iDamageDelta_;
@@ -11259,7 +11301,6 @@ void CvTacticalPosition::initFromScratch(PlayerTypes player, eAggressionLevel eA
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = 0;
 	iFinalPlotAdjustment = 0;
 	iScoreOverParent = 0; 
@@ -11314,7 +11355,6 @@ void CvTacticalPosition::initFromParent(const CvTacticalPosition& parent)
 	nFirstInterestingAssignment = parent.nFirstInterestingAssignment;
 	iBonusScore = parent.iBonusScore;
 	iDamageDelta = parent.iDamageDelta;
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = parent.iTotalScore;
 	iFinalPlotAdjustment = parent.iFinalPlotAdjustment;
 	iScoreOverParent = 0;
@@ -12986,7 +13026,6 @@ CvSupportPosition::CvSupportPosition()
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = 0;
 	iFinalPlotAdjustment = 0;
 	iScoreOverParent = 0;
@@ -13088,7 +13127,6 @@ void CvSupportPosition::initFromTacticalPosition(const CvTacticalPosition& tactP
 	nFirstInterestingAssignment = 0;
 	iBonusScore = 0;
 	iDamageDelta = 0;
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = 0;
 	iFinalPlotAdjustment = 0;
 	iScoreOverParent = 0;
@@ -13150,7 +13188,6 @@ void CvSupportPosition::initFromParent(const CvSupportPosition& parent)
 	nFirstInterestingAssignment = parent.nFirstInterestingAssignment;
 	iBonusScore = parent.iBonusScore;
 	iDamageDelta = parent.iDamageDelta;
-	// Vox Deorum: upstreamed https://github.com/LoneGazebo/Community-Patch-DLL/pull/13578
 	iTotalScore = parent.iTotalScore;
 	iFinalPlotAdjustment = parent.iFinalPlotAdjustment;
 	iScoreOverParent = 0;
@@ -13597,6 +13634,7 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 	int iCount = 0;
 	bool bSuccess = false;
 	set<int> unuseableUnits;
+	vector<int> vCurrentIDs = GetUnitIDs(vUnits);
 	vector<CvUnit*> currentUnits = vUnits;
 	TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer, pTarget);
 	// Vox Deorum: every retry searches with the same resolved flavors
@@ -13628,16 +13666,17 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 		}
 		if (vAssignments.empty())
 		{
-			if (unuseableUnits.size()>0 && currentUnits.size()>unuseableUnits.size())
+			if (!unuseableUnits.empty() && currentUnits.size()>unuseableUnits.size())
 			{
 				//drop the offending units and try again
-				vector<CvUnit*> remainingUnits;
-				for (vector<CvUnit*>::const_iterator it = currentUnits.begin(); it != currentUnits.end(); ++it)
+				vector<int> vRemainingIDs;
+				for (vector<int>::const_iterator it = vCurrentIDs.begin(); it != vCurrentIDs.end(); ++it)
 				{
-					if (unuseableUnits.find((*it)->GetID())==unuseableUnits.end())
-						remainingUnits.push_back(*it);
+					if (unuseableUnits.find(*it)==unuseableUnits.end())
+						vRemainingIDs.push_back(*it);
 				}
-				currentUnits = remainingUnits;
+				vCurrentIDs = vRemainingIDs;
+				GetUnitsByID(ePlayer, vCurrentIDs, currentUnits);
 			}
 			else
 				break; //give up
@@ -13645,7 +13684,8 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
 		else
 		{
 			//restarts might happen when new enemies become visible
-			bSuccess = TacticalAIHelpers::ExecuteUnitAssignments(vUnits.front()->getOwner(), vAssignments);
+			bSuccess = TacticalAIHelpers::ExecuteUnitAssignments(ePlayer, vAssignments);
+			GetUnitsByID(ePlayer, vCurrentIDs, currentUnits);
 			// Vox Deorum: the execution result feeds the next retry's
 			// outcome metadata.
 			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -14152,7 +14192,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	openPositionsHeap.clear();
 	completedPositions.clear();
 	size_t iUsedPositions = 0;
-	// A candidate rejected only for lack of progress sets the score threshold an accepted plan must reach.
+	// A candidate rejected only for lack of progress sets the score an accepted plan must reach.
 	int iBestNoProgressScore = INT_MIN;
 
 	//don't need to call make_heap for a single element
@@ -14331,7 +14371,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 	//take the assigned moves one by one and try to execute them faithfully. 
 	//may fail if a melee kill unexpectedly happens or does not happen
 
-	vector<CvUnit*> finishedUnits;
+	vector<int> finishedUnits; //IDs: a later assignment's attack can delete one of these units
 	// Vox Deorum: a skipped row counts as run, a row whose precondition held counts even if its outcome failed
 	if (pnRowsRun)
 		*pnRowsRun = 0;
@@ -14511,7 +14551,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 				// Vox Deorum: an aircraft that did not act pushes no mission and stays available, for example for patrols.
 				// One that has used up its attacks is done for the turn.
 				if (pUnit->getNumAttacksMadeThisTurn() > 0 && pUnit->isOutOfAttacks())
-					finishedUnits.push_back(pUnit);
+					finishedUnits.push_back(pUnit->GetID());
 				bPrecondition = true;
 				bPostcondition = true;
 				break;
@@ -14520,7 +14560,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			//this is the difference to a blocked unit, we prevent anyone else from moving it unless we want it to heal
 			if (!pUnit->shouldHeal(false) || pUnit->getMoves() == 0 || pUnit->isBarbarian()) //barbarians don't heal
 				//important ... this allows civilian units to use this one as cover!
-				finishedUnits.push_back(pUnit);
+				finishedUnits.push_back(pUnit->GetID());
 			bPrecondition = true;
 			bPostcondition = true;
 			break;
@@ -14574,9 +14614,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		*pnRowsRun = vAssignments.size();
 
 	// Only do this once we know were successful
-	for (vector<CvUnit*>::const_iterator it = finishedUnits.begin(); it != finishedUnits.end(); ++it)
+	for (vector<int>::const_iterator it = finishedUnits.begin(); it != finishedUnits.end(); ++it)
 	{
-		GET_PLAYER(ePlayer).GetTacticalAI()->UnitProcessed((*it)->GetID());
+		GET_PLAYER(ePlayer).GetTacticalAI()->UnitProcessed(*it);
 	}
 
 	return true;

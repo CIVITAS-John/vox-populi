@@ -3180,6 +3180,7 @@ void CvTacticalOperationalLoop::ExecuteFight(CvTacticalAI& kTactical, const SOpe
 	for (size_t i = 0; i < vNativeSpotters.size(); i++)
 		if (!IsHeldGarrison(vNativeSpotters[i]) && std::find(vUnits.begin(), vUnits.end(), vNativeSpotters[i]) != vUnits.end())
 			vSpotters.push_back(vNativeSpotters[i]);
+	vector<int> vUnitIDs = GetUnitIDs(vUnits);
 	bool bSearch;
 	{
 		SOperationalTimer timer(turn.bTiming ? &turn.performance.spottingNs : NULL);
@@ -3202,11 +3203,13 @@ void CvTacticalOperationalLoop::ExecuteFight(CvTacticalAI& kTactical, const SOpe
 	SOperationalEngagementReport& report = record.engagement;
 	if (bSearch)
 	{
+		GetUnitsByID(ePlayer, vUnitIDs, vUnits);
 		vector<CvUnit*> vSearch;
 		for (size_t i = 0; i < vUnits.size(); i++)
 			if (vUnits[i] && vUnits[i]->canUseNow() && (MOD_VOX_TACTICAL_AIR_SEARCH || vUnits[i]->getDomainType() != DOMAIN_AIR))
 				vSearch.push_back(vUnits[i]);
 		vUnits.swap(vSearch);
+		vUnitIDs = GetUnitIDs(vUnits);
 		record.bSearchRan = !vUnits.empty();
 		if (record.bSearchRan)
 			ExecuteEngagement(ePlayer, vUnits, pPlot, bCity ? OPERATIONAL_KIND_CITY_FIGHT : OPERATIONAL_KIND_UNIT_FIGHT, field.eOwner,
@@ -3224,7 +3227,10 @@ void CvTacticalOperationalLoop::ExecuteFight(CvTacticalAI& kTactical, const SOpe
 		if (kTactical.FindEmbarkedUnitsAroundTarget(pPlot, 4))
 		{
 			if (record.admission.eResult == OPERATIONAL_ADMISSION_SUBSET)
+			{
+				GetUnitsByID(ePlayer, vUnitIDs, vUnits);
 				FilterRecruits(kTactical, vUnits);
+			}
 			kTactical.ExecuteLandingOperation(pPlot);
 		}
 	}
@@ -3706,13 +3712,17 @@ void CvTacticalOperationalLoop::ExecuteWithdraw(CvTacticalAI& kTactical, const S
 			FilterRecruits(kTactical, vUnits);
 
 		// Vox Deorum: one search and path step per domain with a destination; the land group goes first.
-		vector<CvUnit*> avDomain[2];
+		vector<int> avDomainIDs[2];
 		for (size_t i = 0; i < vUnits.size(); i++)
-			avDomain[vUnits[i]->getDomainType() == DOMAIN_SEA ? 1 : 0].push_back(vUnits[i]);
+			avDomainIDs[vUnits[i]->getDomainType() == DOMAIN_SEA ? 1 : 0].push_back(vUnits[i]->GetID());
 		bool bMerged = false;
 		for (int iDomain = 0; iDomain < 2; iDomain++)
 		{
-			if (avDomain[iDomain].empty() || field.aiWithdrawDestination[iDomain] < 0)
+			if (avDomainIDs[iDomain].empty() || field.aiWithdrawDestination[iDomain] < 0)
+				continue;
+			vector<CvUnit*> vDomainUnits;
+			GetUnitsByID(kPlayer.GetID(), avDomainIDs[iDomain], vDomainUnits);
+			if (vDomainUnits.empty())
 				continue;
 			CvPlot* pDestination = GC.getMap().plotByIndex(field.aiWithdrawDestination[iDomain]);
 			if (!pDestination)
@@ -3722,7 +3732,7 @@ void CvTacticalOperationalLoop::ExecuteWithdraw(CvTacticalAI& kTactical, const S
 			SOperationalEngagementReport search;
 			SOperationalWithdrawReportMerge merge(record.engagement, search, !bMerged);
 			record.bSearchRan = true;
-			PositionUnitsAroundTarget(kTactical, avDomain[iDomain], pDestination, OPERATIONAL_KIND_WITHDRAW,
+			PositionUnitsAroundTarget(kTactical, vDomainUnits, pDestination, OPERATIONAL_KIND_WITHDRAW,
 				field.eOwner, turn.aiMapped, turn.settings, search, &turn, &record);
 			bMerged = true;
 		}
@@ -4389,6 +4399,7 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 	int iCount = 0;
 	bool bSuccess = false;
 	set<int> unuseableUnits;
+	vector<int> vCurrentIDs = GetUnitIDs(vUnits);
 	vector<CvUnit*> currentUnits = vUnits;
 	TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer, pTarget);
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -4415,16 +4426,17 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 		}
 		if (vAssignments.empty())
 		{
-			if (unuseableUnits.size()>0 && currentUnits.size()>unuseableUnits.size())
+			if (!unuseableUnits.empty() && currentUnits.size()>unuseableUnits.size())
 			{
 				//drop the offending units and try again
-				vector<CvUnit*> remainingUnits;
-				for (vector<CvUnit*>::const_iterator it = currentUnits.begin(); it != currentUnits.end(); ++it)
+				vector<int> vRemainingIDs;
+				for (vector<int>::const_iterator it = vCurrentIDs.begin(); it != vCurrentIDs.end(); ++it)
 				{
-					if (unuseableUnits.find((*it)->GetID())==unuseableUnits.end())
-						remainingUnits.push_back(*it);
+					if (unuseableUnits.find(*it)==unuseableUnits.end())
+						vRemainingIDs.push_back(*it);
 				}
-				currentUnits = remainingUnits;
+				vCurrentIDs = vRemainingIDs;
+				GetUnitsByID(ePlayer, vCurrentIDs, currentUnits);
 			}
 			else
 				break; //give up
@@ -4435,7 +4447,8 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 			SOperationalAttempt attempt;
 			attempt.vRows = vAssignments;
 			attempt.nRowsRun = 0;
-			bSuccess = TacticalAIHelpers::ExecuteUnitAssignments(vUnits.front()->getOwner(), vAssignments, &attempt.nRowsRun);
+			bSuccess = TacticalAIHelpers::ExecuteUnitAssignments(ePlayer, vAssignments, &attempt.nRowsRun);
+			GetUnitsByID(ePlayer, vCurrentIDs, currentUnits);
 			attempt.bCompleted = bSuccess;
 			report.attempts.push_back(attempt);
 			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -4681,15 +4694,18 @@ bool CvTacticalOperationalLoop::CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit,
 // turn ending outside a zone we dominate). A Withdraw skips the spotter, records each unit's starting plot, sends every
 // recruit that can still move and orders damaged units first. After a successful Withdraw search a recruit it used
 // on a plot with no danger stays.
-bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
+bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnitsIn, CvPlot* pTarget,
 	eOperationalKind eKind, PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 	SOperationalEngagementReport& report, const SOperationalTurn* pTurn, SOperationalCommandRecord* pCommand)
 {
+	const PlayerTypes ePlayer = kTactical.m_pPlayer->GetID();
+	const vector<int> vUnitIDs = GetUnitIDs(vUnitsIn);
+
 	// Vox Deorum: a Withdraw compares a unit with where it started after the search, so record the starting plots first.
 	const bool bWithdraw = eKind == OPERATIONAL_KIND_WITHDRAW;
 	map<int, int> startPlots;
 	if (bWithdraw)
-		for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
+		for (vector<CvUnit*>::const_iterator it = vUnitsIn.begin(); it != vUnitsIn.end(); ++it)
 			if ((*it)->plot())
 				startPlots[(*it)->GetID()] = (*it)->plot()->GetPlotIndex();
 
@@ -4697,7 +4713,7 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	if (!bWithdraw)
 	{
 		vector<CvUnit*> vSpotters;
-		for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
+		for (vector<CvUnit*>::const_iterator it = vUnitsIn.begin(); it != vUnitsIn.end(); ++it)
 			if (!IsHeldGarrison(*it))
 				vSpotters.push_back(*it);
 		{
@@ -4706,13 +4722,17 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 		}
 	}
 
+	vector<CvUnit*> vUnits;
+	GetUnitsByID(ePlayer, vUnitIDs, vUnits);
+
 	//first round: in case there are enemies around, do a combat simulation
 	vector<CvUnit*> vSimUnits; //make a copy we can modify!
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
 		if ((*it)->canUseNow())
 			vSimUnits.push_back(*it);
-	bool bTactSimSuccess = vSimUnits.empty() ? false : ExecuteEngagement(kTactical.m_pPlayer->GetID(), vSimUnits, pTarget, eKind, eCounterpart,
+	bool bTactSimSuccess = vSimUnits.empty() ? false : ExecuteEngagement(ePlayer, vSimUnits, pTarget, eKind, eCounterpart,
 		aiMapped, settings, !bWithdraw, report, pTurn, pCommand); // Vox Deorum: a Withdraw puts the retreat objective in the plot score
+	GetUnitsByID(ePlayer, vUnitIDs, vUnits);
 
 	SOperationalTimer marchingTimer(pTurn && pTurn->bTiming ? &pTurn->performance.marchingNs : NULL);
 	//sometimes tactsim cannot use all units, eg if they are too far out
@@ -4720,7 +4740,7 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	//the search clears its distance map when it finishes, so rebuild it for the distance check below.
 	// Vox Deorum: the Withdraw branch reads only danger, never this map.
 	if (bTactSimSuccess && !bWithdraw)
-		TacticalAIHelpers::UpdatePlotDistanceToTarget(kTactical.m_pPlayer->GetID(), pTarget);
+		TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer, pTarget);
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
 	{
 		CvUnit* pUnit = *it;
@@ -4761,11 +4781,14 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 		std::stable_sort(farout.begin(), farout.end(), PrOperationalSortWithdraw());
 	else
 		std::stable_sort(farout.begin(), farout.end(), PrOperationalSortCombatFirst());
+	const vector<int> vFaroutIDs = GetUnitIDs(farout);
 
 	//second round: move in as long as there is no danger and we're still far away
-	for (vector<CvUnit*>::const_iterator it = farout.begin(); it != farout.end(); ++it)
+	for (vector<int>::const_iterator it = vFaroutIDs.begin(); it != vFaroutIDs.end(); ++it)
 	{
-		CvUnit* pUnit = *it;
+		CvUnit* pUnit = kTactical.m_pPlayer->getUnit(*it);
+		if (!pUnit)
+			continue;
 		//since we know the unit was far out originally, this is guaranteed to be actual movement
 		if (!CanMarch(kTactical, pUnit, pTarget, bWithdraw))
 			continue;
@@ -4773,6 +4796,7 @@ bool CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactica
 	}
 
 	//third round: if the unit is in an army (no tactical moves) and did not move yet, move it to safety now
+	GetUnitsByID(ePlayer, vUnitIDs, vUnits);
 	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
 	{
 		CvUnit* pUnit = *it;

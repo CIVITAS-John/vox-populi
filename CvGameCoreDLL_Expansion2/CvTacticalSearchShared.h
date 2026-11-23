@@ -30,6 +30,10 @@ extern int gDefaultUnitLossThreshold;
 extern int gMinHpForTactsim;
 extern PlayerTypes eLastTactSimPlayer;
 
+// Keep unit IDs across real moves, then rebuild the list in order, omitting units that were deleted.
+vector<int> GetUnitIDs(const vector<CvUnit*>& vUnits);
+void GetUnitsByID(PlayerTypes ePlayer, const vector<int>& vIDs, vector<CvUnit*>& vUnits);
+
 // true if this attack ends the unit's turn
 bool AttackEndsTurn(const CvUnit* pUnit, int iNumAttacksLeft);
 // the rough state of the position after the assignment
