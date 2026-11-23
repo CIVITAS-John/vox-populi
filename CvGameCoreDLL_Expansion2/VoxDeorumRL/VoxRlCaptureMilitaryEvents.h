@@ -100,6 +100,21 @@ private:
     VoxRlDamageScope& operator=(const VoxRlDamageScope&);
 };
 
+// Records the victim of a hostile placement under the existing fight cause.
+class VoxRlCivilianOverrunScope
+{
+public:
+    // Snapshots the victim before kill can retire it and replace it with another unit.
+    VoxRlCivilianOverrunScope(bool enabled, const CvUnit& victim, PlayerTypes mover);
+    // Writes the loss only if the original unit was removed.
+    ~VoxRlCivilianOverrunScope();
+private:
+    int m_unitId;
+    RequestDamageRecord m_row;
+    VoxRlCivilianOverrunScope(const VoxRlCivilianOverrunScope&);
+    VoxRlCivilianOverrunScope& operator=(const VoxRlCivilianOverrunScope&);
+};
+
 // Labels unit creations as upgrades when native creates a replacement under another reason, such
 // as the goody-hut upgrade, which native creates as a gift before converting the old unit into it.
 class VoxRlMilitaryUpgradeScope

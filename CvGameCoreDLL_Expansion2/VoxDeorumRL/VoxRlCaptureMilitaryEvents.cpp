@@ -651,7 +651,28 @@ PlayerTypes VoxRlCombatOwner(const CvCombatInfo& info, BattleUnitTypes role)
     return city != NULL ? city->getOwner() : NO_PLAYER;
 }
 
-// Keeps the unit's identity, plot, and damage before its first change in the innermost open scope.
+// Captures the unit's identity, plot, and health before a change.
+static RequestDamageRecord CaptureUnitDamage(const CvUnit& unit, int oldDamage)
+{
+    RequestDamageRecord row = RequestDamageRecord();
+    row.subject = VOX_RL_DAMAGE_UNIT;
+    row.owner = static_cast<i8>(unit.getOwner());
+    // The grade counts third-party damage by where the unit stood; -1 when it has no plot.
+    row.plotIndex = -1;
+    if (unit.plot() != NULL) SetPlot(row.plotIndex, unit.plot()->GetPlotIndex(), "RequestDamageRecord");
+    int owner, id;
+    VoxRlGetUnitLineage(unit, owner, id);
+    row.lineageOwner = static_cast<i8>(owner);
+    row.lineageUnitId = id;
+    if (!VoxRlAssignChecked(row.unitType, static_cast<int>(unit.getUnitType()), "RequestDamageRecord", "unitType", 0) ||
+        !VoxRlAssignChecked(row.level, unit.getLevel(), "RequestDamageRecord", "level", 0) ||
+        !VoxRlAssignChecked(row.maxHitPoints, unit.GetMaxHitPoints(), "RequestDamageRecord", "maxHitPoints", 1) ||
+        !VoxRlAssignChecked(row.damageBefore, oldDamage, "RequestDamageRecord", "damageBefore", 0))
+        captureFailed = true;
+    return row;
+}
+
+// Keeps the first damage snapshot in the innermost open scope.
 void VoxRlNoteUnitDamage(const CvUnit& unit, int oldDamage)
 {
     if (openDamageScopes.empty()) return;
@@ -660,21 +681,7 @@ void VoxRlNoteUnitDamage(const CvUnit& unit, int oldDamage)
     DamageSubject entry;
     entry.owner = unit.getOwner();
     entry.id = unit.GetID();
-    entry.row = RequestDamageRecord();
-    entry.row.subject = VOX_RL_DAMAGE_UNIT;
-    entry.row.owner = static_cast<i8>(unit.getOwner());
-    // The grade counts third-party damage by where the unit stood; -1 when it has no plot.
-    entry.row.plotIndex = -1;
-    if (unit.plot() != NULL) SetPlot(entry.row.plotIndex, unit.plot()->GetPlotIndex(), "RequestDamageRecord");
-    int owner, id;
-    VoxRlGetUnitLineage(unit, owner, id);
-    entry.row.lineageOwner = static_cast<i8>(owner);
-    entry.row.lineageUnitId = id;
-    if (!VoxRlAssignChecked(entry.row.unitType, static_cast<int>(unit.getUnitType()), "RequestDamageRecord", "unitType", 0) ||
-        !VoxRlAssignChecked(entry.row.level, unit.getLevel(), "RequestDamageRecord", "level", 0) ||
-        !VoxRlAssignChecked(entry.row.maxHitPoints, unit.GetMaxHitPoints(), "RequestDamageRecord", "maxHitPoints", 1) ||
-        !VoxRlAssignChecked(entry.row.damageBefore, oldDamage, "RequestDamageRecord", "damageBefore", 0))
-        captureFailed = true;
+    entry.row = CaptureUnitDamage(unit, oldDamage);
     scope.subjects.push_back(entry);
 }
 
@@ -844,6 +851,38 @@ VoxRlDamageScope::~VoxRlDamageScope()
             "RequestDamageRecord", "damageAfter", 0)) captureFailed = true;
         QueueDamageRow(row);
     }
+}
+
+// Saves the civilian before the placement's kill, with the actual mover as attacker.
+VoxRlCivilianOverrunScope::VoxRlCivilianOverrunScope(bool enabled, const CvUnit& victim, PlayerTypes mover)
+    : m_unitId(-1)
+{
+    if (!enabled || !victim.IsCivilianUnit() || victim.IsDead() || !HasMajorCarrier()) return;
+    m_unitId = victim.GetID();
+    m_row = CaptureUnitDamage(victim, victim.getDamage());
+    m_row.cause = VOX_RL_DAMAGE_FIGHT;
+    m_row.attackerOwner = static_cast<i8>(mover);
+    m_row.defenderOwner = m_row.owner;
+}
+
+// Logs one confirmed removal even during combat, when the enclosing scope may have noted it too.
+VoxRlCivilianOverrunScope::~VoxRlCivilianOverrunScope()
+{
+    if (m_unitId < 0) return;
+    const CvUnit* unit = GET_PLAYER(static_cast<PlayerTypes>(m_row.owner)).getUnit(m_unitId);
+    if (unit != NULL && !unit->isDelayedDeath() && !unit->IsDead()) return;
+
+    for (size_t i = 0; i < openDamageScopes.size(); ++i)
+    {
+        OpenDamageScope& scope = openDamageScopes[i];
+        DamageSubject* duplicate = FindDamageSubject(scope, VOX_RL_DAMAGE_UNIT, m_row.owner, m_unitId);
+        if (duplicate != NULL)
+            scope.subjects.erase(scope.subjects.begin() + (duplicate - &scope.subjects[0]));
+    }
+    SetOccurrence(m_row);
+    m_row.damageAfter = m_row.maxHitPoints;
+    m_row.removed = 1;
+    QueueDamageRow(m_row);
 }
 
 // Counts nested supported actions without duplicating their treasury changes.

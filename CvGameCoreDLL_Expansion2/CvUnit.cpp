@@ -20436,6 +20436,8 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 												pLoopUnit->setCapturingPlayer(NO_PLAYER);	// Make absolutely sure this is not valid so the kill does not do the capture.
 											}
 
+											// Vox Deorum: record this hostile civilian loss even without combat.
+											VoxRlCivilianOverrunScope captureOverrun(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, *pLoopUnit, getOwner());
 											pLoopUnit->kill(false, getOwner());
 										}
 									}
