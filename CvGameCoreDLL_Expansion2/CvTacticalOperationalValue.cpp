@@ -1,5 +1,5 @@
 /*	-------------------------------------------------------------------------------------------------------
-	Vox Deorum: the value pieces the operational loop shares with the simulator's outcome grade. See
+	The value pieces the operational loop shares with the simulator's outcome grade. See
 	CvTacticalOperationalValue.h.
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
@@ -8,13 +8,13 @@
 #include <cmath>
 #include "LintFree.h"
 
-// Vox Deorum: maps risk to our expected roll in units of 1/200 of the random damage range.
+// Maps risk to our expected roll in units of 1/200 of the random damage range.
 int OurRollPer200(int iRisk)
 {
 	return iRisk;
 }
 
-// Vox Deorum: maps risk to the enemy's expected roll in units of 1/200 of the random damage range.
+// Maps risk to the enemy's expected roll in units of 1/200 of the random damage range.
 int EnemyRollPer200(int iRisk)
 {
 	return 200 - iRisk;
@@ -46,7 +46,7 @@ double ValueAtDamage(double fWorth, int iDamage, int iMaxHitPoints)
 	return fWorth * (unitKillShare + (1.0 - unitKillShare) * fHealth);
 }
 
-// Vox Deorum: apply the square root once per target, after reach and melee limits have been accounted for.
+// Apply the square root once per target, after reach and melee limits have been accounted for.
 double ScoredDamage(double fRealized, int iRejected)
 {
 	return iRejected > 0 ? fRealized + std::sqrt(static_cast<double>(iRejected)) : fRealized;
@@ -70,7 +70,7 @@ double UnitExposure(double fWorth, int iDamage, int iMaxHitPoints, int iIncoming
 	return fWorth * (1.0 - unitKillShare) * iIncomingDamage / iMaxHitPoints;
 }
 
-// Vox Deorum: values enemy damage by the same retained and health shares as our units' exposure.
+// Values enemy damage by the same retained and health shares as our units' exposure.
 double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fRealized, int iRejected)
 {
 	if (fMaximum <= 0.0 || fRemaining <= 0.0)
@@ -81,7 +81,7 @@ double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double 
 	return fWorth * (1.0 - unitKillShare) * fHealthLost / fMaximum;
 }
 
-// Vox Deorum: uses a strength ratio to keep the powers bounded for large native strength tallies.
+// Uses a strength ratio to keep the powers bounded for large native strength tallies.
 double StrengthShare(double fLocal, double fEnemy, double fSteepness)
 {
 	if (fEnemy <= 0.0)
@@ -96,19 +96,19 @@ double StrengthShare(double fLocal, double fEnemy, double fSteepness)
 	return 1.0 / (1.0 + pow(fEnemy / fLocal, fSteepness));
 }
 
-// Vox Deorum: combines strength pressure and city damage as the complement of both safety shares.
+// Combines strength pressure and city damage as the complement of both safety shares.
 double TheaterContest(double fPressure, double fDamageLevel)
 {
 	return 1.0 - (1.0 - fPressure) * (1.0 - fDamageLevel);
 }
 
-// Vox Deorum: scales contested city importance into the room above the theater floor.
+// Scales contested city importance into the room above the theater floor.
 double TheaterMultiplier(double fFloor, double fImportance, double fContest)
 {
 	return fFloor + (1.0 - fFloor) * fImportance * fContest;
 }
 
-// Vox Deorum: measures the strength share added by arriving help.
+// Measures the strength share added by arriving help.
 double StrengthSwing(double fShare, double fProjectedShare)
 {
 	return fProjectedShare - fShare;

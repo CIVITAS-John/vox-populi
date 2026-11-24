@@ -1,5 +1,5 @@
 /*	-------------------------------------------------------------------------------------------------------
-	Vox Deorum: the value pieces the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP) shares with the
+	The value pieces the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP) shares with the
 	simulator's outcome grade: unit worth and value at damage, exposure, city value, plot defense and ground
 	weight, the flavor weight curve, the typical unit scale Z_T, the reference unit types with their rule cost
 	and rule price, the upgrade premium, and the per-plot ground score. The grade calls the extracted
@@ -16,9 +16,9 @@ class CvCity;
 class CvPlot;
 class CvPlayer;
 
-// Vox Deorum: returns our expected damage roll in units of 1/200 at the mapped risk.
+// Returns our expected damage roll in units of 1/200 at the mapped risk.
 int OurRollPer200(int iRisk);
-// Vox Deorum: returns the enemy's expected damage roll in units of 1/200 at the mapped risk.
+// Returns the enemy's expected damage roll in units of 1/200 at the mapped risk.
 int EnemyRollPer200(int iRisk);
 
 // The value floor k: the share of its worth a unit keeps at 0 HP, so it is lost only when the unit dies or is captured.
@@ -55,22 +55,22 @@ double UnitBaseWorth(const CvUnitEntry& kUnitEntry);
 double UnitWorth(double fBaseWorth, int iLevel, double fSeniorityPerLevel);
 // Returns a living unit's value: its worth times k + (1 - k) x its health share, with health clamped to 0..1.
 double ValueAtDamage(double fWorth, int iDamage, int iMaxHitPoints);
-// Vox Deorum: readiness gives partial damage credit for the total rejected by a target's reach check.
+// Readiness gives partial damage credit for the total rejected by a target's reach check.
 double ScoredDamage(double fRealized, int iRejected);
 // Returns damage over maximum hit points, clamped to 0..1, or 0 without hit points.
 double DamageShare(double fDamage, int iMaxHitPoints);
 // Returns what a unit loses to iIncomingDamage more damage: its whole value when that reaches its HP left,
 // otherwise worth x (1 - k) x the incoming damage over maximum HP.
 double UnitExposure(double fWorth, int iDamage, int iMaxHitPoints, int iIncomingDamage);
-// Vox Deorum: scores health damage up to the target's remaining HP; only realized damage can earn the kill share.
+// Scores health damage up to the target's remaining HP; only realized damage can earn the kill share.
 double DestroyedValue(double fWorth, double fRemaining, double fMaximum, double fRealized, int iRejected = 0);
-// Vox Deorum: returns L^k / (L^k + T^k), or 1 when enemy strength T is 0.
+// Returns L^k / (L^k + T^k), or 1 when enemy strength T is 0.
 double StrengthShare(double fLocal, double fEnemy, double fSteepness);
-// Vox Deorum: returns city contest: 1 - (1 - pressure) * (1 - damage level).
+// Returns city contest: 1 - (1 - pressure) * (1 - damage level).
 double TheaterContest(double fPressure, double fDamageLevel);
-// Vox Deorum: returns the theater floor plus the contested share of the room above it.
+// Returns the theater floor plus the contested share of the room above it.
 double TheaterMultiplier(double fFloor, double fImportance, double fContest);
-// Vox Deorum: returns the rise in strength share after help arrives.
+// Returns the rise in strength share after help arrives.
 double StrengthSwing(double fShare, double fProjectedShare);
 // Returns a city's value: its economic value, or its population when that is not positive.
 double CityValue(int iEconomicValue, int iPopulation);
