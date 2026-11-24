@@ -797,18 +797,18 @@ struct SUnitStats
 	int iAirGroup;
 	// Vox Deorum: a missile whose base is about to be lost, so firing it costs nothing
 	bool bBaseEndangered;
-	// Vox Deorum: this unit supplied the simulated tile's end-turn defense.
-	bool bSuppliesEndTurnCover;
+	// The unit stays on its planned tile when told to end its turn.
+	bool bCommitsToTurnEnd;
 
 	//convenience constructor - do not use pUnit here because it's initialized last! (pUnit_ is ok)
 	SUnitStats(const CvUnit* pUnit_, int iImportance, eUnitMovementStrategy eMoveStrategy_) :
 		iUnitID(pUnit_->GetID()), iPlotIndex(pUnit_->plot()->GetPlotIndex()), iAttacksLeft(pUnit_->getNumAttacks() - pUnit_->getNumAttacksMadeThisTurn()),
 		iMovesLeft(pUnit_->getMoves()), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()), eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_),
-		iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false), bSuppliesEndTurnCover(false) { }
+		iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false), bCommitsToTurnEnd(false) { }
 	//use with caution, this may lead to an inconsistent state
 	SUnitStats(const CvUnit* pUnit_, int iUnit, int iPlot, int iAttacks, int iMoves, int iImportance, eUnitMovementStrategy eMoveStrategy_) :
 		iUnitID(iUnit), iPlotIndex(iPlot), iAttacksLeft(iAttacks), iMovesLeft(iMoves), iImportanceScore(iImportance), iSelfDamage(0), iMaxMoves(pUnit_->maxMoves()),
-		eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_), iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false), bSuppliesEndTurnCover(false) {}
+		eLastAssignment(A_INITIAL), eMoveStrategy(eMoveStrategy_), pUnit(pUnit_), iCarrierID(-1), bNeedsCarrierMove(false), iAirGroup(-1), bBaseEndangered(false), bCommitsToTurnEnd(false) {}
 
 	bool operator<(const SUnitStats& rhs) const { return iImportanceScore > rhs.iImportanceScore; } //sort descending by default
 };
@@ -940,6 +940,7 @@ typedef tr1::unordered_map<DomainTypes, ReachablePlots> TCachedDistanceToTargetP
 
 //forward
 class CvTacticalPosition;
+struct SPlacementNeighbors;
 class CvTactPosStorage;
 
 class CvTacticalPlot
@@ -954,8 +955,8 @@ public:
 	bool isChokepoint() const { return pPlot ? pPlot->IsChokePoint() : false; }
 	int getNumAdjacentEnemies(eTactPlotDomain eDomain) const { return aiEnemyCombatUnitsAdjacent[eDomain]; }
 	void setNumAdjacentEnemies(eTactPlotDomain eDomain, int iValue) { aiEnemyCombatUnitsAdjacent[eDomain]=static_cast<unsigned char>(iValue); }
-	int getNumAdjacentFriendlies(eTactPlotDomain eDomain, int iIgnoreUnitPlot) const;
-	int getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain) const;
+	int getNumAdjacentFriendlies(eTactPlotDomain eDomain, int iIgnoreUnitPlot, const SPlacementNeighbors* pNeighbors = NULL) const;
+	int getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain, const SPlacementNeighbors* pNeighbors = NULL) const;
 	const vector<STacticalUnit>& getUnitsAtPlot() const { return vUnitsHere; }
 
 	bool isEnemy(eTactPlotDomain eDomain = TD_BOTH) const { return aiEnemyDistance[eDomain]==0; }
@@ -986,10 +987,14 @@ public:
 	bool checkEdgePlotsForSurprises(const CvTacticalPosition& currentPosition, vector<int>& landEnemies, vector<int>& seaEnemies);
 	bool isEnemyCombatUnit() const { return pFirstEnemyCombatUnit != NULL || pSecondEnemyCombatUnit != NULL; }
 	CvUnit* getEnemyUnit() const { return pFirstEnemyCombatUnit != NULL ? pFirstEnemyCombatUnit : pSecondEnemyCombatUnit; }
-	bool isCombatEndTurn() const { return bFriendlyDefenderEndTurn; }
+	// Whether at least one defender is committed on this tile.
+	bool isCombatEndTurn() const { return aiFriendlyCombatUnitsEndTurn[TD_BOTH] > 0; }
+	// Number of committed defenders of the given domain on this tile.
+	int getCombatUnitsEndTurn(eTactPlotDomain eDomain) const { return aiFriendlyCombatUnitsEndTurn[eDomain]; }
 	bool IsSimUnitBlocking(eTactPlotDomain tactDomain) const { return bSimUnitBlocking[tactDomain]; }
 	void changeNeighboringUnitCount(CvTacticalPosition& currentPosition, eUnitMovementStrategy moveType, eTactPlotDomain unitDomain, int iChange) const;
-	void setCombatUnitEndTurn(CvTacticalPosition& currentPosition, eTactPlotDomain unitDomain, bool bOverride=false);
+	void addCombatUnitEndTurn(CvTacticalPosition& currentPosition, eTactPlotDomain unitDomain);
+	void changeAdjacentEndTurnCount(CvTacticalPosition& currentPosition, eTactPlotDomain unitDomain, int iChange) const;
 	void SetSimUnitBlocking(eTactPlotDomain tactDomain) { bSimUnitBlocking[tactDomain] = true; }
 
 	int getNumVisiblePlotsRange2() const { return (int)nVisiblePlotsNearEnemyRange2; }
@@ -997,7 +1002,7 @@ public:
 	void setNumVisiblePlotsRange2(int count) { nVisiblePlotsNearEnemyRange2 = (unsigned char)count; }
 	void setNumVisiblePlotsRange3(int count) { nVisiblePlotsNearEnemyRange3 = (unsigned char)count; }
 
-	bool hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition, int iIgnoreUnitPlot = -1) const;
+	bool hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition, const SPlacementNeighbors* pNeighbors = NULL) const;
 
 protected:
 	const CvPlot* pPlot; //null if invalid
@@ -1032,7 +1037,7 @@ protected:
 	//updated after pillage
 	unsigned char nAdjacentEnemyImprovementDamage;
 	//updated on turn end
-	bool bFriendlyDefenderEndTurn:1;
+	unsigned char aiFriendlyCombatUnitsEndTurn[3];
 	bool bSimUnitBlocking[3];
 };
 
@@ -1667,6 +1672,8 @@ public:
 
 	const CvTacticalPlot* getTactPlot(int plotindex) const; //get a reference to a local tact plot or higher up in the tree if we didn't modify it
 	CvTacticalPlot* getTactPlotMutable(int plotindex); //this is dangerous! the reference returned by one call may become invalid when calling this a second time
+	// Vox Deorum: returns the storage slot for a map plot, or UCHAR_MAX if it is outside this position.
+	unsigned char findTactPlotSlot(int iPlotIndex) const;
 	const vector<CvTacticalPlot>& getTactPlots() const { return tactPlots.read(); };
 
 	CvPlot* getTarget() const { return pTargetPlot; }

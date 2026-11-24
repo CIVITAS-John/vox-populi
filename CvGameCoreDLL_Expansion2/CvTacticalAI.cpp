@@ -12,7 +12,7 @@
 // Vox Deorum: the operational loop, which takes over ProcessDominanceZones when its flag is on
 #include "CvTacticalOperationalLoop.h"
 #include "CvTacticalAnalysisMap.h"
-// Vox Deorum: the trade guard reads which enemy units can move onto a step (CvDangerPlots::GetPossibleCapturers)
+#include "CvDangerPlots.h"
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
 #include "CvEconomicAI.h"
@@ -7876,6 +7876,20 @@ bool CvPlannedPlacement::isKilled(const CvUnit* pUnit) const
 	return iDamage > 0 && iDamage >= pUnit->GetCurrHitPoints();
 }
 
+// Reports whether a unit is embarked at its proposed placement.
+static bool IsEmbarkedAtPlacement(const CvUnit* pUnit, const CvPlot* pPlot)
+{
+	return pPlot == pUnit->plot() ? pUnit->isEmbarked() : pPlot->needsEmbarkation(pUnit);
+}
+
+// Vox Deorum: checks whether a land or sea unit can provide cover from this placement.
+static bool CanDefendPlacement(const CvUnit* pUnit, const CvPlot* pPlot, const SUnitStats* pStats = NULL)
+{
+	const bool bDefends = pStats && pStats->eMoveStrategy != MS_EMBARKED
+		? isCombatUnit(pStats->eMoveStrategy) : pUnit->IsCanDefend();
+	return bDefends && DomainForUnit(pUnit) != CvTacticalPlot::TD_BOTH && !IsEmbarkedAtPlacement(pUnit, pPlot);
+}
+
 // Vox Deorum: places a search unit at its planned plot, unless its own planned damage has killed it
 bool CvPlannedPlacement::place(const SUnitStats& stats, SPlacedUnit& placed) const
 {
@@ -7884,7 +7898,7 @@ bool CvPlannedPlacement::place(const SUnitStats& stats, SPlacedUnit& placed) con
 		return false;
 
 	const CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(stats.iPlotIndex);
-	bool bEmbarked = (pPlot == pUnit->plot()) ? pUnit->isEmbarked() : pPlot->needsEmbarkation(pUnit);
+	const bool bEmbarked = IsEmbarkedAtPlacement(pUnit, pPlot);
 	placed = SPlacedUnit(pUnit, pPlot, stats.iMovesLeft, bEmbarked);
 	return true;
 }
@@ -8725,11 +8739,62 @@ static bool IsCityFallingInSearch(const CvUnit* pUnit, const CvPlot* pPlot, int 
 		TacticalAIHelpers::CanEnemyCaptureCity(pUnit->getOwner(), pPlot, assumedPosition.GetUnitDamageDealt());
 }
 
+// Counts combat units and committed defenders by domain.
+struct SPlacementCounts
+{
+	SPlacementCounts()
+	{
+		for (int i = 0; i < 3; ++i)
+			aiUnits[i] = aiCommitted[i] = 0;
+	}
+
+	// Adds counts from a tile or a placement change.
+	void add(const SPlacementCounts& other)
+	{
+		for (int i = 0; i < 3; ++i)
+		{
+			aiUnits[i] += other.aiUnits[i];
+			aiCommitted[i] += other.aiCommitted[i];
+		}
+	}
+
+	int aiUnits[3];
+	int aiCommitted[3];
+};
+
+// Holds the adjacent counts and the directions with a committed defender.
+struct SPlacementNeighbors : SPlacementCounts
+{
+	SPlacementNeighbors() : iCoveredDirections(0) {}
+
+	unsigned int iCoveredDirections;
+};
+
+// The unit that would defend this tile and the damage it can absorb.
+struct SPlacementProtection
+{
+	SPlacementProtection() : pDefender(NULL), iHitPoints(0), iDanger(0) {}
+
+	// Returns the part of the penalty that reaches an occupant behind the defender.
+	int exposedPenalty(const CvUnit* pUnit, int iPenalty) const
+	{
+		if (!pDefender || pDefender == pUnit)
+			return iPenalty;
+		if (iDanger <= iHitPoints)
+			return 0;
+		return static_cast<int>(static_cast<long long>(iPenalty) * (iDanger - iHitPoints) / iDanger);
+	}
+
+	const CvUnit* pDefender;
+	int iHitPoints;
+	int iDanger;
+};
+
 // Vox Deorum: score the end position. A caller requesting the score for an unsafe plot receives its safety result separately.
 int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignment, const CvTacticalPlot* testPlot, int iDanger,
 							CvTacticalPlot::eTactPlotDomain eRelevantDomain, int iSelfDamage,
 							const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, bool bRelaxedCheck, bool bOnlyCheckImpossible,
-							SCargoCountSnapshot* pCargoSnapshot, bool* pbUnsafe, int* piDangerPenalty = NULL, const SUnitStats* pPlacement = NULL)
+							SCargoCountSnapshot* pCargoSnapshot, bool* pbUnsafe, int* piDangerPenalty = NULL, const SPlacementNeighbors* pNeighbors = NULL)
 {
 	int iResult = 0;
 	const CvPlot* pTestPlot = testPlot->getPlot();
@@ -8740,14 +8805,9 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	//but unfortunately danger is not very useful here
 	// * ZOC is unclear during simulation
 	// * freshly revealed enemy units are not considered
-	int iNumAdjFriendlies = (evalMode==EM_FINAL) ? testPlot->getNumAdjacentFriendliesEndTurn(eRelevantDomain) : testPlot->getNumAdjacentFriendlies(eRelevantDomain, -1);
-	// Vox Deorum: a unit cannot cover its own hypothetical starting plot.
-	const int iIgnoreUnitPlot = pPlacement ? pPlacement->iPlotIndex : -1;
-	const int iIgnoreCoverPlot = pPlacement && pPlacement->bSuppliesEndTurnCover ? iIgnoreUnitPlot : -1;
+	int iNumAdjFriendlies = (evalMode == EM_FINAL) ? testPlot->getNumAdjacentFriendliesEndTurn(eRelevantDomain, pNeighbors)
+		: testPlot->getNumAdjacentFriendlies(eRelevantDomain, -1, pNeighbors);
 	const CvTacticalPlot::eTactPlotDomain eUnitDomain = DomainForUnit(pUnit);
-	if (iIgnoreCoverPlot >= 0 && (eRelevantDomain == CvTacticalPlot::TD_BOTH || eRelevantDomain == eUnitDomain) &&
-		GC.getMap().plotByIndexUnchecked(iIgnoreCoverPlot)->isAdjacent(pTestPlot))
-		iNumAdjFriendlies = max(0, iNumAdjFriendlies - 1);
 	if (bRelaxedCheck) //assume we have friends which might catch up to us later
 		iNumAdjFriendlies++;
 	bool bIsFrontlineCitadelOrCity = (TacticalAIHelpers::IsPlayerCitadel(pTestPlot, assumedPosition.getPlayer()) || pTestPlot->isCity()) && pUnit->getDomainType() == DOMAIN_LAND && testPlot->getEnemyDistance() < 3;
@@ -8769,7 +8829,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	if (testPlot->isEdgePlot() && !pTestPlot->isCity())
 	{
 		//siege units (with limited visibility) should not move there unless covered (the -1 is important)
-		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(eUnitDomain, -1) < 2)
+		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(eUnitDomain, -1, pNeighbors) < 2)
 		{
 			if (!pbUnsafe)
 				return INT_MAX;
@@ -8780,7 +8840,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	}
 	if (!MOD_COMBATAI_TWO_PASS_DANGER && !bOnlyCheckImpossible)
 	{
-		if (iDanger > 0 && (iDanger > iMaxHitPoints || !testPlot->isEdgePlot()) && testPlot->hasCoverFromOtherUnits(assumedPosition, iIgnoreCoverPlot))
+		if (iDanger > 0 && (iDanger > iMaxHitPoints || !testPlot->isEdgePlot()) && testPlot->hasCoverFromOtherUnits(assumedPosition, pNeighbors))
 			//check for cover and assume this would help us
 			iDanger /= 2;
 	}
@@ -8873,7 +8933,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		if (pTestPlot->isCity())
 			iHoldWeight = bOwnCity ? assumedPosition.getCityHoldWeight() : 1000;
 		int iHoldBonus = TACTICAL_COMBAT_CITADEL_BONUS;
-		if (pUnit->GetRange() <= 1 && testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, eUnitDomain == CvTacticalPlot::TD_LAND ? iIgnoreUnitPlot : -1) > 0 && testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND) == 0)
+		if (pUnit->GetRange() <= 1 && testPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_LAND, -1, pNeighbors) > 0 && testPlot->getNumAdjacentEnemies(CvTacticalPlot::TD_LAND) == 0)
 			iHoldBonus = TACTICAL_COMBAT_CITADEL_BONUS/2;
 
 		// Vox Deorum: in our own city the bonus also counts what the unit adds to the city's strength,
@@ -8908,9 +8968,16 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	return iResult;
 }
 
+// Value of taking a civilian, before converting damage points to plot points.
+static int CivilianCaptureValue(const CvUnit* pCivilian)
+{
+	return pCivilian->AI_getUnitAIType() == UNITAI_WORKER ? 20 : 150;
+}
+
 // Vox Deorum: scores a combat unit's move, passing the optional cargo snapshot to the turn-end check
 static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode,
-	SCargoCountSnapshot* pCargoSnapshot = NULL, bool bPlacementOnly = false, int* piDangerPenalty = NULL)
+	SCargoCountSnapshot* pCargoSnapshot = NULL, int* piPlacementScore = NULL, int* piDangerPenalty = NULL,
+	const SPlacementNeighbors* pNeighbors = NULL)
 {
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
@@ -8935,6 +9002,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	int iCurrentHealth = pUnit->GetCurrHitPoints() - unit.iSelfDamage;
 
 	// Vox Deorum: compare locations without simulating another move, heal, or attack.
+	const bool bPlacementOnly = piPlacementScore != NULL;
 	bool bMoving = !bPlacementOnly && unit.iPlotIndex != pTestPlot->GetPlotIndex();
 
 	if (!bMoving)
@@ -9077,7 +9145,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 				if (pCivilian && pCivilian->IsCivilianUnit() && GET_PLAYER(pUnit->getOwner()).IsAtWarWith(pCivilian->getOwner()))
 				{
 					//workers are not so important ...
-					iBonusScore += (pCivilian->AI_getUnitAIType() == UNITAI_WORKER) ? 20 : 150;
+					iBonusScore += CivilianCaptureValue(pCivilian);
 					result->eAssignmentType = A_CAPTURE; //important so that the next assignment can be a move again
 				}
 			}
@@ -9183,7 +9251,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 
 		iDangerScore = ScoreCombatUnitTurnEnd(pUnit, unit.eLastAssignment, testPlot, iDanger,
 			eRelevantDomain, unit.iSelfDamage + iSelfDamage, assumedPosition, evalMode, false, false, pCargoSnapshot,
-			evalMode == EM_FINAL ? &bUnsafeFinalPlot : NULL, piDangerPenalty, bPlacementOnly ? &unit : NULL);
+			evalMode == EM_FINAL ? &bUnsafeFinalPlot : NULL, piDangerPenalty, pNeighbors);
 
 		if (iDangerScore == INT_MAX)
 		{
@@ -9261,22 +9329,23 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 		iDamageDelta = TACTICAL_COMBAT_IMPOSSIBLE_SCORE;
 	// Vox Deorum: a Withdraw search adds its enemy and destination distances at the danger scale
 	const int iPlotValue = iPlotScore * 10 + iDangerScore + iExtra + iWithdrawScore;
+	if (piPlacementScore)
+		*piPlacementScore = iPlotValue;
 	result->SetScore(iPlotValue, iBonusScore, iDamageDelta);
-	// Vox Deorum: discount only the danger penalty that fits in the stored plot score.
-	if (piDangerPenalty)
-		*piDangerPenalty = STacticalAssignment::ClampShort(iPlotValue + *piDangerPenalty) - result->GetPlotScore();
 
 	return result;
 }
 
 //stacking with combat units is allowed here!
-static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, int* piDangerPenalty = NULL)
+static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode,
+	int* piPlacementScore = NULL, int* piDangerPenalty = NULL)
 {
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
 	result->init(unit.iPlotIndex,testPlot->getPlotIndex(), unit.iUnitID, unit.iMovesLeft, unit.eMoveStrategy, A_MOVE, GetPrevPlotScore(unit.iUnitID, assumedPosition));
 	int iScore = 0;
-		
+	int iDangerPenalty = 0;
+
 	//the plot we're checking right now
 	const CvPlot* pTestPlot = testPlot->getPlot();
 	const CvUnit* pUnit = unit.pUnit;
@@ -9326,9 +9395,9 @@ static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& un
 			if (testPlot->isEdgePlot())
 				iDanger += 50;
 
+			iDangerPenalty = iDanger * 10;
 			if (piDangerPenalty)
-				*piDangerPenalty = max(0, iDanger) * 10;
-			iScore -= iDanger;
+				*piDangerPenalty = max(0, iDangerPenalty);
 		}
 	}
 
@@ -9337,7 +9406,10 @@ static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& un
 	int iExtra = result->iRemainingMoves / GD_INT_GET(MOVE_DENOMINATOR);
 
 	//scale to be in range with actual fighting units
-	result->SetScore(iScore * 10 + iExtra, 0, 0);
+	const int iPlotValue = iScore * 10 + iExtra - iDangerPenalty;
+	if (piPlacementScore)
+		*piPlacementScore = iPlotValue;
+	result->SetScore(iPlotValue, 0, 0);
 
 	return result;
 }
@@ -9446,7 +9518,7 @@ static STacticalAssignment* ScorePlotForMeleeAttack(const SUnitStats& unit, cons
 			if (pCivilian && pCivilian->IsCivilianUnit() && GET_PLAYER(pUnit->getOwner()).IsAtWarWith(pCivilian->getOwner()))
 			{
 				//workers are not so important ...
-				iBonusScore += (pCivilian->AI_getUnitAIType() == UNITAI_WORKER) ? 20 : 150;
+				iBonusScore += CivilianCaptureValue(pCivilian);
 			}
 		}
 	}
@@ -9531,7 +9603,8 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 	pSecondEnemyCombatUnit = NULL;
 
 	//set only once
-	bFriendlyDefenderEndTurn = false;
+	for (int i = 0; i < 3; ++i)
+		aiFriendlyCombatUnitsEndTurn[i] = 0;
 	bSimUnitBlocking[TD_BOTH] = false;
 	bSimUnitBlocking[TD_LAND] = false;
 	bSimUnitBlocking[TD_SEA] = false;
@@ -9622,11 +9695,11 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 				else if (pPlotUnit->getDomainType() == DOMAIN_SEA)
 					bfBlockedByNonSimCombatUnit |= 2;
 
-				if (pPlotUnit->TurnProcessed())
+				// Neighbors may not exist yet, so record the defenders here and count them later.
+				if (pPlotUnit->TurnProcessed() && CanDefendPlacement(pPlotUnit, pPlot))
 				{
-					//we need to update the adjacent friendly unit count for adjacent plots
-					//but they are not guaranteed to exist at this point so we have to defer this
-					bFriendlyDefenderEndTurn = true;
+					++aiFriendlyCombatUnitsEndTurn[DomainForUnit(pPlotUnit)];
+					++aiFriendlyCombatUnitsEndTurn[TD_BOTH];
 				}
 
 				//rules for cities are complex so just don't try it
@@ -9698,58 +9771,55 @@ bool CvTacticalPlot::hasFriendlyEmbarkedUnit() const
 	return false;
 }
 
-void CvTacticalPlot::setCombatUnitEndTurn(CvTacticalPosition& currentPosition, eTactPlotDomain unitDomain, bool bOverride)
+// Commits another defender on this tile and updates its neighbors.
+void CvTacticalPlot::addCombatUnitEndTurn(CvTacticalPosition& currentPosition, eTactPlotDomain unitDomain)
 {
-	//can't do anything before initialization is done
-	if (!pPlot)
-		return;
-	
-	//don't do this twice unless override
-	if (bFriendlyDefenderEndTurn && !bOverride)
-		return;
+	++aiFriendlyCombatUnitsEndTurn[unitDomain];
+	if (unitDomain != TD_BOTH)
+		++aiFriendlyCombatUnitsEndTurn[TD_BOTH];
+	changeAdjacentEndTurnCount(currentPosition, unitDomain, 1);
+}
 
-	bFriendlyDefenderEndTurn = true;
-
+// Adds committed defenders on this tile to the adjacent plots' counts.
+void CvTacticalPlot::changeAdjacentEndTurnCount(CvTacticalPosition& currentPosition, eTactPlotDomain unitDomain, int iChange) const
+{
 	CvPlot** aNeighbors = GC.getMap().getNeighborsUnchecked(pPlot);
-	for (int i = 0; i < NUM_DIRECTION_TYPES; i++)
+	for (int i = 0; i < NUM_DIRECTION_TYPES; ++i)
 	{
-		CvPlot* pNeighbor = aNeighbors[i];
-		if (pNeighbor)
-		{
-			CvTacticalPlot* tactPlot = currentPosition.getTactPlotMutable(pNeighbor->GetPlotIndex());
-			if (tactPlot)
-			{
-				tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[unitDomain]++;
-				if (unitDomain != TD_BOTH)
-					tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[TD_BOTH]++;
+		if (!aNeighbors[i])
+			continue;
+		CvTacticalPlot* tactPlot = currentPosition.getTactPlotMutable(aNeighbors[i]->GetPlotIndex());
+		if (!tactPlot)
+			continue;
+		tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[unitDomain] += iChange;
+		if (unitDomain != TD_BOTH)
+			tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[TD_BOTH] += iChange;
 
-				if (tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[TD_LAND] > 6 || tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[TD_SEA] > 6)
-					OutputDebugString("implausible amount of neighbors");
-			}
-		}
+		if (tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[TD_LAND] > 6 || tactPlot->aiFriendlyCombatUnitsAdjacentEndTurn[TD_SEA] > 6)
+			OutputDebugString("implausible amount of neighbors");
 	}
 }
 
-bool CvTacticalPlot::hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition, int iIgnoreUnitPlot) const
+// Checks that friendly defenders hold every adjacent approach toward the enemy.
+bool CvTacticalPlot::hasCoverFromOtherUnits(const CvTacticalPosition& currentPosition, const SPlacementNeighbors* pNeighbors) const
 {
-	//performance optimization
 	if (getEnemyDistance() < 2)
 		return false;
 	if (getEnemyDistance() > 3)
 		return true;
 
-	eTactPlotDomain eDomain = getPlot()->isWater() ? TD_SEA : TD_LAND;
-	int iMyEnemyDist = getEnemyDistance(eDomain);
-
-	const vector<CvTacticalPlot>& plots = currentPosition.getTactPlots();
-	for (int iI = 0; iI < (int)plots.size(); iI++)
+	const eTactPlotDomain eDomain = getPlot()->isWater() ? TD_SEA : TD_LAND;
+	const int iMyEnemyDist = getEnemyDistance(eDomain);
+	CvPlot** aNeighbors = GC.getMap().getNeighborsUnchecked(getPlot());
+	for (int i = 0; i < NUM_DIRECTION_TYPES; ++i)
 	{
-		if (plots[iI].getEnemyDistance(eDomain) < iMyEnemyDist &&
-			(!plots[iI].isCombatEndTurn() || plots[iI].getPlotIndex() == iIgnoreUnitPlot))
-			if (plots[iI].getPlot()->isAdjacent(getPlot()))
-				return false;
+		if (!aNeighbors[i])
+			continue;
+		const CvTacticalPlot* pNeighbor = currentPosition.getTactPlot(aNeighbors[i]->GetPlotIndex());
+		if (pNeighbor && pNeighbor->getEnemyDistance(eDomain) < iMyEnemyDist &&
+			!(pNeighbors ? (pNeighbors->iCoveredDirections & (1u << i)) != 0 : pNeighbor->isCombatEndTurn()))
+			return false;
 	}
-
 	return true;
 }
 
@@ -9822,8 +9892,11 @@ void CvTacticalPlot::friendlyUnitMovingOut(CvTacticalPosition& currentPosition, 
 	OutputDebugString("invalid move\n");
 }
 
-int CvTacticalPlot::getNumAdjacentFriendlies(eTactPlotDomain eDomain, int iIgnoreUnitPlot) const 
+// Counts adjacent units, optionally excluding the moving unit in provisional scoring.
+int CvTacticalPlot::getNumAdjacentFriendlies(eTactPlotDomain eDomain, int iIgnoreUnitPlot, const SPlacementNeighbors* pNeighbors) const
 {
+	if (pNeighbors)
+		return pNeighbors->aiUnits[eDomain];
 	if (iIgnoreUnitPlot >= 0)
 	{
 		CvPlot* pIgnorePlot = GC.getMap().plotByIndexUnchecked(iIgnoreUnitPlot);
@@ -9834,9 +9907,10 @@ int CvTacticalPlot::getNumAdjacentFriendlies(eTactPlotDomain eDomain, int iIgnor
 	return aiFriendlyCombatUnitsAdjacent[eDomain];
 }
 
-int CvTacticalPlot::getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain) const 
-{ 
-	return aiFriendlyCombatUnitsAdjacentEndTurn[eDomain]; 
+// Counts adjacent defenders committed to their tiles.
+int CvTacticalPlot::getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain, const SPlacementNeighbors* pNeighbors) const
+{
+	return pNeighbors ? pNeighbors->aiCommitted[eDomain] : aiFriendlyCombatUnitsAdjacentEndTurn[eDomain];
 }
 
 bool CvTacticalPlot::removeEnemyUnitIfPresent()
@@ -10710,42 +10784,389 @@ static int RelativePlacementScore(int iEndScore, int iStartScore, int iEndDanger
 		static_cast<long long>(iAddedDanger) * iMovesLeft / (GD_INT_GET(MOVE_DENOMINATOR) + iMovesLeft));
 }
 
-// Vox Deorum: read placement and its danger component from a scoring row before the next query reuses it.
-static bool ScoreFinalPlacement(const SUnitStats& unit, const CvTacticalPlot* pPlot, const CvTacticalPosition& position,
-	SCargoCountSnapshot& cargoSnapshot, int& iScore, int& iDangerPenalty)
+// Vox Deorum: reusable storage for the two friendly layouts around a plan's changed tiles.
+class SPlacementLayout
 {
-	const bool bCombat = IsCombatUnit(unit);
-	const STacticalAssignment* pPlacement = bCombat
-		? ScorePlotForCombatUnitMove(unit, pPlot, position, EM_FINAL, &cargoSnapshot, true, &iDangerPenalty)
-		: ScorePlotForNonFightingUnitMove(unit, pPlot, position, EM_FINAL, &iDangerPenalty);
-	iScore = pPlacement->GetPlotScore();
-	return bCombat || pPlacement->IsAcceptable(); // an unsafe combat tile still has a numeric value
+public:
+	// Reserves the tile list once; the per-plan buffers reuse their storage.
+	SPlacementLayout() : m_position(NULL), m_cache(NULL), m_stamp(0)
+	{
+		m_affected.reserve(CvTacticalPosition::MAX_TACT_PLOTS);
+		m_tracked.reserve(TACTSIM_MAX_UNITS_AIR_SEARCH);
+	}
+
+	// Records the changed tiles and their neighbors for the current plan.
+	void build(const CvTacticalPosition& position, const vector<SUnitStats>* const aLists[3])
+	{
+		m_position = &position;
+		m_cache = &gTactPosStorage.getNeighborhoodCache();
+		m_affected.clear();
+		m_tracked.clear();
+		m_planned.unbind();
+		m_occupants.clear();
+		if (++m_stamp == 0)
+		{
+			for (size_t i = 0; i < CvTacticalPosition::MAX_TACT_PLOTS; ++i)
+				m_tiles[i].iStamp = m_tiles[i].iAffectedStamp = 0;
+			m_stamp = 1;
+		}
+
+		for (int iList = 0; iList < 3; ++iList)
+		{
+			for (size_t i = 0; i < aLists[iList]->size(); ++i)
+			{
+				const SUnitStats& unit = (*aLists[iList])[i];
+				if (unit.eMoveStrategy == MS_AIR)
+					continue;
+
+				const CvPlot* pStart = unit.pUnit->plot();
+				const unsigned char iStart = position.findTactPlotSlot(pStart->GetPlotIndex());
+				const unsigned char iEnd = unit.iPlotIndex == pStart->GetPlotIndex()
+					? iStart : position.findTactPlotSlot(unit.iPlotIndex);
+				ASSERT(iStart != UCHAR_MAX && iEnd != UCHAR_MAX);
+				if (iStart == UCHAR_MAX || iEnd == UCHAR_MAX)
+					continue;
+				m_tracked.push_back(&unit);
+
+				const bool bAlive = IsAlive(unit);
+				if (bAlive && iStart == iEnd)
+					continue;
+
+				STile& departure = markAffected(iStart);
+				STile& arrival = markAffected(iEnd);
+				// Exclude units killed by planned damage from both layouts.
+				if (bAlive)
+				{
+					const CvPlot* pEnd = position.getTactPlots()[iEnd].getPlot();
+					AddUnit(departure.aCounts[ENDING], pStart, unit.pUnit, &unit, -1);
+					AddUnit(arrival.aCounts[ENDING], pEnd, unit.pUnit, &unit, 1);
+				}
+			}
+		}
+
+		// Expand the ring around departures and arrivals only, not around the neighbors they add.
+		const size_t nChanged = m_affected.size();
+		for (size_t i = 0; i < nChanged; ++i)
+		{
+			const CvPlot* pPlot = position.getTactPlots()[m_affected[i]].getPlot();
+			CvPlot** aNeighbors = GC.getMap().getNeighborsUnchecked(pPlot);
+			for (int j = 0; j < NUM_DIRECTION_TYPES; ++j)
+			{
+				if (!aNeighbors[j])
+					continue;
+				const unsigned char iSlot = position.findTactPlotSlot(aNeighbors[j]->GetPlotIndex());
+				if (iSlot != UCHAR_MAX)
+					markAffected(iSlot);
+			}
+		}
+
+		// Add live occupancy to the planned changes to finish both layouts.
+		for (size_t i = 0; i < m_affected.size(); ++i)
+		{
+			const unsigned char iSlot = m_affected[i];
+			STile& tile = getTile(iSlot);
+			const CvPlot* pPlot = position.getTactPlots()[iSlot].getPlot();
+			tile.aCounts[STARTING] = getStartingCounts(pPlot);
+			const SCounts& starting = tile.aCounts[STARTING];
+			SCounts& ending = tile.aCounts[ENDING];
+			ending.iOccupants += starting.iOccupants;
+			ending.add(starting);
+		}
+	}
+
+	enum Layout { STARTING, ENDING };
+
+	// Reports whether a tracked unit survives its own planned damage.
+	static bool IsAlive(const SUnitStats& unit)
+	{
+		return !unit.pUnit->isDelayedDeath() && unit.iSelfDamage < unit.pUnit->GetCurrHitPoints();
+	}
+
+	// Returns the tactical slots where friendly occupancy or a neighbor can differ.
+	const vector<unsigned char>& getAffectedSlots() const { return m_affected; }
+
+	// Reports whether this slot needs to be scored with both layouts.
+	bool isAffected(unsigned char iSlot) const
+	{
+		return iSlot != UCHAR_MAX && m_tiles[iSlot].iAffectedStamp == m_stamp;
+	}
+
+	// Finds an owned unit in the search, if present.
+	const SUnitStats* getTracked(const CvUnit* pUnit) const
+	{
+		for (size_t i = 0; i < m_tracked.size(); ++i)
+			if (m_tracked[i]->pUnit == pUnit)
+				return m_tracked[i];
+		return NULL;
+	}
+
+	// Counts nearby units and marks the directions with committed defenders.
+	SPlacementNeighbors getNeighbors(unsigned char iSlot, Layout eLayout) const
+	{
+		ASSERT(isAffected(iSlot));
+		SPlacementNeighbors result;
+		const CvPlot* pPlot = m_position->getTactPlots()[iSlot].getPlot();
+		CvPlot** aNeighbors = GC.getMap().getNeighborsUnchecked(pPlot);
+		for (int i = 0; i < NUM_DIRECTION_TYPES; ++i)
+		{
+			if (!aNeighbors[i])
+				continue;
+			// A tile outside the tactical set or the affected ring has the same counts in both layouts.
+			const unsigned char iNeighbor = m_position->findTactPlotSlot(aNeighbors[i]->GetPlotIndex());
+			const SCounts counts = isAffected(iNeighbor) ? m_tiles[iNeighbor].aCounts[eLayout] : getStartingCounts(aNeighbors[i]);
+			result.add(counts);
+			if (counts.aiCommitted[CvTacticalPlot::TD_BOTH] > 0)
+				result.iCoveredDirections |= 1u << i;
+		}
+		return result;
+	}
+
+	// Looks up the game-selected defender and its danger once for each shared tile and layout.
+	const SPlacementProtection* getProtection(unsigned char iSlot, Layout eLayout)
+	{
+		STile& tile = getTile(iSlot);
+		const CvPlot* pPlot = m_position->getTactPlots()[iSlot].getPlot();
+		if (pPlot->isCity() || tile.aCounts[eLayout].iOccupants < 2)
+			return NULL;
+
+		SPlacementProtection& protection = tile.aProtection[eLayout];
+		if (tile.abProtectionReady[eLayout])
+			return &protection;
+		tile.abProtectionReady[eLayout] = true;
+
+		if (eLayout == STARTING)
+		{
+			const vector<SPlacedUnit>& live = m_cache->getBoardUnits(pPlot);
+			m_occupants.assign(live.begin(), live.end());
+		}
+		else
+		{
+			if (!m_planned.isBound())
+				m_planned.bind(*m_position, *m_cache);
+			m_planned.getUnitsAt(pPlot, m_occupants);
+			std::sort(m_occupants.begin(), m_occupants.end(), InBoardOrder);
+		}
+
+		for (size_t i = 0; i < m_occupants.size(); ++i)
+		{
+			SPlacedUnit& occupant = m_occupants[i];
+			if (occupant.pUnit->getOwner() != m_position->getPlayer())
+				continue;
+			const SUnitStats* pUnit = getTracked(occupant.pUnit);
+			occupant.iExtraDamage = occupant.pUnit->isDelayedDeath() ? occupant.pUnit->GetCurrHitPoints()
+				: pUnit ? pUnit->iSelfDamage : 0;
+		}
+
+		protection.pDefender = pPlot->getBestDefender(m_position->getPlayer(), NO_PLAYER, NULL, false, false, false, false, NULL, &m_occupants);
+		if (protection.pDefender)
+		{
+			const SUnitStats* pStats = getTracked(protection.pDefender);
+			const int iDamage = pStats ? pStats->iSelfDamage : 0;
+			protection.iHitPoints = protection.pDefender->GetCurrHitPoints() - iDamage;
+			protection.iDanger = GetUnitDangerForPlot(protection.pDefender, pPlot, iDamage, *m_position);
+		}
+		return &protection;
+	}
+
+	// Checks capture reach once per tile using the completed plan's surviving enemies.
+	bool canCapture(unsigned char iSlot)
+	{
+		STile& tile = getTile(iSlot);
+		if (!tile.bCaptureReady)
+		{
+			tile.bCaptureReady = true;
+			const CvPlot* pPlot = m_position->getTactPlots()[iSlot].getPlot();
+			const vector<CvUnit*> capturers = GET_PLAYER(m_position->getPlayer()).GetDangerPlots()->GetPossibleCapturers(*pPlot);
+			for (size_t i = 0; i < capturers.size(); ++i)
+			{
+				if (m_position->GetUnitDamage(capturers[i]->GetID()) < capturers[i]->GetCurrHitPoints())
+				{
+					tile.bCapturable = true;
+					break;
+				}
+			}
+		}
+		return tile.bCapturable;
+	}
+
+private:
+	struct SCounts : SPlacementCounts
+	{
+		SCounts() : iOccupants(0) {}
+
+		int iOccupants;
+	};
+
+	struct STile
+	{
+		// Starts a tile with no layout or cached reads for this plan.
+		STile() : iStamp(0), iAffectedStamp(0), bCaptureReady(false), bCapturable(false)
+		{
+			abProtectionReady[STARTING] = abProtectionReady[ENDING] = false;
+		}
+
+		unsigned int iStamp;
+		unsigned int iAffectedStamp;
+		SCounts aCounts[2];
+		SPlacementProtection aProtection[2];
+		bool abProtectionReady[2];
+		bool bCaptureReady;
+		bool bCapturable;
+	};
+
+	// Resets a slot on first touch and adds it to the affected list once.
+	STile& markAffected(unsigned char iSlot)
+	{
+		STile& tile = m_tiles[iSlot];
+		if (tile.iStamp != m_stamp)
+		{
+			tile = STile();
+			tile.iStamp = m_stamp;
+		}
+		if (tile.iAffectedStamp != m_stamp)
+		{
+			tile.iAffectedStamp = m_stamp;
+			m_affected.push_back(iSlot);
+		}
+		return tile;
+	}
+
+	// Reads a layout slot already recorded for this plan.
+	STile& getTile(unsigned char iSlot)
+	{
+		ASSERT(isAffected(iSlot) && m_tiles[iSlot].iStamp == m_stamp);
+		return m_tiles[iSlot];
+	}
+
+	// Compares projected occupants in the same order as the real plot list.
+	static bool InBoardOrder(const SPlacedUnit& left, const SPlacedUnit& right)
+	{
+		return left.pUnit != right.pUnit && isBeforeUnitCycle(left.pUnit, right.pUnit);
+	}
+
+	// Updates occupancy and defense counts for one unit on the tile.
+	static void AddUnit(SCounts& counts, const CvPlot* pPlot, const CvUnit* pUnit, const SUnitStats* pStats, int iChange)
+	{
+		counts.iOccupants += iChange;
+		if (!CanDefendPlacement(pUnit, pPlot, pStats))
+			return;
+
+		const CvTacticalPlot::eTactPlotDomain eDomain = DomainForUnit(pUnit);
+		counts.aiUnits[eDomain] += iChange;
+		counts.aiUnits[CvTacticalPlot::TD_BOTH] += iChange;
+		if (pStats ? pStats->bCommitsToTurnEnd : pUnit->TurnProcessed())
+		{
+			counts.aiCommitted[eDomain] += iChange;
+			counts.aiCommitted[CvTacticalPlot::TD_BOTH] += iChange;
+		}
+	}
+
+	// Counts starting occupants that survive the planned actions.
+	SCounts getStartingCounts(const CvPlot* pPlot) const
+	{
+		const vector<SPlacedUnit>& live = m_cache->getBoardUnits(pPlot);
+		SCounts starting;
+		for (size_t i = 0; i < live.size(); ++i)
+		{
+			const CvUnit* pUnit = live[i].pUnit;
+			if (pUnit->getOwner() != m_position->getPlayer() || pUnit->getDomainType() == DOMAIN_AIR || pUnit->isDelayedDeath())
+				continue;
+			const SUnitStats* pStats = getTracked(pUnit);
+			if (!pStats || IsAlive(*pStats))
+				AddUnit(starting, pPlot, pUnit, pStats, 1);
+		}
+
+		return starting;
+	}
+
+	const CvTacticalPosition* m_position;
+	SNeighborhoodCache* m_cache;
+	unsigned int m_stamp;
+	STile m_tiles[CvTacticalPosition::MAX_TACT_PLOTS];
+	vector<unsigned char> m_affected;
+	vector<const SUnitStats*> m_tracked;
+	CvPlannedPlacement m_planned;
+	vector<SPlacedUnit> m_occupants;
+};
+
+static SPlacementLayout gPlacementLayout;
+
+// Vox Deorum: returns the reusable scratch storage for final placement scoring.
+static SPlacementLayout& GetPlacementLayoutScratch()
+{
+	return gPlacementLayout;
 }
 
-// Vox Deorum: score both tiles on the completed board with the same post-action unit state.
-static int RelativeUnitPlacement(const SUnitStats& unit, int iMovesLeft,
-	const CvTacticalPosition& position, SCargoCountSnapshot& cargoSnapshot)
+// Scores a unit on a tile with the chosen friendly layout.
+static bool ScoreFinalPlacement(const SUnitStats& unit, unsigned char iSlot,
+	const CvTacticalPosition& position, SCargoCountSnapshot& cargoSnapshot, SPlacementLayout& layout,
+	SPlacementLayout::Layout eLayout, int& iScore, int& iDangerPenalty)
 {
-	// The real unit stays on its starting tile throughout the search.
-	const int iStartPlot = unit.pUnit->plot()->GetPlotIndex();
-	if (unit.iPlotIndex == iStartPlot || unit.eMoveStrategy == MS_AIR || unit.eLastAssignment == A_USE_POWER)
+	const CvTacticalPlot* pTactPlot = &position.getTactPlots()[iSlot];
+	const CvPlot* pPlot = pTactPlot->getPlot();
+	const bool bCivilian = unit.pUnit->IsCivilianUnit();
+	const bool bSupport = isSupportUnit(unit.eMoveStrategy);
+	int iPlotScore = 0;
+	iDangerPenalty = 0;
+	if (!bCivilian || bSupport)
+	{
+		SUnitStats placement = unit;
+		placement.iMovesLeft = 0;
+		if (!bSupport)
+		{
+			if (IsEmbarkedAtPlacement(unit.pUnit, pPlot))
+				placement.eMoveStrategy = MS_EMBARKED;
+			else if (placement.eMoveStrategy == MS_EMBARKED)
+				placement.eMoveStrategy = MS_THIRDLINE; // An embark route can start or finish on land.
+		}
+
+		if (IsCombatUnit(placement))
+		{
+			// Unsafe combat tiles still have a numeric value.
+			const SPlacementNeighbors neighbors = layout.getNeighbors(iSlot, eLayout);
+			ScorePlotForCombatUnitMove(placement, pTactPlot, position, EM_FINAL, &cargoSnapshot, &iPlotScore, &iDangerPenalty, &neighbors);
+		}
+		else if (!ScorePlotForNonFightingUnitMove(placement, pTactPlot, position, EM_FINAL, &iPlotScore, &iDangerPenalty)->IsAcceptable())
+			return false;
+	}
+
+	const int iScoreWithoutDanger = iPlotScore + iDangerPenalty;
+	// Support units keep their target-distance score and still face capture like other civilians.
+	if (bCivilian && !pPlot->isCity() && layout.canCapture(iSlot))
+		iDangerPenalty += CivilianCaptureValue(unit.pUnit) * 10;
+
+	if (iDangerPenalty > 0)
+	{
+		if (const SPlacementProtection* pProtection = layout.getProtection(iSlot, eLayout))
+			iDangerPenalty = pProtection->exposedPenalty(unit.pUnit, iDangerPenalty);
+	}
+	iScore = STacticalAssignment::ClampShort(iScoreWithoutDanger - iDangerPenalty);
+	// Credit remaining movement only for danger that fits in the stored plot score.
+	iDangerPenalty = STacticalAssignment::ClampShort(iScoreWithoutDanger) - iScore;
+	return true;
+}
+
+// Compares placement with both layouts using the same enemies and post-action health.
+static int RelativeUnitPlacement(const SUnitStats& unit, const CvTacticalPosition& position,
+	SCargoCountSnapshot& cargoSnapshot, SPlacementLayout& layout)
+{
+	if (unit.eMoveStrategy == MS_AIR || unit.eLastAssignment == A_USE_POWER || !SPlacementLayout::IsAlive(unit))
 		return 0;
 
-	const CvTacticalPlot* pStart = position.getTactPlot(iStartPlot);
-	const CvTacticalPlot* pEnd = position.getTactPlot(unit.iPlotIndex);
-	if (!pStart || !pEnd)
+	const CvPlot* pStart = unit.pUnit->plot();
+	const unsigned char iStart = position.findTactPlotSlot(pStart->GetPlotIndex());
+	const unsigned char iEnd = unit.iPlotIndex == pStart->GetPlotIndex() ? iStart : position.findTactPlotSlot(unit.iPlotIndex);
+	if (!layout.isAffected(iStart) || !layout.isAffected(iEnd))
 		return 0;
 
-	SUnitStats placement = unit;
-	placement.iMovesLeft = 0;
-	int iEndScore = 0;
 	int iStartScore = 0;
-	int iEndDanger = 0;
+	int iEndScore = 0;
 	int iStartDanger = 0;
-	if (!ScoreFinalPlacement(placement, pEnd, position, cargoSnapshot, iEndScore, iEndDanger) ||
-		!ScoreFinalPlacement(placement, pStart, position, cargoSnapshot, iStartScore, iStartDanger))
+	int iEndDanger = 0;
+	if (!ScoreFinalPlacement(unit, iStart, position, cargoSnapshot, layout, SPlacementLayout::STARTING, iStartScore, iStartDanger) ||
+		!ScoreFinalPlacement(unit, iEnd, position, cargoSnapshot, layout, SPlacementLayout::ENDING, iEndScore, iEndDanger))
 		return 0;
-	return RelativePlacementScore(iEndScore, iStartScore, iEndDanger, iStartDanger, iMovesLeft);
+	return RelativePlacementScore(iEndScore, iStartScore, iEndDanger, iStartDanger, unit.bCommitsToTurnEnd ? 0 : unit.iMovesLeft);
 }
 
 //see if all the plots where our units would end their turn are acceptable
@@ -10814,21 +11235,40 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		}
 	}
 
-	// Vox Deorum: replace provisional scores only after the safety checks pass. Early completion also releases units.
+	// Replace provisional scores only once the safety checks pass.
+	const vector<SUnitStats>* aLists[3];
+	getTrackedUnitLists(aLists);
+	SPlacementLayout& layout = GetPlacementLayoutScratch();
+	layout.build(*this, aLists);
 	int iPlotAdjustment = 0;
-	// Vox Deorum: a Withdraw tests these gains alone, because the ranking value also subtracts the stored scores
 	int iPlacementGain = 0;
-	for (int iList = 0; iList < 2; ++iList)
+	for (int iList = 0; iList < 3; ++iList)
 	{
-		const bool bEarlyRelease = iList == 1;
-		const vector<SUnitStats>& units = bEarlyRelease ? availableUnits.read() : notQuiteFinishedUnits_r;
+		const vector<SUnitStats>& units = *aLists[iList];
 		for (size_t i = 0; i < units.size(); ++i)
 		{
 			const SUnitStats& unit = units[i];
-			if (unit.eLastAssignment == A_INITIAL)
+			const int iGain = RelativeUnitPlacement(unit, *this, cargoSnapshot, layout);
+			iPlotAdjustment += getFinalPlotAdjustment(unit.iUnitID, iGain);
+			iPlacementGain += iGain;
+		}
+	}
+
+	const vector<unsigned char>& affected = layout.getAffectedSlots();
+	for (size_t iSlot = 0; iSlot < affected.size(); ++iSlot)
+	{
+		const CvPlot* pPlot = getTactPlots()[affected[iSlot]].getPlot();
+		const vector<SPlacedUnit>& occupants = gTactPosStorage.getNeighborhoodCache().getBoardUnits(pPlot);
+		for (size_t i = 0; i < occupants.size(); ++i)
+		{
+			const CvUnit* pUnit = occupants[i].pUnit;
+			if (pUnit->getOwner() != getPlayer() || pUnit->getDomainType() == DOMAIN_AIR ||
+				pUnit->isDelayedDeath() || layout.getTracked(pUnit))
 				continue;
-			const int iMovesLeft = bEarlyRelease || unit.eLastAssignment == A_BLOCKED ? unit.iMovesLeft : 0;
-			const int iGain = RelativeUnitPlacement(unit, iMovesLeft, *this, cargoSnapshot);
+			// An outsider stays put, so the choice of combat line cancels out.
+			SUnitStats unit(pUnit, 0, pUnit->IsCanDefend() ? MS_THIRDLINE : MS_NONE);
+			unit.bCommitsToTurnEnd = pUnit->TurnProcessed();
+			const int iGain = RelativeUnitPlacement(unit, *this, cargoSnapshot, layout);
 			iPlotAdjustment += getFinalPlotAdjustment(unit.iUnitID, iGain);
 			iPlacementGain += iGain;
 		}
@@ -11236,17 +11676,18 @@ void CvTacticalPosition::refreshVolatilePlotProperties(bool bInitial)
 		{
 			//even if we're not sure whether the unit is going to stay, we can get temporary benefits
 			if (it->isBlockedByNonSimUnit(CvTacticalPlot::TD_LAND))
-			{
 				it->changeNeighboringUnitCount(*this, MS_FIRSTLINE, CvTacticalPlot::TD_LAND, +1);
-				if (it->isCombatEndTurn())
-					it->setCombatUnitEndTurn(*this, CvTacticalPlot::TD_LAND, true);
-			}
 			//don't count cities twice
 			if (it->isBlockedByNonSimUnit(CvTacticalPlot::TD_SEA) && !it->getPlot()->isCity())
-			{
 				it->changeNeighboringUnitCount(*this, MS_FIRSTLINE, CvTacticalPlot::TD_SEA, +1);
-				if (it->isCombatEndTurn())
-					it->setCombatUnitEndTurn(*this, CvTacticalPlot::TD_SEA, true);
+
+			// Vox Deorum: committed counts come from real units, including ships in cities.
+			for (int iDomain = CvTacticalPlot::TD_LAND; iDomain <= CvTacticalPlot::TD_SEA; ++iDomain)
+			{
+				const CvTacticalPlot::eTactPlotDomain eDomain = static_cast<CvTacticalPlot::eTactPlotDomain>(iDomain);
+				const int iDefenders = it->getCombatUnitsEndTurn(eDomain);
+				if (iDefenders > 0)
+					it->changeAdjacentEndTurnCount(*this, eDomain, iDefenders);
 			}
 		}
 	}
@@ -12051,24 +12492,22 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 	//are we done or can we do further moves with this unit?
 	if (itUnit->iMovesLeft == 0 || bEndOfSim)
 	{
-		//blocked units might still move away
-		if (IsCombatUnit(*itUnit))
+		const CvUnit* pUnit = itUnit->pUnit;
+		itUnit->bCommitsToTurnEnd = newAssignment.eAssignmentType != A_BLOCKED &&
+			itUnit->iSelfDamage < pUnit->GetCurrHitPoints() &&
+			(itUnit->iMovesLeft == 0 || pUnit->isBarbarian() || !pUnit->shouldHeal(false));
+		const bool bCombat = IsCombatUnit(*itUnit);
+		const bool bCommittedDefender = itUnit->bCommitsToTurnEnd &&
+			CanDefendPlacement(pUnit, GC.getMap().plotByIndexUnchecked(itUnit->iPlotIndex), &*itUnit);
+		if (bCombat || bCommittedDefender)
 		{
-			CvTacticalPlot::eTactPlotDomain tactDomain = DomainForUnit(itUnit->pUnit);
+			CvTacticalPlot::eTactPlotDomain tactDomain = DomainForUnit(pUnit);
 			CvTacticalPlot* tactPlot = getTactPlotMutable(itUnit->iPlotIndex);
-			tactPlot->SetSimUnitBlocking(tactDomain);
-			//if the unit is blocked, we won't assume anything about it ending its turn here, but it is blocking our other moves
-			if (newAssignment.eAssignmentType != A_BLOCKED)
-			{
-				CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(itUnit->iUnitID);
-				// Need to check these cases, otherwise the unit can run away!
-				if (itUnit->iMovesLeft == 0 || pUnit->isBarbarian() || !pUnit->shouldHeal(false))
-				{
-					// Vox Deorum: remember whether this unit supplies the tile's end-turn cover.
-					itUnit->bSuppliesEndTurnCover = !tactPlot->isCombatEndTurn();
-					tactPlot->setCombatUnitEndTurn(*this, tactDomain);
-				}
-			}
+			//blocked units might still move away
+			if (bCombat)
+				tactPlot->SetSimUnitBlocking(tactDomain);
+			if (bCommittedDefender)
+				tactPlot->addCombatUnitEndTurn(*this, tactDomain);
 		}
 		notQuiteFinishedUnits.write().push_back(*itUnit);
 		availableUnits_w.erase(itUnit);
@@ -12160,11 +12599,12 @@ struct TacticalPosition_EqualRangeComparison
 	bool operator() (unsigned short a, const pair<unsigned short, unsigned char>& b) const { return a < b.first; }
 };
 
-CvTacticalPlot* CvTacticalPosition::findTactPlotMutable(int iPlotIndex)
+// Vox Deorum: uses the dense root lookup first, then looks for plots the search revealed later.
+unsigned char CvTacticalPosition::findTactPlotSlot(int iPlotIndex) const
 {
 	const unsigned char slot = findRootTactPlotSlot(iPlotIndex);
 	if (slot != UCHAR_MAX)
-		return &tactPlots.write()[slot];
+		return slot;
 
 	if (iPlotIndex >= 0 && iPlotIndex < USHRT_MAX)
 	{
@@ -12173,27 +12613,21 @@ CvTacticalPlot* CvTacticalPosition::findTactPlotMutable(int iPlotIndex)
 			lower_bound(tactPlotLookup_r.begin(), tactPlotLookup_r.end(),
 				(unsigned short)iPlotIndex, TacticalPosition_EqualRangeComparison());
 		if (it != tactPlotLookup_r.end() && it->first == (unsigned short)iPlotIndex)
-			return &tactPlots.write()[it->second];
+			return it->second;
 	}
-	return NULL;
+	return UCHAR_MAX;
+}
+
+CvTacticalPlot* CvTacticalPosition::findTactPlotMutable(int iPlotIndex)
+{
+	const unsigned char slot = findTactPlotSlot(iPlotIndex);
+	return slot != UCHAR_MAX ? &tactPlots.write()[slot] : NULL;
 }
 
 const CvTacticalPlot* CvTacticalPosition::findTactPlot(int iPlotIndex) const
 {
-	const unsigned char slot = findRootTactPlotSlot(iPlotIndex);
-	if (slot != UCHAR_MAX)
-		return &tactPlots.read()[slot];
-
-	if (iPlotIndex >= 0 && iPlotIndex < USHRT_MAX)
-	{
-		const TactPlotIndexByPlotIndex& tactPlotLookup_r = tactPlotLookup.read();
-		TactPlotIndexByPlotIndex::const_iterator it =
-			lower_bound(tactPlotLookup_r.begin(), tactPlotLookup_r.end(),
-				(unsigned short)iPlotIndex, TacticalPosition_EqualRangeComparison());
-		if (it != tactPlotLookup_r.end() && it->first == (unsigned short)iPlotIndex)
-			return &tactPlots.read()[it->second];
-	}
-	return NULL;
+	const unsigned char slot = findTactPlotSlot(iPlotIndex);
+	return slot != UCHAR_MAX ? &tactPlots.read()[slot] : NULL;
 }
 
 bool CvTacticalPosition::addTacticalPlot(const CvPlot* pPlot, const vector<const CvUnit*>& allOurUnits)
