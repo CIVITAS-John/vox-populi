@@ -2221,25 +2221,31 @@ double CvTacticalOperationalLoop::CampValue(const SOperationalTurn& turn, const 
 	return turn.fCampBounty * std::min(1.0, turn.weights.afConstant[OPERATIONAL_CONSTANT_CAMP_NEAR_PLOTS] / iDistance);
 }
 
-// Finds the best independent camp recruit that can leave its post and preserves the tactical recruit list and move type.
+// Finds the best free roster recruit for a camp that can leave its post and preserves the tactical recruit list and move type.
 CvUnit* CvTacticalOperationalLoop::FindCampClaimant(CvTacticalAI& kTactical, CvPlot* pPlot, int& iTurns)
 {
 	CvPlayer& kPlayer = *kTactical.m_pPlayer;
 	const int iRange = kPlayer.IsAtWarAnyMajor() ? 6 : 11;
 	const list<int>& roster = kTactical.m_CurrentTurnUnits;
+
+	set<int> allowed;
+	for (list<int>::const_iterator it = roster.begin(); it != roster.end(); ++it)
+	{
+		CvUnit* pCandidate = kPlayer.getUnit(*it);
+		if (!pCandidate || pCandidate->getArmyID() != -1 || IsHeldGarrison(pCandidate))
+			continue;
+		allowed.insert(*it);
+	}
+	if (allowed.empty())
+		return NULL;
+
 	const CTacticalUnitArray previous = kTactical.m_CurrentMoveUnits;
 	CvUnit* pUnit = NULL;
-	kTactical.FindUnitsForHarassing(pPlot, iRange, -1, -1, DOMAIN_LAND, false, true, kPlayer.getNumUnits());
-	for (vector<CvTacticalUnit>::const_iterator it = kTactical.m_CurrentMoveUnits.begin();
-		it != kTactical.m_CurrentMoveUnits.end(); ++it)
+	kTactical.FindUnitsForHarassing(pPlot, iRange, -1, -1, DOMAIN_LAND, false, true, 1, false, &allowed);
+	if (kTactical.m_CurrentMoveUnits.size() > 0)
 	{
-		CvUnit* pCandidate = kPlayer.getUnit(it->GetID());
-		if (!pCandidate || pCandidate->getArmyID() != -1 || IsHeldGarrison(pCandidate) ||
-			std::find(roster.begin(), roster.end(), it->GetID()) == roster.end())
-			continue;
-		pUnit = pCandidate;
-		iTurns = it->GetMovesToTarget();
-		break;
+		pUnit = kPlayer.getUnit(kTactical.m_CurrentMoveUnits[0].GetID());
+		iTurns = kTactical.m_CurrentMoveUnits[0].GetMovesToTarget();
 	}
 	kTactical.m_CurrentMoveUnits = previous;
 	return pUnit;
