@@ -39,6 +39,8 @@ enum eOperationalConstant
 	OPERATIONAL_CONSTANT_MARCH_READY_UNITS,
 	// 0 turns the fight exposure split off.
 	OPERATIONAL_CONSTANT_EXPOSURE_SPLIT,
+	// Camps within this many plots of our nearest city count at full value.
+	OPERATIONAL_CONSTANT_CAMP_NEAR_PLOTS,
 	NUM_OPERATIONAL_CONSTANTS
 };
 

@@ -107,6 +107,10 @@ void ReferenceUnitTypes(const CvPlayer& kPlayer, std::vector<UnitTypes>& aeTypes
 // Sets the typical unit worth (the mean base worth of the reference types) and the gold per unit of worth (the sum of
 // their rule prices over the sum of their base worths, among the types with a price). Each is 0 without a basis.
 void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double& fGoldPerWorth);
+// Returns the ordinary gold the player receives for clearing a camp.
+int CampBounty(const CvPlayer& kPlayer);
+// Returns the mean base strength of the reference types, using ranged strength when available (100 per point).
+double TypicalUnitStrength(const CvPlayer& kPlayer);
 // Returns the share fDiscount of a ready upgrade's base worth gain, or 0 when the upgrade is worth less.
 double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount);
 // Returns the most one plot can move the ground score, by its owner when watching started: its whole weight for our

@@ -802,8 +802,8 @@ void CvTacticalAI::FindTacticalTargets()
 	//Let's clean up our naval target list.
 	PrioritizeNavalTargetsAndAddToMainList();
 
-	// Vox Deorum: keep enemy targets before native drops the ones near a better one. Store their
-	// identities now, since the high priority passes can replace a defender or change city ownership.
+	// Vox Deorum: keep enemy and camp targets before native target suppression. Store enemy identities
+	// now, since the high priority passes can replace a defender or change city ownership.
 	m_OperationalTargets.clear();
 	if (MOD_VOX_TACTICAL_OPERATIONAL_LOOP && !m_pPlayer->isBarbarian())
 	{
@@ -817,6 +817,8 @@ void CvTacticalAI::FindTacticalTargets()
 				const CvCity* pCity = GC.getMap().plot(target.GetTargetX(), target.GetTargetY())->getPlotCity();
 				m_OperationalTargets.push_back(make_pair(target, IDInfo(pCity->getOwner(), pCity->GetID())));
 			}
+			else if (target.GetTargetType() == AI_TACTICAL_TARGET_BARBARIAN_CAMP)
+				m_OperationalTargets.push_back(make_pair(target, IDInfo()));
 		}
 	}
 
@@ -1210,6 +1212,10 @@ void CvTacticalAI::PlotGrabGoodyMoves()
 			}
 		}
 	}
+
+	// Vox Deorum: the command loop handles camps; ruins still use this pass.
+	if (MOD_VOX_TACTICAL_OPERATIONAL_LOOP && !m_pPlayer->isBarbarian())
+		return;
 
 	//then barb camps, occupied or not
 	ClearCurrentMoveUnits(AI_TACTICAL_BARBARIAN_CAMP);
@@ -5267,20 +5273,29 @@ bool CvTacticalAI::FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int
 	SPathFinderUserData data(m_pPlayer->GetID(), PT_ARMY_MIXED, NO_PLAYER, (iNumTurnsAway+1)*(eDomain==DOMAIN_LAND ? 3 : 5));
 	ReachablePlots relevantPlots = GC.GetStepFinder().GetPlotsInReach(pTarget, data);
 
-	//plots are ordered by turns to reach!
+	// Vox Deorum: visit defenders in ID order so an equally good later arrival cannot win the tie.
+	map<int, CvUnit*> defenders;
 	for (ReachablePlots::const_iterator it = relevantPlots.begin(); it != relevantPlots.end(); ++it)
 	{
 		CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
 		CvUnit* pLoopUnit = pPlot->getBestDefender(m_pPlayer->GetID());
 		if (pLoopUnit)
+			defenders.insert(make_pair(pLoopUnit->GetID(), pLoopUnit));
+	}
+
+	// Vox Deorum: rank by score, danger share and ID. Carry the real travel time with the result.
+	vector<pair<pair<int, double>, pair<int, int> > > candidates;
+	int iSafeArrivals = 0;
+	for (map<int, CvUnit*>::const_iterator it = defenders.begin(); it != defenders.end(); ++it)
+	{
+		CvUnit* pLoopUnit = it->second;
+		CvPlot* pPlot = pLoopUnit->plot();
+		if (!pLoopUnit->isDelayedDeath() && pLoopUnit->canMove() && !pLoopUnit->TurnProcessed())
 		{
-			if (pLoopUnit->isDelayedDeath())
-				continue;
-
-			if (!pLoopUnit->canMove() || pLoopUnit->TurnProcessed())
-				continue;
-
 			// plundering a trade route on the current plot doesn't cost us anything, so we do it whenever possible and the following exclusions do not apply
+			// Vox Deorum: use the same danger read for eligibility and ranking.
+			int iDanger;
+			int iHitPoints = pLoopUnit->GetCurrHitPoints();
 			if (!bPlunderTradeRoute || pPlot != pTarget)
 			{
 				if (!pLoopUnit->canUseForTacticalAI())
@@ -5293,19 +5308,22 @@ bool CvTacticalAI::FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int
 				if (pLoopUnit->IsCoveringFriendlyCivilian())
 					continue;
 
-				if (iMinHitpoints > 0 && pLoopUnit->GetCurrHitPoints() < iMinHitpoints)
+				if (iMinHitpoints > 0 && iHitPoints < iMinHitpoints)
 					continue;
 
-				if (iMaxHitpoints > 0 && pLoopUnit->GetCurrHitPoints() > iMaxHitpoints)
+				if (iMaxHitpoints > 0 && iHitPoints > iMaxHitpoints)
 					continue;
 
-				if (pLoopUnit->GetDanger(pTarget) > pLoopUnit->GetCurrHitPoints())
+				iDanger = pLoopUnit->GetDanger(pTarget);
+				if (iDanger > iHitPoints)
 					continue;
 
 				//don't use garrisons if there is an enemy around. the garrison may still attack when we do garrison moves!
 				if (pLoopUnit->IsGarrisoned() && pLoopUnit->GetGarrisonedCity()->NeedsGarrison() && pLoopUnit->getDomainType() != DOMAIN_SEA)
 					continue;
 			}
+			else
+				iDanger = pLoopUnit->GetDanger(pTarget);
 
 			if (pLoopUnit->isBarbarian() && pLoopUnit->plot()->getImprovementType() == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT))
 				continue;
@@ -5325,7 +5343,6 @@ bool CvTacticalAI::FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int
 			int iTurnsCalculated = pLoopUnit->TurnsToReachTarget(pTarget, iFlags, iNumTurnsAway);
 			if (iTurnsCalculated <= iNumTurnsAway)
 			{
-				CvTacticalUnit unit(pLoopUnit->GetID());
 				int iPlunderBonus = 0;
 				if (bPlunderTradeRoute)
 				{
@@ -5338,18 +5355,25 @@ bool CvTacticalAI::FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int
 						iPlunderBonus += pLoopUnit->getYieldFromTRPlunder((YieldTypes)iI);
 					}
 				}
-				unit.SetAttackStrength(1 + iNumTurnsAway - iTurnsCalculated + iPlunderBonus);
-				unit.SetHealthPercent(1, 1);
-				m_CurrentMoveUnits.push_back(unit);
-				//pathfinding is expensive, don't return more than needed
-				if (m_CurrentMoveUnits.size() >= (size_t)iMaxNumUnits)
+				// Vox Deorum: plunder bonuses can still beat a safe arrival this turn.
+				int iScore = 1 + iNumTurnsAway - iTurnsCalculated + iPlunderBonus;
+				candidates.push_back(make_pair(make_pair(-iScore, double(iDanger) / iHitPoints), make_pair(pLoopUnit->GetID(), iTurnsCalculated)));
+				if (!bPlunderTradeRoute && iTurnsCalculated == 0 && iDanger == 0 && ++iSafeArrivals >= iMaxNumUnits)
 					break;
 			}
 		}
 	}
 
-	// Now sort them in the order we'd like them to attack
-	std::stable_sort(m_CurrentMoveUnits.begin(), m_CurrentMoveUnits.end());
+	// Vox Deorum: return only the highest ranked units.
+	std::sort(candidates.begin(), candidates.end());
+	for (size_t i = 0; i < candidates.size() && i < (size_t)iMaxNumUnits; i++)
+	{
+		CvTacticalUnit unit(candidates[i].second.first);
+		unit.SetAttackStrength(-candidates[i].first.first);
+		unit.SetHealthPercent(1, 1);
+		unit.SetMovesToTarget(candidates[i].second.second);
+		m_CurrentMoveUnits.push_back(unit);
+	}
 
 	return m_CurrentMoveUnits.size()>0;
 }

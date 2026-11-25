@@ -34,7 +34,7 @@ const char* const OPERATIONAL_FLAVOR_SLOPE_NAMES[] =
 typedef char OperationalSlopeNamesMatchSlots[(sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES) / sizeof(OPERATIONAL_FLAVOR_SLOPE_NAMES[0]) == STacticalFlavors::NUM_SLOTS) ? 1 : -1];
 
 // The theater floor and exponent, city allowance in typical units, Reinforce strength ratio, readiness failure limit,
-// the Withdraw switch and the exposure split switch.
+// the Withdraw switch, army march settings, the exposure split switch and camp.nearPlots for full camp value.
 const OperationalConstant OPERATIONAL_CONSTANT[] =
 {
 	{ "floor.theater",          0.2 },
@@ -47,6 +47,7 @@ const OperationalConstant OPERATIONAL_CONSTANT[] =
 	{ "march.enabled",          0.0 },
 	{ "march.readyUnits",       2.0 },
 	{ "exposure.split",         1.0 },
+	{ "camp.nearPlots",         5.0 },
 };
 typedef char OperationalConstantRowsMatchConstants[(sizeof(OPERATIONAL_CONSTANT) / sizeof(OPERATIONAL_CONSTANT[0]) == NUM_OPERATIONAL_CONSTANTS) ? 1 : -1];
 

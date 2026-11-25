@@ -267,6 +267,34 @@ void ReferenceUnitScales(const CvPlayer& kPlayer, double& fTypicalWorth, double&
 		fGoldPerWorth = fPriceTotal / fPricedWorth;
 }
 
+// Mirrors the ordinary gold in DoBarbCampCleared and doInstantYield.
+int CampBounty(const CvPlayer& kPlayer)
+{
+	if (!kPlayer.isMajorCiv() || kPlayer.getNumCities() == 0)
+		return 0;
+	int iGold = kPlayer.getHandicapInfo().getBarbarianCampGold();
+	if (!kPlayer.isHuman(ISHUMAN_HANDICAP))
+		iGold += GC.getGame().getHandicapInfo().getAIBarbarianCampGold();
+	iGold = iGold * (100 + kPlayer.GetPlayerTraits()->GetPlunderModifier()) / 100;
+	if (MOD_BALANCE_VP)
+		iGold *= std::max(1, static_cast<int>(kPlayer.GetCurrentEra()));
+	return iGold;
+}
+
+// Averages the reference types' base ranged strength, or base melee strength if they have no ranged attack.
+double TypicalUnitStrength(const CvPlayer& kPlayer)
+{
+	std::vector<UnitTypes> aeTypes;
+	ReferenceUnitTypes(kPlayer, aeTypes);
+	double fStrength = 0.0;
+	for (size_t i = 0; i < aeTypes.size(); i++)
+	{
+		const CvUnitEntry& kInfo = *GC.getUnitInfo(aeTypes[i]);
+		fStrength += kInfo.GetRangedCombat() > 0 ? kInfo.GetRangedCombat() : kInfo.GetCombat();
+	}
+	return aeTypes.empty() ? 0.0 : 100.0 * fStrength / aeTypes.size();
+}
+
 // Credits the discounted gain of the upgrade, never a loss.
 double UpgradePremium(double fBaseNow, double fBaseTarget, double fDiscount)
 {

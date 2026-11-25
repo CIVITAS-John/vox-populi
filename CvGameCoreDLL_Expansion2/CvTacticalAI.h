@@ -544,7 +544,7 @@ private:
 
 	// Lists of targets for the turn
 	vector<CvTacticalTarget> m_AllTargets;
-	// Vox Deorum: enemy targets and their original identities, before SortTargetListAndDropUselessTargets.
+	// Vox Deorum: enemy identities and camp plots captured before native target suppression.
 	vector<pair<CvTacticalTarget, IDInfo> > m_OperationalTargets;
 	// Vox Deorum: per-turn operation work that the command loop still needs to finish.
 	vector<SOperationalPreparedArmy> m_PreparedArmies;

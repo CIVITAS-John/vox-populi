@@ -178,7 +178,9 @@ enum eOperationalCenter
 	OPERATIONAL_CENTER_ENEMY_CITY,
 	OPERATIONAL_CENTER_OUR_CITY,
 	// An enrolled army, keyed by owner, operation and army.
-	OPERATIONAL_CENTER_ARMY
+	OPERATIONAL_CENTER_ARMY,
+	// A known camp, keyed by plot index.
+	OPERATIONAL_CENTER_CAMP
 };
 
 // Where an offer stands in the turn's queue
@@ -357,8 +359,7 @@ const eOperationalOfferState& OperationalOfferState(const SOperationalBattlefiel
 // One battlefield offer's estimate by slot.
 double OperationalOfferEstimate(const SOperationalBattlefield& field, eOperationalSlot eSlot);
 
-// The queue rank that breaks equal estimates: our cities' fights 0, enemy cities' fights 1, enemy units'
-// fights 2, Reinforce 3 and Withdraw 4.
+// The queue rank breaks ties: own-city Fight, enemy-city Fight, unit or camp Fight, Reinforce, Withdraw, Army March.
 int OfferRank(eOperationalCenter eCenter, eOperationalSlot eSlot);
 // Whether an offer goes ahead of the best one so far: a higher estimate, then a lower rank, then a lower plot index.
 bool OfferOutranks(double fEstimate, int iRank, int iPlotIndex, double fBest, int iBestRank, int iBestPlotIndex);
@@ -457,15 +458,19 @@ struct SOperationalBattlefield
 	eOperationalCenter eCenter;
 	int iPlotIndex;
 	int iZoneID;
-	int iZoneCityPlot;             // unit target: zone city plot, fixed for the turn, or -1
+	int iZoneCityPlot;             // zone city plot for unit and camp rows, fixed for the turn, or -1
 	PlayerTypes eOwner;           // the target's owner
-	int iTargetID;                // enemy unit ID or city ID, or our city's ID: the identity for the turn
+	int iTargetID;                // unit, city or army ID; camp rows use the plot index
 	// Army rows use the target ID for the army and also carry the operation ID.
 	int iOperation;
 	double fImportance;           // city centers only: city value / Z_C, capped at 1, fixed for the turn
 	SOperationalTheater theater;
 	double fTheater;              // refreshed from the zone city at each estimate pass
 	double fGround;               // fixed for the turn; unit targets only
+	double fCampValue;            // opening camp value, or -1 for a row without a camp
+	bool bCampFogged;             // a camp row whose plot was in fog when built
+	int iCampClaimant;            // claimant's unit ID, or -1 if none
+	int iCampTurns;               // turns for the claimant to reach the camp
 	bool bNearOurCity;            // fixed: within 3 plots of one of our cities
 	// Enrolled formations with a reason to fight this target.
 	set<int> fightArmies;
@@ -500,7 +505,8 @@ struct SOperationalBattlefield
 
 	// Creates a ready battlefield with no target.
 	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), iZoneCityPlot(-1), eOwner(NO_PLAYER),
-		iTargetID(-1), iOperation(-1), fImportance(0.0), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
+		iTargetID(-1), iOperation(-1), fImportance(0.0), fTheater(0.0), fGround(0.0),
+		fCampValue(-1.0), bCampFogged(false), iCampClaimant(-1), iCampTurns(0), bNearOurCity(false), bCanAttackOurUnits(false),
 		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), bReleaseLocal(false),
 		bHasEndangered(false), bBorder(false), bWithdrawPosture(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0),
 		eWithdraw(OPERATIONAL_OFFER_INACTIVE), fWithdrawEstimate(0.0), fWithdrawExposure(0.0), fExposureShare(0.0),
@@ -607,6 +613,8 @@ struct SOperationalTurn
 	OperationalWeights weights;
 	int aiMapped[STacticalFlavors::NUM_SLOTS];
 	double fTypicalUnitWorth;  // Z_T: mean base worth of our reference military types
+	double fCampBounty;        // B: ordinary camp gold weighted and converted to typical units
+	double fTypicalUnitStrength; // assumed strength of a fogged camp guard
 	double fCityUnit;    // C = city.units, fixed for the turn
 	double fCityScale;   // Z_C, fixed for the turn
 	// Each attacker's share of our units' exposure in the Fight layout.
@@ -641,7 +649,8 @@ struct SOperationalTurn
 	mutable unsigned int iStateRevision;
 
 	// Creates an empty turn.
-	SOperationalTurn() : bTiming(true), bMarchEnabled(false), bEstimating(false), ePlayer(NO_PLAYER), fTypicalUnitWorth(0.0), fCityUnit(0.0), fCityScale(0.0),
+	SOperationalTurn() : bTiming(true), bMarchEnabled(false), bEstimating(false), ePlayer(NO_PLAYER), fTypicalUnitWorth(0.0),
+		fCampBounty(0.0), fTypicalUnitStrength(0.0), fCityUnit(0.0), fCityScale(0.0),
 		bSharedExposureBuilt(false), iStrikeScan(0), iMarchGold(50), iNextDecision(0), iStateRevision(0) {}
 };
 
@@ -1026,9 +1035,14 @@ public:
 		const set<int>* pEnrolled = NULL, SOperationalExposure* pCityFight = NULL);
 	// A threat's largest allocations up to its attacks per turn, leaving out the victims in pExclude when set.
 	static double CappedExposure(const SOperationalThreatExposure& threat, const set<int>* pExclude);
-	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground,
-	// near-city flag and zone gates, then one per city of ours.
+	// Builds the opening enemy, camp and own-city rows.
 	static void BuildBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
+	// Returns the bounty scaled by the distance to our nearest city.
+	static double CampValue(const SOperationalTurn& turn, const CvPlot& kPlot);
+	// Returns the best camp recruit that can leave its post, with its travel turns.
+	static CvUnit* FindCampClaimant(CvTacticalAI& kTactical, CvPlot* pPlot, int& iTurns);
+	// Adds an opening camp row when there is no visible guard.
+	static void AddCampBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, const CvTacticalTarget& target, CvPlot& kPlot);
 	// Appends enrolled rows, retaining their indices when an operation retargets or drops.
 	static void SyncArmyBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
 	// Finds the enrolled order for an army row.
@@ -1055,7 +1069,7 @@ public:
 	static bool IsBorderZone(CvTacticalAI& kTactical, const CvTacticalDominanceZone& kZone);
 	// Appends our city's battlefield: its land zone, or its water zone without one, and its theater.
 	static void AddOwnCityBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, CvCity& kCity);
-	// Estimates cities before units with one fresh cache, then updates open offers.
+	// Estimates cities before units and camps with one fresh cache, then updates open offers.
 	static void EstimateOffers(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalChanges* pChanges);
 	// Gathers one local set, computes theater, and can wake a waiting fight before estimating Reinforce and
 	// the Withdraw. Returns false when the target died or its city changed owner. Closed cities need only their theater.
@@ -1065,15 +1079,16 @@ public:
 	// it. The share is saved before Reinforce bookkeeping can change it.
 	static void EstimateTheater(const SOperationalTurn& turn, const SOperationalEstimateCache& cache, const CvPlot& kPlot,
 		const SOperationalLocalSet& local, SOperationalBattlefield& field);
-	// The battlefield's center plot: a surviving target unit's current plot, which it records, or the city plot. NULL when
-	// the target unit or city is gone.
+	// The current unit, city or camp plot. Returns NULL when the target unit or city is gone.
 	static CvPlot* BattlefieldPlot(SOperationalBattlefield& field);
+	// Prices the claim at a camp seen empty and returns false if the camp is gone or guarded.
+	static bool EstimateCampClaim(CvTacticalAI& kTactical, CvPlot& kPlot, SOperationalBattlefield& field, bool bCheck = false);
 	// Values local destruction, exposure, ground and city relief at a unit, city progress and garrison destruction at
 	// an enemy city, or city danger and endangered recruits at ours. Uses the battlefield's shared theater.
 	static bool EstimateFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache, const SOperationalLocalSet& local,
 		const CvCity* pZoneCity, SOperationalBattlefield& field, bool bSample = false);
-	// Selects incoming help, computes its rise in strength share and multiplies by the fight priority.
-	// Enemy centers require a border zone, a posture other than Withdraw and full selected strength covering need.
+	// Selects incoming help and prices the rise in strength share against the fight or camp stake.
+	// Enemy centers require full strength covering need and a posture other than Withdraw. Camps waive the border gate.
 	static void EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 		SOperationalBattlefield& field);
 	// Local combat units and enrolled formations threatened here that still have movement.
@@ -1200,9 +1215,9 @@ public:
 	// Finds destinations by domain, then scores the available first-turn stops together.
 	static eOperationalCheckResult CheckWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field,
 		vector<SOperationalMarch>& marches, bool& bFormationWithdraw);
-	// Returns the first safe stop; a recruit already in reach may hold for a Reinforce search.
+	// Returns the first march stop. Camp claims follow the exact route and defer the danger check to the move.
 	static CvPlot* CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false,
-		bool bArmyMarch = false);
+		bool bArmyMarch = false, int iClaimTurns = 0);
 	// The positioning copy's path flags for a unit marching toward the target.
 	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw = false, bool bArmyMarch = false);
 	// Plots within the search's near distance of the target for one domain, measured as the search measures it.
@@ -1212,6 +1227,9 @@ public:
 	// Validates the selected army's order, then admits and positions units by destination.
 	static void ExecuteMarch(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		const vector<SOperationalMarch>& withdraw, SOperationalCommandRecord& record, bool bFormationWithdraw, bool& bArmyMarchOrderChanged);
+	// Admits the checked claimant and attempts one move toward the camp.
+	static void ExecuteCampClaim(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
+		SOperationalCommandRecord& record);
 
 	// The fight row of the overlap rule: an enemy-unit fight that ran its search retires an unexecuted enemy-unit fight
 	// within 2 plots of its target in a compatible zone, unless that fight's target can attack our units or stands near
