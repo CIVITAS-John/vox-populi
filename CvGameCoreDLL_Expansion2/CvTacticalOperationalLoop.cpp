@@ -2675,20 +2675,23 @@ static bool AllowsArmyMarchStop(const CvUnit& unit, const CvPlot& stop, const Cv
 	return unit.plot() == &stop || army.GetType() != ARMY_TYPE_COMBINED || !unit.isEmbarked() || stop.isWater();
 }
 
-// Finds the last legal stop along the path before the formation would split.
+// Finds the last stop before the formation would split. March forecasts leave stacking to execution.
 static CvPlot* FormationPathStop(const CvUnit& unit, const CvPathNodeArray& path, CvPlot* pStop,
 	const SOperationalFormation& formation, const CvArmyAI* pMarchArmy = NULL, int* piStopNode = NULL)
 {
 	if (!pStop || pStop == unit.plot())
 		return pStop;
+	const int iMarchFlags = pMarchArmy ? CvUnit::MOVEFLAG_DESTINATION |
+		CvTacticalOperationalLoop::MarchFlags(unit, *pStop, false, true) : 0;
 	CvPlot* pBest = NULL;
 	for (size_t i = 0; i < path.size(); i++)
 	{
 		CvPlot* pPlot = path.GetPlotByIndex(static_cast<int>(i));
 		if (!formation.Allows(unit, *pPlot))
 			break;
-		if ((pPlot == pStop || (pPlot != unit.plot() && unit.canEndTurnAtPlot(pPlot))) &&
-			(!pMarchArmy || AllowsArmyMarchStop(unit, *pPlot, *pMarchArmy)))
+		if (pPlot != unit.plot() && (pMarchArmy ?
+			AllowsArmyMarchStop(unit, *pPlot, *pMarchArmy) && unit.canMoveInto(*pPlot, iMarchFlags) :
+			pPlot == pStop || unit.canEndTurnAtPlot(pPlot)))
 		{
 			pBest = pPlot;
 			if (piStopNode)
@@ -2982,10 +2985,10 @@ struct PrOperationalSortCombatFirst
 	}
 };
 
-// Compares holding with one quiet step along the prepared corridor, leaving non-movers in both layouts.
+// Forecasts progress along the prepared corridor while Gather chooses the actual positions.
 static double ArmyMarchReadinessGain(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalBattlefield& field,
 	const SOperationalPreparedArmy& order, CvAIOperation& kOperation, CvArmyAI& kArmy, const vector<CvUnit*>& members,
-	bool bCheck, vector<SOperationalMarch>& marches)
+	vector<SOperationalMarch>& marches)
 {
 	const bool bMuster = ArmyMarchAtMuster(order.eStage);
 	const CvPlot* pGoal = bMuster ? order.pMuster : order.pGoal;
@@ -3000,7 +3003,6 @@ static double ArmyMarchReadinessGain(CvTacticalAI& kTactical, SOperationalTurn& 
 	const int iTail = std::max(0, static_cast<int>(corridor.end() - waypoint - 1) - iMemberRadius);
 
 	map<int, const CvPlot*> stops;
-	map<int, vector<SPlacedUnit> > arrivals;
 	vector<CvUnit*> ordered(members);
 	std::stable_sort(ordered.begin(), ordered.end(), PrOperationalSortCombatFirst());
 	double fIndividualGain = 0.0, fHoldTime = 0.0, fMoveTime = 0.0;
@@ -3016,16 +3018,11 @@ static double ArmyMarchReadinessGain(CvTacticalAI& kTactical, SOperationalTurn& 
 		CvPlot* pStop = unit.canUseNow() ? ArmyMarchFirstTurnStop(unit, path) : NULL;
 		if (pStop)
 			pStop = FormationPathStop(unit, path.nodes, pStop, SOperationalFormation(kArmy, kOperation, &stops), &kArmy, &iStopNode);
-		if (pStop && pStop != pStart && (!bCheck ||
-			(unit.canMoveInto(*pStop, CvUnit::MOVEFLAG_DESTINATION |
-				CvTacticalOperationalLoop::MarchFlags(unit, *order.pWaypoint, false, true)) &&
-				FitsMarchStop(unit, pStop, arrivals[pStop->GetPlotIndex()]))))
+		if (pStop && pStop != pStart)
 		{
 			fAfter = ArmyMarchTravel(unit, path, iStopNode, *pStop, *pGoal, iMemberRadius, fTail);
 			const SOperationalMarch move = { unit.GetID(), field.iPlotIndex, pStop->GetPlotIndex(), 0 };
 			marches.push_back(move);
-			if (bCheck)
-				arrivals[move.iStop].push_back(SPlacedUnit(&unit, pStop, 0, pStop->needsEmbarkation(&unit) && unit.CanEverEmbark()));
 		}
 		else
 			pStop = pStart;
@@ -3084,7 +3081,7 @@ void CvTacticalOperationalLoop::EstimateArmyMarch(CvTacticalAI& kTactical, SOper
 	if (field.armyMarch.fGoalWeight <= 0.0)
 		return;
 	vector<SOperationalMarch> marches;
-	field.armyMarch.fReadinessGain = ArmyMarchReadinessGain(kTactical, turn, field, *order, *pOperation, *pArmy, members, false, marches);
+	field.armyMarch.fReadinessGain = ArmyMarchReadinessGain(kTactical, turn, field, *order, *pOperation, *pArmy, members, marches);
 	if (field.armyMarch.fReadinessGain <= 0.0)
 		return;
 	EstimateArmyMarchTheater(kTactical, turn, *pOperation, members, field);
@@ -3716,7 +3713,7 @@ static double AttackerWeight(const OperationalAttackerWeights* pWeights, bool bC
 	return 1.0;
 }
 
-// Compares signed capped exposure after omitting recruits or projecting legal stops.
+// Compares signed capped exposure after omitting recruits or projecting stops.
 double CvTacticalOperationalLoop::ExposureSaved(const SOperationalTurn& turn, const vector<SOperationalMarch>& marches,
 	bool bProjectStops, const OperationalAttackerWeights* pAttackerWeights, bool bFormationWithdraw)
 {
@@ -3744,8 +3741,8 @@ double CvTacticalOperationalLoop::ExposureSaved(const SOperationalTurn& turn, co
 			if (!pUnit || !pUnit->plot() || !pStop)
 				continue;
 			vector<SPlacedUnit>& incoming = arrivals[marches[i].iStop];
-			// Each path already checked the live board; two new arrivals must also fit together.
-			if (!FitsMarchStop(*pUnit, pStop, incoming))
+			// Only March passes attacker weights. Withdraw commits to exact stops that must fit together.
+			if (!pAttackerWeights && !FitsMarchStop(*pUnit, pStop, incoming))
 				continue;
 			moving.insert(marches[i].iUnitID);
 			changedPlots.insert(pUnit->plot()->GetPlotIndex());
@@ -5102,7 +5099,7 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckReinforce(CvTacticalAI& 
 	return OPERATIONAL_CHECK_PASSED;
 }
 
-// Tests legal joint stops, then reprices the same formation using weighted exposure.
+// Reprices the live formation's progress forecast using weighted exposure.
 eOperationalCheckResult CvTacticalOperationalLoop::CheckArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn,
 	SOperationalBattlefield& field)
 {
@@ -5123,7 +5120,7 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckArmyMarch(CvTacticalAI& 
 
 	const double fBefore = field.fReinforceEstimate;
 	vector<SOperationalMarch>& marches = field.vArmyMarchStops;
-	field.armyMarch.fReadinessGain = ArmyMarchReadinessGain(kTactical, turn, field, *order, *pOperation, *pArmy, members, true, marches);
+	field.armyMarch.fReadinessGain = ArmyMarchReadinessGain(kTactical, turn, field, *order, *pOperation, *pArmy, members, marches);
 	field.reinforce.bChecked = true;
 	field.reinforce.vSelected.clear();
 	if (marches.empty())
@@ -6538,10 +6535,12 @@ bool CvTacticalOperationalLoop::IsHeldGarrison(const CvUnit* pUnit)
 int CvTacticalOperationalLoop::MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw, bool bArmyMarch)
 {
 	int iFlags = ExactMarchFlags(kUnit, kTarget);
-	// An army follows its waypoint exactly when it can.
+	// March forecasts ignore friendly stacking. Formation Withdraw still needs a legal stop.
 	if (bArmyMarch)
 	{
 		CvArmyAI* pArmy = GET_PLAYER(kUnit.getOwner()).getArmyAI(kUnit.getArmyID());
+		if (!bWithdraw)
+			iFlags |= CvUnit::MOVEFLAG_IGNORE_STACKING_SELF;
 		return iFlags | (pArmy ? ArmyMarchRouteFlags(*pArmy) : 0);
 	}
 	const int iDistance = bWithdraw ? plotDistance(*kUnit.plot(), kTarget) : 3;
@@ -6765,7 +6764,7 @@ eOperationalPositionResult CvTacticalOperationalLoop::PositionUnitsAroundTarget(
 		CvPlot* pMove = pTarget;
 		if (bArmyMarch)
 		{
-			// Try only the checked stop; the live gate and move can still refuse it.
+			// An unused member can try its forecast stop under the live movement rules.
 			pMove = NULL;
 			for (size_t i = 0; i < armyMarchStops.size(); i++)
 				if (armyMarchStops[i].iUnitID == *it)
