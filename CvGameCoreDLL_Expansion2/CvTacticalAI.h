@@ -724,7 +724,8 @@ typedef map<int, set<int> > TacticalUnitStops;
 struct STacticalStopScope
 {
 	// Vox Deorum: installs and restores the stops for one synchronous search.
-	explicit STacticalStopScope(const TacticalUnitStops& stops);
+	explicit STacticalStopScope(const TacticalUnitStops& stops, PlayerTypes ePlayer = NO_PLAYER,
+		const STacticalMovementGate* pGate = NULL);
 	~STacticalStopScope();
 
 	// Vox Deorum: returns whether the search may place this unit here.
@@ -733,7 +734,14 @@ struct STacticalStopScope
 	// Vox Deorum: ships and embarked recruits may share a legal starting tile.
 	static bool UsesEmbarked();
 
-	const TacticalUnitStops* pPrevious;
+	// Vox Deorum: carries route flags into the search's existing reachable-plot calculation.
+	static int MoveFlags(const CvUnit& unit);
+
+private:
+	const STacticalStopScope* pPrevious;
+	const TacticalUnitStops& stops;
+	PlayerTypes ePlayer;
+	const STacticalMovementGate* pGate;
 };
 
 // Vox Deorum: keeps command rules outside the tactical replay and applies them at action boundaries.
@@ -750,6 +758,8 @@ struct STacticalMovementGate
 	virtual bool Allows(const CvUnit& unit, const CvPlot& plot, bool bEndpoint = true) const = 0;
 	// Vox Deorum: returns the corridor limits for this participant.
 	virtual int MoveFlags(const CvUnit& unit) const = 0;
+	// Vox Deorum: records the route an executor committed to, for a later contact check.
+	virtual void RecordRoute(const CvUnit& /*unit*/) const {}
 	// Vox Deorum: asks whether the command must yield after an indivisible action.
 	virtual bool AfterAction() const = 0;
 };

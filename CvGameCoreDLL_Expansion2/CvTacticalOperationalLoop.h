@@ -213,7 +213,6 @@ struct SOperationalThreatExposure
 typedef map<pair<int, int>, SOperationalThreatExposure> OperationalThreatMap;
 // A city flag followed by the attacker's owner and ID.
 typedef pair<bool, pair<int, int> > OperationalExposureKey;
-typedef map<OperationalExposureKey, double> OperationalAttackerWeights;
 
 // Allocations grouped by enemy unit or city.
 struct SOperationalExposure
@@ -414,7 +413,7 @@ struct SOperationalReinforce
 		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), bChecked(false) {}
 };
 
-// One checked path mover, with its destination and first-turn stop.
+// One checked Withdraw mover, with its destination, first-turn stop and move flags.
 struct SOperationalMarch
 {
 	int iUnitID;
@@ -422,7 +421,7 @@ struct SOperationalMarch
 	int iStop;
 	int iMoveFlags; // Path flags for a checked formation Withdraw stop.
 
-	// Orders marches by recruit ID so readiness and admission use the same tie break.
+	// Orders Withdraw movers by recruit ID so admission uses the same tie break.
 	bool operator<(const SOperationalMarch& other) const { return iUnitID < other.iUnitID; }
 };
 
@@ -447,7 +446,7 @@ struct SOperationalArmyMarchScore
 {
 	double fUnassistedTheater, fGoalWeight, fReadinessGain, fAddedExposure;
 
-	// Starts with no formation or projected progress.
+	// Starts with no progress and no priced exposure.
 	SOperationalArmyMarchScore() : fUnassistedTheater(0.0), fGoalWeight(0.0), fReadinessGain(0.0), fAddedExposure(0.0) {}
 };
 
@@ -487,7 +486,6 @@ struct SOperationalBattlefield
 	double fReinforceEstimate;    // fight priority times strength swing
 	SOperationalReinforce reinforce;
 	SOperationalArmyMarchScore armyMarch;
-	vector<SOperationalMarch> vArmyMarchStops;  // checked stops for this battlefield's current March
 	// The Withdraw offer's state.
 	eOperationalOfferState eWithdraw;
 	// The Withdraw priority, 0 while it has no endangered recruit.
@@ -516,11 +514,10 @@ struct SOperationalBattlefield
 		aiWithdrawDestination[1] = -1;
 	}
 
-	// Discards the cached Reinforce or March reach check and any checked March stops.
+	// Discards the cached Reinforce or March reach check.
 	void ResetReinforceCheck()
 	{
 		reinforce.bChecked = false;
-		vArmyMarchStops.clear();
 	}
 };
 
@@ -585,19 +582,6 @@ enum eOperationalPositionResult
 
 struct SOperationalFormationMovement;
 
-// Copies the unit path so later native searches cannot overwrite March's estimate.
-struct SOperationalMarchPath
-{
-	const CvPlot* pStart;
-	const CvPlot* pWaypoint;
-	int iStartMoves;
-	bool bFound;
-	CvPathNodeArray nodes;
-
-	// Starts without a cached route.
-	SOperationalMarchPath() : pStart(NULL), pWaypoint(NULL), iStartMoves(0), bFound(false) {}
-};
-
 // One player-turn of the loop: settings, weights, the fixed scales, the threat maps and the battlefields
 struct SOperationalTurn
 {
@@ -641,8 +625,6 @@ struct SOperationalTurn
 	// Units that went through a Withdraw this turn.
 	set<int> withdrawnUnits;
 	vector<SOperationalBattlefield> battlefields;
-	// Readiness paths by (army row, unit), retained across commands for the turn.
-	map<pair<int, int>, SOperationalMarchPath> armyMarchPaths;
 	// Mapped FLAVOR_GOLD for pillage missions.
 	int iMarchGold;
 	mutable unsigned int iNextDecision;
@@ -924,7 +906,7 @@ struct SOperationalCheckRecord
 // One executed command, for the records
 struct SOperationalCommandRecord
 {
-	// The chosen ArmyMarch score, after checking the proposed stops.
+	// The chosen ArmyMarch score, after checking its live order and usable members.
 	SOperationalArmyMarchScore armyMarch;
 	int iCommand;
 	int iStep;
@@ -1051,9 +1033,9 @@ public:
 	static eOperationalCheckResult ResolveArmyMarch(CvTacticalAI& kTactical, const SOperationalBattlefield& field,
 		vector<SOperationalPreparedArmy>::iterator& order, CvAIOperation*& pOperation, CvArmyAI*& pArmy,
 		vector<CvUnit*>* pMembers = NULL);
-	// Estimates a formation's readiness gain and projected theater.
+	// Estimates a formation's progress from its ready members and the shared corridor, and its projected theater.
 	static void EstimateArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field);
-	// Checks the formation's first stops and scores their exposure.
+	// Re-resolves the live order, collects its usable members and refreshes the cheap progress estimate.
 	static eOperationalCheckResult CheckArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field);
 	// Appends a classified enemy target and initializes its battlefield.
 	static bool AddEnemyBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, const CvTacticalTarget& target,
@@ -1096,9 +1078,9 @@ public:
 	static void GatherWithdrawRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		const SOperationalLocalSet& local, vector<CvUnit*>& vRecruits);
 	// The change in capped exposure; the opening estimate omits the recruits without projecting stops.
-	// Optional uncovered shares by unit/city attacker; ArmyMarch includes every friendly victim.
+	// A formation Withdraw compares the shared layout when it projects its legal stops.
 	static double ExposureSaved(const SOperationalTurn& turn, const vector<SOperationalMarch>& marches, bool bProjectStops,
-		const OperationalAttackerWeights* pAttackerWeights = NULL, bool bFormationWithdraw = false);
+		bool bFormationWithdraw = false);
 	// The Withdraw priority from the removable exposure, the risk weight and the share help does not cover.
 	static void EstimateWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 		SOperationalBattlefield& field);
@@ -1242,8 +1224,6 @@ public:
 	static void SnapshotBoard(const SOperationalTurn& turn, SOperationalBoard& board);
 	// Compares two snapshots into the changes a command made.
 	static void DiffBoard(const SOperationalBoard& before, const SOperationalBoard& after, SOperationalChanges& changes);
-	// Marks cached March paths affected by enemy changes so the next estimate rebuilds them.
-	static void InvalidateArmyMarchPaths(SOperationalTurn& turn, const vector<int>& vEnemyPlots);
 	// Drops temporary march and competing-target failures affected by the last command.
 	static void RetryReinforce(const CvPlot& kTarget, int iRange, const SOperationalChanges& changes, SOperationalBattlefield& field);
 	// True when a change can turn the waiting fight's failed check into a pass: an enemy change or capture within
@@ -1336,11 +1316,11 @@ public:
 
 	// Copy of CvTacticalAI::PositionUnitsAroundTarget with the loop's engagement in place of AL_LOW and the search intent:
 	// the geometry, blend and aggression follow the spotter move. The spotter and path moves skip held garrisons, and
-	// far movers reuse checked stops for Army March and shared Withdraw. Other far movers go through CanMarch.
-	// A Withdraw skips the spotter move, sends every recruit that can still move and orders damaged units first.
+	// Army March's gate checks the selected route or the prepared corridor for contact. Other far movers go through
+	// CanMarch. A Withdraw skips the spotter move, sends every recruit that can still move and orders damaged units first.
 	static eOperationalPositionResult PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
 		PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn, SOperationalCommandRecord& command,
-		const vector<SOperationalMarch>& armyMarchStops, const vector<SOperationalMarch>* pWithdrawStops);
+		const vector<SOperationalMarch>* pWithdrawStops, const vector<CvPlot*>* pMarchCorridor);
 	// Copy of the unit overload of CvDangerPlotContents::GetDanger, with enemy-roll damage and per-threat contributions.
 	// A falling city destroys its garrison at f_def's threshold. Capturable civilians and units in cities list no threats.
 	static int GetDangerByThreat(CvDangerPlotContents& kContents, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage,

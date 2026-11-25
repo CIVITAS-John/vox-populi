@@ -4365,6 +4365,9 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 		{
 			if (pGate && (pUnit->GetPathEndFirstTurnPlot() != pTarget || !AllowsTacticalPath(*pUnit, *pGate)))
 				return iResult;
+			// Vox Deorum: the checked route is the one this member is about to take.
+			if (pGate)
+				pGate->RecordRoute(*pUnit);
 			//pillage if it makes sense and we have movement points to spare
 			if (pUnit->shouldPillage(pUnit->plot(), true, true) && (pUnit->hasFreePillageMove() || pUnit->GetMovementPointsAtCachedTarget()>=GD_INT_GET(MOVE_DENOMINATOR)))
 			{
@@ -10199,13 +10202,14 @@ static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTac
 }
 
 // Vox Deorum: the search shares one scope across all its branches and capture fallback.
-static const TacticalUnitStops* gOperationalStops = NULL;
+static const STacticalStopScope* gOperationalStops = NULL;
 
 // Vox Deorum: installs the order's destinations for this search.
-STacticalStopScope::STacticalStopScope(const TacticalUnitStops& stops)
-	: pPrevious(gOperationalStops)
+STacticalStopScope::STacticalStopScope(const TacticalUnitStops& stops, PlayerTypes ePlayer,
+	const STacticalMovementGate* pGate)
+	: pPrevious(gOperationalStops), stops(stops), ePlayer(ePlayer), pGate(pGate)
 {
-	gOperationalStops = &stops;
+	gOperationalStops = this;
 }
 
 // Vox Deorum: restores the surrounding search context.
@@ -10220,13 +10224,26 @@ bool STacticalStopScope::UsesEmbarked()
 	return gOperationalStops != NULL;
 }
 
-// Vox Deorum: independent units keep the ordinary search rules.
+// Vox Deorum: filters the search's reachable plots without running a second reach search.
 bool STacticalStopScope::Allows(int iUnit, int iPlot)
 {
 	if (!gOperationalStops)
 		return true;
-	const TacticalUnitStops::const_iterator it = gOperationalStops->find(iUnit);
-	return it == gOperationalStops->end() || it->second.count(iPlot) > 0;
+	const STacticalStopScope& scope = *gOperationalStops;
+	const TacticalUnitStops::const_iterator it = scope.stops.find(iUnit);
+	if (it != scope.stops.end() && it->second.count(iPlot) == 0)
+		return false;
+	if (!scope.pGate)
+		return true;
+	const CvUnit* pUnit = GET_PLAYER(scope.ePlayer).getUnit(iUnit);
+	const CvPlot* pPlot = GC.getMap().plotByIndex(iPlot);
+	return pUnit && pPlot && scope.pGate->Allows(*pUnit, *pPlot);
+}
+
+// Vox Deorum: applies an army's water restrictions even when the destination itself is coastal.
+int STacticalStopScope::MoveFlags(const CvUnit& unit)
+{
+	return gOperationalStops && gOperationalStops->pGate ? gOperationalStops->pGate->MoveFlags(unit) : 0;
 }
 
 void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const
@@ -12157,7 +12174,8 @@ void CvTacticalPosition::updateMoveAndAttackPlotsForUnit(SUnitStats unit)
 		gMovePlotsCacheMiss++;
 
 		//note: we allow (intermediate) embarkation here but filter out the non-native plots later (useful for denmark and lategame)
-		int iMoveFlags = CvUnit::MOVEFLAG_IGNORE_STACKING_SELF | CvUnit::MOVEFLAG_IGNORE_DANGER;
+		int iMoveFlags = CvUnit::MOVEFLAG_IGNORE_STACKING_SELF | CvUnit::MOVEFLAG_IGNORE_DANGER |
+			STacticalStopScope::MoveFlags(*pUnit);
 		ReachablePlots reachablePlots = TacticalAIHelpers::GetAllPlotsInReachThisTurn(pUnit, pStartPlot, iMoveFlags, 0, unit.iMovesLeft, freedPlots_r);
 
 		//need to know this if we're doing defensive positioning
@@ -13871,6 +13889,7 @@ void CvSupportPosition::updateMovePlotsForUnit(SUnitStats unit)
 
 		//note: we allow (intermediate) embarkation here but filter out the non-native plots later (useful for denmark and lategame)
 		int iMoveFlags = CvUnit::MOVEFLAG_IGNORE_STACKING_SELF | CvUnit::MOVEFLAG_IGNORE_DANGER;
+		iMoveFlags |= STacticalStopScope::MoveFlags(*pUnit);
 		ReachablePlots reachablePlots = TacticalAIHelpers::GetAllPlotsInReachThisTurn(pUnit, pStartPlot, iMoveFlags, 0, unit.iMovesLeft, freedPlots_r);
 
 		//try to save some memory here
@@ -15079,6 +15098,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			if (bPrecondition && pGate)
 				bPrecondition = pUnit->GeneratePath(pToPlot, iMoveflags, 0) &&
 					pUnit->GetPathEndFirstTurnPlot() == pToPlot && AllowsTacticalPath(*pUnit, *pGate);
+			// Vox Deorum: the checked route is the one this member is about to take.
+			if (bPrecondition && pGate)
+				pGate->RecordRoute(*pUnit);
 #ifdef TACTDEBUG
 			if (bPrecondition)
 			{
