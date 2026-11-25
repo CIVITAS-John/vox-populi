@@ -6539,15 +6539,13 @@ bool CvTacticalOperationalLoop::IsHeldGarrison(const CvUnit* pUnit)
 }
 
 // Shares native's march flags and asks a nearby Withdraw recruit to advance inside its current ring.
-int CvTacticalOperationalLoop::MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw, bool bArmyMarch)
+int CvTacticalOperationalLoop::MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw, bool bArmyRoute)
 {
 	int iFlags = ExactMarchFlags(kUnit, kTarget);
-	// March forecasts ignore friendly stacking. Formation Withdraw still needs a legal stop.
-	if (bArmyMarch)
+	// A formation Withdraw keeps its army's water limits and still needs a legal stop.
+	if (bArmyRoute)
 	{
 		CvArmyAI* pArmy = GET_PLAYER(kUnit.getOwner()).getArmyAI(kUnit.getArmyID());
-		if (!bWithdraw)
-			iFlags |= CvUnit::MOVEFLAG_IGNORE_STACKING_SELF;
 		return iFlags | (pArmy ? ArmyMarchRouteFlags(*pArmy) : 0);
 	}
 	const int iDistance = bWithdraw ? plotDistance(*kUnit.plot(), kTarget) : 3;
@@ -6612,17 +6610,17 @@ int CvTacticalOperationalLoop::WithdrawDestination(CvTacticalAI& kTactical, Play
 // Returns the first stop under native's danger limit, or a safer, nonlethal Withdraw stop.
 // An empty camp claim follows the exact route and uses the move mission's danger check.
 CvPlot* CvTacticalOperationalLoop::CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw,
-	bool bArmyMarch, int iClaimTurns)
+	bool bArmyRoute, int iClaimTurns)
 {
 	if (!pTarget)
 		return NULL;
 	const int iFlags = iClaimTurns > 0 ? CvUnit::MOVEFLAG_NO_EMBARK | CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER
-		: MarchFlags(*pUnit, *pTarget, bWithdraw, bArmyMarch);
+		: MarchFlags(*pUnit, *pTarget, bWithdraw, bArmyRoute);
 	const int iRange = iClaimTurns > 0 ? iClaimTurns : kTactical.GetRecruitRange();
 	if (!pUnit->GeneratePath(pTarget, iFlags, iRange))
 	{
-		// A blocked waypoint still permits a legal approach to its ring.
-		if (!bArmyMarch || !pUnit->GeneratePath(pTarget, iFlags | CvUnit::MOVEFLAG_APPROX_TARGET_RING1, iRange))
+		// A blocked destination still permits a legal approach to its ring.
+		if (!bArmyRoute || !pUnit->GeneratePath(pTarget, iFlags | CvUnit::MOVEFLAG_APPROX_TARGET_RING1, iRange))
 			return NULL;
 	}
 	CvPlot* pStop = pUnit->GetPathEndFirstTurnPlot();
@@ -6632,8 +6630,8 @@ CvPlot* CvTacticalOperationalLoop::CanMarch(CvTacticalAI& kTactical, CvUnit* pUn
 	if (!pStop || (bWithdraw && pStop == pUnit->plot()))
 		return NULL;
 
-	// Army March prices danger for the group; camp claims leave it to the move mission.
-	if (bArmyMarch || iClaimTurns > 0)
+	// A formation Withdraw prices danger for the group; camp claims leave it to the move mission.
+	if (bArmyRoute || iClaimTurns > 0)
 		return pStop;
 
 	//we are not here to fight or flee, let other moves take over

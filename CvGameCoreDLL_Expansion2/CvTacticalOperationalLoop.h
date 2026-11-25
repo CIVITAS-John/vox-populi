@@ -1196,11 +1196,12 @@ public:
 	// Finds destinations by domain, then scores the available first-turn stops together.
 	static eOperationalCheckResult CheckWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field,
 		vector<SOperationalMarch>& marches, bool& bFormationWithdraw);
-	// Returns the first march stop. Camp claims follow the exact route and defer the danger check to the move.
+	// Returns the first march stop. A formation Withdraw on an army route leaves danger to the formation check, and
+	// camp claims follow the exact route and defer the danger check to the move.
 	static CvPlot* CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false,
-		bool bArmyMarch = false, int iClaimTurns = 0);
+		bool bArmyRoute = false, int iClaimTurns = 0);
 	// The positioning copy's path flags for a unit marching toward the target.
-	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw = false, bool bArmyMarch = false);
+	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw = false, bool bArmyRoute = false);
 	// Plots within the search's near distance of the target for one domain, measured as the search measures it.
 	static ReachablePlots SearchReachPlots(PlayerTypes ePlayer, CvPlot* pTarget, DomainTypes eDomain);
 	// Picks a reachable friendly city for one domain, preferring shelter on routes of similar length.
