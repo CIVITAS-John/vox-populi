@@ -210,8 +210,6 @@ public:
 	virtual void Reset();
 	virtual bool IsOffensive() const;
 	virtual bool IsNeverEnding() const { return false; }
-	// Vox Deorum: the next tile of the native corridor toward the prepared waypoint.
-	CvPlot* GetMarchRouteStep(CvPlot* pFrom, CvPlot* pWaypoint) const;
 
 	virtual int GetGatherTolerance(CvArmyAI* pArmy, CvPlot* pPlot) const;
 	virtual bool ShouldAbort();

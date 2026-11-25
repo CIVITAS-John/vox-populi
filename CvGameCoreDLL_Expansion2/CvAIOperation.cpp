@@ -1096,12 +1096,6 @@ void CvAIOperation::Write(FDataStream& kStream) const
 	Serialize(*this, serialVisitor);
 }
 
-// Vox Deorum: use the same next route tile for Fight eligibility and March yield.
-CvPlot* CvAIOperation::GetMarchRouteStep(CvPlot* pFrom, CvPlot* pWaypoint) const
-{
-	return pFrom && pWaypoint && pFrom != pWaypoint ? GetPlotXInStepPath(pFrom, pWaypoint, 1, true) : NULL;
-}
-
 FDataStream& operator>>(FDataStream& stream, CvAIOperation& aiOperation)
 {
 	aiOperation.Read(stream);

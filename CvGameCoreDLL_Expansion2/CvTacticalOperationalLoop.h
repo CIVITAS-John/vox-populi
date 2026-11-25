@@ -444,10 +444,10 @@ struct SOperationalTheater
 // The ArmyMarch inputs that can change between estimation and execution.
 struct SOperationalArmyMarchScore
 {
-	double fUnassistedTheater, fGoalWeight, fReadinessGain, fAddedExposure;
+	double fUnassistedTheater, fGoalWeight, fReadinessGain;
 
 	// Starts with no progress and no priced exposure.
-	SOperationalArmyMarchScore() : fUnassistedTheater(0.0), fGoalWeight(0.0), fReadinessGain(0.0), fAddedExposure(0.0) {}
+	SOperationalArmyMarchScore() : fUnassistedTheater(0.0), fGoalWeight(0.0), fReadinessGain(0.0) {}
 };
 
 // One battlefield of the turn, its fight offer, its Reinforce offer and its Withdraw offer
@@ -514,7 +514,7 @@ struct SOperationalBattlefield
 		aiWithdrawDestination[1] = -1;
 	}
 
-	// Discards the cached Reinforce or March reach check.
+	// Discards the cached Reinforce reach check.
 	void ResetReinforceCheck()
 	{
 		reinforce.bChecked = false;
@@ -580,7 +580,6 @@ enum eOperationalPositionResult
 	OPERATIONAL_POSITION_YIELDED
 };
 
-struct SOperationalFormationMovement;
 
 // One player-turn of the loop: settings, weights, the fixed scales, the threat maps and the battlefields
 struct SOperationalTurn
@@ -1035,7 +1034,7 @@ public:
 		vector<CvUnit*>* pMembers = NULL);
 	// Estimates a formation's progress from its ready members and the shared corridor, and its projected theater.
 	static void EstimateArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field);
-	// Re-resolves the live order, collects its usable members and refreshes the cheap progress estimate.
+	// Revalidates the live order behind a March offer.
 	static eOperationalCheckResult CheckArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field);
 	// Appends a classified enemy target and initializes its battlefield.
 	static bool AddEnemyBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, const CvTacticalTarget& target,
@@ -1298,12 +1297,12 @@ public:
 	static bool ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 		bool bTargetDistanceRelevant, SOperationalEngagementReport& report, const SOperationalTurn* pTurn = NULL,
-		SOperationalCommandRecord* pCommand = NULL, SOperationalFormationMovement* pMovement = NULL);
+		SOperationalCommandRecord* pCommand = NULL, STacticalMovementGate* pMovement = NULL);
 	// The retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments with given flavors, aggression and target
 	// distance flag: native FindBestUnitAssignments unchanged, up to four attempts, each recorded with the rows that ran.
 	static bool SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 		SearchIntent eSearchIntent, const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report,
-		SOperationalFormationMovement* pMovement = NULL);
+		STacticalMovementGate* pMovement = NULL);
 	// Copy of the plot gathering in TacticalAIHelpers::FindBestUnitAssignments: the search's plots for all units before
 	// the participant cap, without remote air bases, counted by zone. Zone 0, the unknown zone, is left out.
 	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, bool bTargetDistanceRelevant,
@@ -1314,13 +1313,17 @@ public:
 		PlayerTypes eCounterpart, int iOperationID, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
 		const OperationalSettings& settings, int& iRepresentativeZone, int& iAggressionRisk);
 
+	// Creates the gate used by Army March or formation Withdraw before positioning the group.
+	static eOperationalPositionResult PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
+		PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn, SOperationalCommandRecord& command,
+		const vector<SOperationalMarch>* pWithdrawStops, const vector<CvPlot*>* pMarchCorridor);
 	// Copy of CvTacticalAI::PositionUnitsAroundTarget with the loop's engagement in place of AL_LOW and the search intent:
 	// the geometry, blend and aggression follow the spotter move. The spotter and path moves skip held garrisons, and
 	// Army March's gate checks the selected route or the prepared corridor for contact. Other far movers go through
 	// CanMarch. A Withdraw skips the spotter move, sends every recruit that can still move and orders damaged units first.
-	static eOperationalPositionResult PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
-		PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn, SOperationalCommandRecord& command,
-		const vector<SOperationalMarch>* pWithdrawStops, const vector<CvPlot*>* pMarchCorridor);
+	static eOperationalPositionResult PositionUnitsAroundTargetWithGate(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits,
+		const vector<int>& vUnitIDs, CvPlot* pTarget, PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn,
+		SOperationalCommandRecord& command, STacticalMovementGate* pGate, const vector<SOperationalMarch>* pWithdrawStops);
 	// Copy of the unit overload of CvDangerPlotContents::GetDanger, with enemy-roll damage and per-threat contributions.
 	// A falling city destroys its garrison at f_def's threshold. Capturable civilians and units in cities list no threats.
 	static int GetDangerByThreat(CvDangerPlotContents& kContents, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage,

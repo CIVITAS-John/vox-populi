@@ -3528,7 +3528,7 @@ void GetUnitsByID(PlayerTypes ePlayer, const vector<int>& vIDs, vector<CvUnit*>&
 }
 
 // Vox Deorum: tries to reveal the target within the command's movement limits.
-bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot, const STacticalMovementGate* pGate)
+bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot, STacticalMovementGate* pGate)
 {
 	if (pTargetPlot->isVisible(m_pPlayer->getTeam()))
 		return true; //nothing to do
@@ -4323,19 +4323,31 @@ void CvTacticalAI::ExecuteBarbarianRoaming()
 	}
 }
 
-// Vox Deorum: every tile where this mission could stop early must also keep the formation together.
-static bool AllowsTacticalPath(const CvUnit& unit, const STacticalMovementGate& gate)
+// Vox Deorum: validate the whole route and retain only the first turn for a later contact check.
+bool STacticalMovementGate::CommitTacticalPath(const CvUnit& unit)
 {
+	vector<int>* pRoute = RouteForContactCheck();
+	if (pRoute)
+		pRoute->clear();
 	const CvPathNodeArray& path = unit.GetLastPath();
 	for (size_t i = 0; i < path.size(); i++)
-		if (!gate.Allows(unit, *path.GetPlotByIndex(static_cast<int>(i)), false))
+	{
+		const CvPlot& plot = *path.GetPlotByIndex(static_cast<int>(i));
+		if (!Allows(unit, plot, false))
+		{
+			if (pRoute)
+				pRoute->clear();
 			return false;
+		}
+		if (pRoute && path[i].m_iTurns == 0)
+			pRoute->push_back(plot.GetPlotIndex());
+	}
 	return true;
 }
 
 /// Move unit to a specific tile, return turns remaining
 int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetProcessed, int iFlags,
-	const STacticalMovementGate* pGate)
+	STacticalMovementGate* pGate)
 {
 	int iResult = INT_MAX; //impossible
 
@@ -4363,11 +4375,8 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 		int iTurns = INT_MAX;
 		if (pUnit->GeneratePath(pTarget,iFlags,INT_MAX,&iTurns))
 		{
-			if (pGate && (pUnit->GetPathEndFirstTurnPlot() != pTarget || !AllowsTacticalPath(*pUnit, *pGate)))
+			if (pGate && (pUnit->GetPathEndFirstTurnPlot() != pTarget || !pGate->CommitTacticalPath(*pUnit)))
 				return iResult;
-			// Vox Deorum: the checked route is the one this member is about to take.
-			if (pGate)
-				pGate->RecordRoute(*pUnit);
 			//pillage if it makes sense and we have movement points to spare
 			if (pUnit->shouldPillage(pUnit->plot(), true, true) && (pUnit->hasFreePillageMove() || pUnit->GetMovementPointsAtCachedTarget()>=GD_INT_GET(MOVE_DENOMINATOR)))
 			{
@@ -10205,9 +10214,8 @@ static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTac
 static const STacticalStopScope* gOperationalStops = NULL;
 
 // Vox Deorum: installs the order's destinations for this search.
-STacticalStopScope::STacticalStopScope(const TacticalUnitStops& stops, PlayerTypes ePlayer,
-	const STacticalMovementGate* pGate)
-	: pPrevious(gOperationalStops), stops(stops), ePlayer(ePlayer), pGate(pGate)
+STacticalStopScope::STacticalStopScope(const TacticalUnitStops& stops, const STacticalMovementGate* pGate)
+	: pPrevious(gOperationalStops), stops(stops), pGate(pGate)
 {
 	gOperationalStops = this;
 }
@@ -10233,17 +10241,13 @@ bool STacticalStopScope::Allows(int iUnit, int iPlot)
 	const TacticalUnitStops::const_iterator it = scope.stops.find(iUnit);
 	if (it != scope.stops.end() && it->second.count(iPlot) == 0)
 		return false;
-	if (!scope.pGate)
-		return true;
-	const CvUnit* pUnit = GET_PLAYER(scope.ePlayer).getUnit(iUnit);
-	const CvPlot* pPlot = GC.getMap().plotByIndex(iPlot);
-	return pUnit && pPlot && scope.pGate->Allows(*pUnit, *pPlot);
+	return !scope.pGate || scope.pGate->AllowsSearchStop(iUnit, iPlot);
 }
 
 // Vox Deorum: applies an army's water restrictions even when the destination itself is coastal.
 int STacticalStopScope::MoveFlags(const CvUnit& unit)
 {
-	return gOperationalStops && gOperationalStops->pGate ? gOperationalStops->pGate->MoveFlags(unit) : 0;
+	return gOperationalStops && gOperationalStops->pGate ? gOperationalStops->pGate->SearchMoveFlags(unit) : 0;
 }
 
 void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const
@@ -15033,7 +15037,7 @@ static void FinishTacticalAssignments(PlayerTypes ePlayer, const vector<int>& fi
 }
 
 bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun,
-	const STacticalMovementGate* pGate)
+	STacticalMovementGate* pGate)
 {
 	static const BuildTypes eCitadel = (BuildTypes)GC.getInfoTypeForString("BUILD_CITADEL");
 	static const BuildTypes eOrdo = MOD_BALANCE_VP ? (BuildTypes)GC.getInfoTypeForString("BUILD_ORDO") : NO_BUILD;
@@ -15097,10 +15101,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			bPrecondition = pUnit->canMove() && (pUnit->plot() == pFromPlot) && !(pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //no enemy
 			if (bPrecondition && pGate)
 				bPrecondition = pUnit->GeneratePath(pToPlot, iMoveflags, 0) &&
-					pUnit->GetPathEndFirstTurnPlot() == pToPlot && AllowsTacticalPath(*pUnit, *pGate);
-			// Vox Deorum: the checked route is the one this member is about to take.
-			if (bPrecondition && pGate)
-				pGate->RecordRoute(*pUnit);
+					pUnit->GetPathEndFirstTurnPlot() == pToPlot && pGate->CommitTacticalPath(*pUnit);
 #ifdef TACTDEBUG
 			if (bPrecondition)
 			{

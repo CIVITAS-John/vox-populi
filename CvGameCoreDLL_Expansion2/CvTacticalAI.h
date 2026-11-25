@@ -482,7 +482,7 @@ private:
 	void ExecuteParadropPillage(CvPlot* pTargetPlot);
 	void ExecuteLandingOperation(CvPlot* pTargetPlot);
 	// Vox Deorum: the shared spotter can carry an ArmyMarch formation's movement restrictions.
-	bool ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot, const STacticalMovementGate* pGate = NULL);
+	bool ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot, STacticalMovementGate* pGate = NULL);
 	bool ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	bool ExecuteAttackWithCities(CvUnit* pDefender);
 	bool PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget, SearchIntent eSearchIntent);
@@ -493,7 +493,7 @@ private:
 	void ExecuteHeals(bool bFirstPass);
 	void ExecuteBarbarianRoaming();
 	int ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetProcessed = true, int iFlags = 0,
-		const STacticalMovementGate* pGate = NULL);
+		STacticalMovementGate* pGate = NULL);
 	bool ExecuteMoveOfBlockingUnit(CvUnit* pBlockingUnit, CvPlot* pPreferredDirection=NULL);
 	void ExecuteNavalBlockadeMove(CvPlot* pTarget);
 	void ExecuteAirPatrolMoves();
@@ -724,8 +724,7 @@ typedef map<int, set<int> > TacticalUnitStops;
 struct STacticalStopScope
 {
 	// Vox Deorum: installs and restores the stops for one synchronous search.
-	explicit STacticalStopScope(const TacticalUnitStops& stops, PlayerTypes ePlayer = NO_PLAYER,
-		const STacticalMovementGate* pGate = NULL);
+	explicit STacticalStopScope(const TacticalUnitStops& stops, const STacticalMovementGate* pGate = NULL);
 	~STacticalStopScope();
 
 	// Vox Deorum: returns whether the search may place this unit here.
@@ -740,7 +739,6 @@ struct STacticalStopScope
 private:
 	const STacticalStopScope* pPrevious;
 	const TacticalUnitStops& stops;
-	PlayerTypes ePlayer;
 	const STacticalMovementGate* pGate;
 };
 
@@ -758,10 +756,22 @@ struct STacticalMovementGate
 	virtual bool Allows(const CvUnit& unit, const CvPlot& plot, bool bEndpoint = true) const = 0;
 	// Vox Deorum: returns the corridor limits for this participant.
 	virtual int MoveFlags(const CvUnit& unit) const = 0;
-	// Vox Deorum: records the route an executor committed to, for a later contact check.
-	virtual void RecordRoute(const CvUnit& /*unit*/) const {}
+	// Vox Deorum: restricts a search to checked destinations where the order specifies them.
+	virtual void BuildStops(const vector<CvUnit*>& /*units*/, TacticalUnitStops& /*stops*/) const {}
+	// Vox Deorum: applies live destination rules when search chooses the stops.
+	virtual bool AllowsSearchStop(int /*iUnit*/, int /*iPlot*/) const { return true; }
+	// Vox Deorum: applies route flags when search chooses the stops.
+	virtual int SearchMoveFlags(const CvUnit& /*unit*/) const { return 0; }
+	// Vox Deorum: validates the cached path and records its first-turn tiles if this order watches for contact.
+	bool CommitTacticalPath(const CvUnit& unit);
 	// Vox Deorum: asks whether the command must yield after an indivisible action.
-	virtual bool AfterAction() const = 0;
+	virtual bool AfterAction() = 0;
+	// Vox Deorum: reports a yield already recorded during this command.
+	virtual bool HasYielded() const { return false; }
+
+private:
+	// Vox Deorum: offers storage for the path currently being executed when the order watches for contact.
+	virtual vector<int>* RouteForContactCheck() { return NULL; }
 };
 
 // Vox Deorum: one accepted plan a teacher search reports beside its winner. The rank is one-based
@@ -2235,7 +2245,7 @@ namespace TacticalAIHelpers
 	// Vox Deorum: refreshes the next trade steps the search's turn-end score reads when the trade connections changed
 	void UpdateTradeSteps();
 	// Vox Deorum: pnRowsRun, when given, receives how many leading rows ran before the stream stopped (the operational loop)
-	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun = NULL, const STacticalMovementGate* pGate = NULL);
+	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun = NULL, STacticalMovementGate* pGate = NULL);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }
 

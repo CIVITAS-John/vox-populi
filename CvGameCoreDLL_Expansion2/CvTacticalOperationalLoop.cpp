@@ -1240,10 +1240,9 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				if (bArmyMarch)
 					kTactical.LogTacticalMessage(CvString::format(
 						"Operational step %d check of ArmyMarch %d, operation %d, army %d, waypoint %d: %.6f to %.6f, %s; "
-						"theater %.6f to %.6f, goal weight %.6f, readiness gain %.6f, added exposure %.6f",
+						"theater %.6f to %.6f, goal weight %.6f, readiness gain %.6f",
 						iCommands, iBest, field.iOperation, field.iTargetID, field.iPlotIndex, fBest, field.fReinforceEstimate, aszResults[eResult],
-						field.armyMarch.fUnassistedTheater, field.fTheater, field.armyMarch.fGoalWeight, field.armyMarch.fReadinessGain,
-						field.armyMarch.fAddedExposure));
+						field.armyMarch.fUnassistedTheater, field.fTheater, field.armyMarch.fGoalWeight, field.armyMarch.fReadinessGain));
 				else if (eBestSlot == OPERATIONAL_SLOT_REINFORCE)
 				{
 					const SOperationalReinforce& reinforce = field.reinforce;
@@ -2701,17 +2700,17 @@ static CvPlot* FormationPathStop(const CvUnit& unit, const CvPathNodeArray& path
 }
 
 // Returns the prepared corridor tile nearest to the unit's plot.
-static size_t ArmyMarchNearestCorridor(const CvUnit& unit, const vector<CvPlot*>& corridor)
+static size_t ArmyMarchNearestCorridor(const CvPlot& start, const vector<CvPlot*>& corridor)
 {
-	if (corridor.empty() || !unit.plot())
-		return corridor.empty() ? 0 : corridor.size() - 1;
 	int iNearest = INT_MAX;
 	size_t iNearestIndex = 0;
 	for (size_t i = 0; i < corridor.size(); i++)
 	{
-		const int iDistance = plotDistance(*unit.plot(), *corridor[i]);
+		const int iDistance = plotDistance(start, *corridor[i]);
 		if (iDistance < iNearest)
 		{
+			if (iDistance == 0)
+				return i;
 			iNearest = iDistance;
 			iNearestIndex = i;
 		}
@@ -2759,116 +2758,70 @@ static const SOperationalMarch* FindWithdrawOrder(const vector<SOperationalMarch
 	return it != marches.end() && it->iUnitID == iUnit ? &*it : NULL;
 }
 
-// Checks shared Withdraw stops and keeps March's movement and contact rules at action boundaries.
-struct SOperationalFormationMovement : STacticalMovementGate
+// Gets the exact stop for a unit in a checked Withdraw.
+static CvPlot* FindWithdrawStop(const vector<SOperationalMarch>& marches, int iUnit)
+{
+	const SOperationalMarch* pOrder = FindWithdrawOrder(marches, iUnit);
+	return pOrder ? GC.getMap().plotByIndex(pOrder->iStop) : NULL;
+}
+
+// Locates a participant's enrolled army.
+static CvArmyAI* PreparedArmyForUnit(const SOperationalTurn& turn, const CvUnit& unit)
+{
+	return turn.preparedArmies.count(unit.getArmyID()) > 0 ? GET_PLAYER(turn.ePlayer).getArmyAI(unit.getArmyID()) : NULL;
+}
+
+// Keeps units on a usable sea route when the formation cannot cross ocean.
+static bool AllowsArmyOcean(const CvPlot& plot, CvArmyAI& army)
+{
+	return !plot.isDeepWater() || !(ArmyMarchRouteFlags(army) & CvUnit::MOVEFLAG_NO_OCEAN);
+}
+
+// Replays a checked Withdraw while the live formation still permits its path.
+struct SOperationalWithdrawGate : STacticalMovementGate
 {
 	const SOperationalTurn& turn;
-	SOperationalCommandRecord& command;
-	CvPlot* pWaypoint;
-	const vector<SOperationalMarch>* pWithdrawStops;
-	const vector<CvPlot*>* pMarchCorridor;
-	set<int> admitted;
-	// The route of the move now being executed.
-	mutable vector<int> selectedRoute;
-	// A reveal may become relevant when a later member takes a route this command.
-	mutable map<OperationalExposureKey, int> newContacts;
+	const vector<SOperationalMarch>& withdrawStops;
+	const set<int>& admitted;
 	typedef map<int, SOperationalFormation> ArmyFormations;
 	mutable ArmyFormations formations;
 
-	// Creates the order boundary after participant admission.
-	SOperationalFormationMovement(const SOperationalTurn& kTurn, SOperationalCommandRecord& record, const vector<CvUnit*>& units,
-		CvPlot* pTarget, const vector<SOperationalMarch>* pStops, const vector<CvPlot*>* pCorridor)
-		: STacticalMovementGate(pStops != NULL), turn(kTurn), command(record), pWaypoint(pTarget),
-			pWithdrawStops(pStops), pMarchCorridor(pCorridor)
-	{
-		for (size_t i = 0; i < units.size(); i++)
-			admitted.insert(units[i]->GetID());
-		if (pWaypoint)
-		{
-			for (size_t i = 0; i < turn.battlefields.size(); i++)
-			{
-				const SOperationalBattlefield& field = turn.battlefields[i];
-				if (field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY || field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT)
-					turn.marchContacts.insert(OperationalExposureKey(field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY,
-						make_pair(field.eOwner, field.iTargetID)));
-			}
-			ObserveMarchContacts(turn, NULL);
-		}
-	}
+	// Borrows the checked orders and the admitted roster.
+	SOperationalWithdrawGate(const SOperationalTurn& kTurn, const vector<SOperationalMarch>& stops, const set<int>& units)
+		: STacticalMovementGate(true), turn(kTurn), withdrawStops(stops), admitted(units) {}
 
-	// Locates only the enrolled army of a participant.
-	CvArmyAI* GetArmy(const CvUnit& unit) const
-	{
-		return turn.preparedArmies.count(unit.getArmyID()) > 0 ? GET_PLAYER(turn.ePlayer).getArmyAI(unit.getArmyID()) : NULL;
-	}
-
-	// Reuses the checked Withdraw flags or applies the army's ocean limit.
+	// Replays the checked path flags.
 	virtual int MoveFlags(const CvUnit& unit) const
 	{
-		if (pWithdrawStops)
-		{
-			const SOperationalMarch* pOrder = FindWithdrawOrder(*pWithdrawStops, unit.GetID());
-			return pOrder ? pOrder->iMoveFlags : 0;
-		}
-		CvArmyAI* pArmy = GetArmy(unit);
-		return pArmy ? ArmyMarchRouteFlags(*pArmy) : 0;
-	}
-
-	// Records the route an executor chose for a March member.
-	virtual void RecordRoute(const CvUnit& unit) const
-	{
-		if (!pWaypoint || !unit.plot())
-			return;
-		selectedRoute.clear();
-		const CvPathNodeArray& path = unit.GetLastPath();
-		for (size_t i = 0; i < path.size() && path[i].m_iTurns == 0; i++)
-			selectedRoute.push_back(path.GetPlotByIndex(static_cast<int>(i))->GetPlotIndex());
-	}
-
-	// Applies the ocean limit to the route and the March water rule only to its stop.
-	bool AllowsRoute(const CvUnit& unit, const CvPlot& stop, CvArmyAI& army, bool bEndpoint = true) const
-	{
-		return unit.plot() == &stop ||
-			((!stop.isDeepWater() || !(ArmyMarchRouteFlags(army) & CvUnit::MOVEFLAG_NO_OCEAN)) &&
-			(!bEndpoint || !pWaypoint || AllowsArmyMarchStop(unit, stop, army)));
-	}
-
-	// Gets the exact stop for a unit in a checked Withdraw.
-	CvPlot* WithdrawStop(int iUnit) const
-	{
-		const SOperationalMarch* pOrder = FindWithdrawOrder(*pWithdrawStops, iUnit);
-		return pOrder ? GC.getMap().plotByIndex(pOrder->iStop) : NULL;
+		const SOperationalMarch* pOrder = FindWithdrawOrder(withdrawStops, unit.GetID());
+		return pOrder ? pOrder->iMoveFlags : 0;
 	}
 
 private:
-	// Shares the live formation across stop checks, subject to the optional route check.
-	const SOperationalFormation* FindFormation(const CvUnit& unit, CvArmyAI*& pArmy,
-		const CvPlot* pStop = NULL, bool bEndpoint = true) const
+	// Shares the live formation across route checks until another action commits.
+	const SOperationalFormation* FindFormation(CvArmyAI& army) const
 	{
-		pArmy = GetArmy(unit);
-		const CvAIOperation* pOperation = pArmy ? GET_PLAYER(turn.ePlayer).getAIOperation(pArmy->GetOperationID()) : NULL;
-		if (!pOperation || (pStop && !AllowsRoute(unit, *pStop, *pArmy, bEndpoint)))
+		const CvAIOperation* pOperation = GET_PLAYER(turn.ePlayer).getAIOperation(army.GetOperationID());
+		if (!pOperation)
 			return NULL;
-		ArmyFormations::iterator it = formations.find(pArmy->GetID());
+		ArmyFormations::iterator it = formations.find(army.GetID());
 		if (it == formations.end())
-			it = formations.insert(make_pair(pArmy->GetID(), SOperationalFormation(*pArmy, *pOperation))).first;
+			it = formations.insert(make_pair(army.GetID(), SOperationalFormation(army, *pOperation))).first;
 		else if (it->second.bNeedsRefresh)
-			it->second.Refresh(*pArmy, *pOperation);
+			it->second.Refresh(army, *pOperation);
 		return &it->second;
 	}
 
 public:
-	// Gives Withdraw its checked stops. March filters Gather's own reachable plots.
-	void BuildStops(const vector<CvUnit*>& units, TacticalUnitStops& stops)
+	// Gives each search attempt the checked stops that are still allowed.
+	virtual void BuildStops(const vector<CvUnit*>& units, TacticalUnitStops& stops) const
 	{
-		if (!pWithdrawStops)
-			return;
 		for (size_t i = 0; i < units.size(); i++)
 		{
 			const CvUnit& unit = *units[i];
 			set<int>& permitted = stops[unit.GetID()];
 			permitted.insert(unit.plot()->GetPlotIndex());
-			const CvPlot* pStop = WithdrawStop(unit.GetID());
+			const CvPlot* pStop = FindWithdrawStop(withdrawStops, unit.GetID());
 			if (pStop && Allows(unit, *pStop, true))
 				permitted.insert(pStop->GetPlotIndex());
 		}
@@ -2881,26 +2834,95 @@ public:
 			return false;
 		if (unit.plot() == &stop)
 			return true;
-		if (!pWithdrawStops)
-		{
-			CvArmyAI* pArmy = GetArmy(unit);
-			return !pArmy || AllowsRoute(unit, stop, *pArmy, bEndpoint);
-		}
-		if (bEndpoint && WithdrawStop(unit.GetID()) != &stop)
+		if (bEndpoint && FindWithdrawStop(withdrawStops, unit.GetID()) != &stop)
 			return false;
-		CvArmyAI* pArmy;
-		const SOperationalFormation* pFormation = FindFormation(unit, pArmy, &stop, bEndpoint);
-		return !pArmy || (pFormation && pFormation->Allows(unit, stop));
+		CvArmyAI* pArmy = PreparedArmyForUnit(turn, unit);
+		if (!pArmy)
+			return true;
+		if (!AllowsArmyOcean(stop, *pArmy))
+			return false;
+		const SOperationalFormation* pFormation = FindFormation(*pArmy);
+		return pFormation && pFormation->Allows(unit, stop);
 	}
 
-	// Refreshes live permissions after an action and yields March on a new attack or blocker.
-	virtual bool AfterAction() const
+	// Rechecks the formation after an action changes the board.
+	virtual bool AfterAction()
 	{
 		for (ArmyFormations::iterator it = formations.begin(); it != formations.end(); ++it)
 			it->second.bNeedsRefresh = true;
-		if (!pWaypoint)
+		return false;
+	}
+};
+
+// Applies the army's route limits and yields Gather on a newly revealed threat.
+struct SOperationalMarchGate : STacticalMovementGate
+{
+	const SOperationalTurn& turn;
+	SOperationalCommandRecord& command;
+	const CvPlot& waypoint;
+	const vector<CvPlot*>* pMarchCorridor;
+	const set<int>& admitted;
+	vector<int> selectedRoute;
+	// A reveal may become relevant when a later member takes a route this command.
+	map<OperationalExposureKey, int> newContacts;
+
+	// Borrows the order and remembers contacts already known when March starts.
+	SOperationalMarchGate(const SOperationalTurn& kTurn, SOperationalCommandRecord& record, const CvPlot& target,
+		const vector<CvPlot*>* pCorridor, const set<int>& units)
+		: STacticalMovementGate(false), turn(kTurn), command(record), waypoint(target), pMarchCorridor(pCorridor), admitted(units)
+	{
+		for (size_t i = 0; i < turn.battlefields.size(); i++)
+		{
+			const SOperationalBattlefield& field = turn.battlefields[i];
+			if (field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY || field.eCenter == OPERATIONAL_CENTER_ENEMY_UNIT)
+				turn.marchContacts.insert(OperationalExposureKey(field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY,
+					make_pair(field.eOwner, field.iTargetID)));
+		}
+		ObserveMarchContacts(turn, NULL);
+	}
+
+	// Applies the army's ocean limit to the entire route.
+	virtual int MoveFlags(const CvUnit& unit) const
+	{
+		CvArmyAI* pArmy = PreparedArmyForUnit(turn, unit);
+		return pArmy ? ArmyMarchRouteFlags(*pArmy) : 0;
+	}
+
+	// Uses the same ocean limit when Gather computes reachable plots.
+	virtual int SearchMoveFlags(const CvUnit& unit) const
+	{
+		return MoveFlags(unit);
+	}
+
+	// Checks an endpoint chosen by Gather against the live movement rules.
+	virtual bool AllowsSearchStop(int iUnit, int iPlot) const
+	{
+		const CvUnit* pUnit = GET_PLAYER(turn.ePlayer).getUnit(iUnit);
+		const CvPlot* pPlot = GC.getMap().plotByIndex(iPlot);
+		return pUnit && pPlot && Allows(*pUnit, *pPlot);
+	}
+
+	// Keeps recently embarked members of a combined army on water at the stop.
+	virtual bool Allows(const CvUnit& unit, const CvPlot& stop, bool bEndpoint = true) const
+	{
+		if (admitted.count(unit.GetID()) == 0)
 			return false;
-		if (command.iYieldPlot >= 0)
+		if (unit.plot() == &stop)
+			return true;
+		CvArmyAI* pArmy = PreparedArmyForUnit(turn, unit);
+		return !pArmy || (AllowsArmyOcean(stop, *pArmy) && (!bEndpoint || AllowsArmyMarchStop(unit, stop, *pArmy)));
+	}
+
+	// Reports the contact that already returned control to the queue.
+	virtual bool HasYielded() const
+	{
+		return command.iYieldPlot >= 0;
+	}
+
+	// Checks for newly seen attackers or blockers after the action.
+	virtual bool AfterAction()
+	{
+		if (HasYielded())
 			return true;
 		ObserveMarchContacts(turn, &newContacts);
 		if (newContacts.empty())
@@ -2922,14 +2944,14 @@ public:
 		if (pMarchCorridor)
 		{
 			const vector<CvPlot*>& corridor = *pMarchCorridor;
-			const vector<CvPlot*>::const_iterator waypoint = std::find(corridor.begin(), corridor.end(), pWaypoint);
-			if (waypoint != corridor.end())
+			const vector<CvPlot*>::const_iterator itWaypoint = std::find(corridor.begin(), corridor.end(), &waypoint);
+			if (itWaypoint != corridor.end())
 			{
-				const size_t iWaypoint = waypoint - corridor.begin();
+				const size_t iWaypoint = itWaypoint - corridor.begin();
 				for (CvUnit* pUnit = pArmy->GetFirstUnit(); pUnit; pUnit = pArmy->GetNextUnit(pUnit))
 					if (pUnit->plot() && pUnit->canUseNow())
 					{
-						const size_t iStart = ArmyMarchNearestCorridor(*pUnit, corridor);
+						const size_t iStart = ArmyMarchNearestCorridor(*pUnit->plot(), corridor);
 						if (iStart != iWaypoint)
 							steps.insert(corridor[iStart < iWaypoint ? iStart + 1 : iStart - 1]->GetPlotIndex());
 					}
@@ -2969,6 +2991,13 @@ public:
 		}
 		return false;
 	}
+
+private:
+	// Gives the path validator storage for the current member's first turn.
+	virtual vector<int>* RouteForContactCheck()
+	{
+		return &selectedRoute;
+	}
 };
 
 // Checks that multiple incoming units fit the same stop under the native stacking rules.
@@ -2994,22 +3023,37 @@ struct PrOperationalSortCombatFirst
 	}
 };
 
-// Estimates one turn of progress from each ready member's nearest prepared corridor tile.
-static double ArmyMarchReadinessGain(const SOperationalPreparedArmy& order, const vector<CvUnit*>& members)
+// Estimates progress via the waypoint and collects the members that can still act.
+static double ArmyMarchReadinessGain(const SOperationalPreparedArmy& order, const CvAIOperation& operation, CvArmyAI& army,
+	const vector<CvUnit*>& members, vector<int>& selected)
 {
 	const vector<CvPlot*>& corridor = order.vMarchCorridor;
-	if (corridor.empty() || members.empty())
+	const vector<CvPlot*>::const_iterator waypoint = std::find(corridor.begin(), corridor.end(), order.pWaypoint);
+	if (waypoint == corridor.end() || members.empty())
 		return 0.0;
+	const size_t iWaypoint = waypoint - corridor.begin();
+	const int iTail = static_cast<int>(corridor.size() - 1 - iWaypoint);
+	int iRadius = 2; // Gather's approximate path target (MOVEFLAG_APPROX_TARGET_RING2).
+	if (iTail == 0)
+	{
+		if (ArmyMarchAtMuster(order.eStage))
+			iRadius = operation.GetGatherTolerance(&army, operation.GetMusterPlot());
+		else if (!operation.IsNeverEnding())
+			iRadius = operation.GetDeployRange();
+	}
 	double fGain = 0.0;
 	for (size_t i = 0; i < members.size(); i++)
 	{
 		const CvUnit& unit = *members[i];
-		if (!unit.canUseNow() || !unit.plot())
+		const CvPlot* pStart = unit.plot();
+		if (!pStart || !unit.canUseNow())
 			continue;
-		// Count the steps to the nearest corridor tile and then the corridor's remaining length.
-		const size_t iNearest = ArmyMarchNearestCorridor(unit, corridor);
-		const int iSteps = plotDistance(*unit.plot(), *corridor[iNearest]) +
-			static_cast<int>(corridor.size() - 1 - iNearest);
+		selected.push_back(unit.GetID());
+		// Do not charge a member beyond the waypoint for turning back to it.
+		int iToWaypoint = std::max(0, plotDistance(*pStart, *order.pWaypoint) - iRadius);
+		if (iToWaypoint > 0 && ArmyMarchNearestCorridor(*pStart, corridor) > iWaypoint)
+			iToWaypoint = 0;
+		const int iSteps = iToWaypoint + iTail;
 		const double fBaseMoves = std::max(1, unit.baseMoves(unit.isEmbarked()));
 		const double fTurns = iSteps / fBaseMoves;
 		const double fAvailable = std::min(1.0, unit.getMoves() / (fBaseMoves * GD_INT_GET(MOVE_DENOMINATOR)));
@@ -3035,7 +3079,6 @@ void CvTacticalOperationalLoop::EstimateArmyMarch(CvTacticalAI& kTactical, SOper
 	field.theater = SOperationalTheater();
 	field.eReinforce = OPERATIONAL_OFFER_INACTIVE;
 	field.armyMarch = SOperationalArmyMarchScore();
-	field.ResetReinforceCheck();
 	field.reinforce.vSelected.clear();
 	vector<SOperationalPreparedArmy>::iterator order;
 	CvAIOperation* pOperation;
@@ -3046,7 +3089,7 @@ void CvTacticalOperationalLoop::EstimateArmyMarch(CvTacticalAI& kTactical, SOper
 	field.armyMarch.fGoalWeight = ArmyMarchGoalWeight(turn, pOperation->GetOperationType());
 	if (field.armyMarch.fGoalWeight <= 0.0)
 		return;
-	field.armyMarch.fReadinessGain = ArmyMarchReadinessGain(*order, members);
+	field.armyMarch.fReadinessGain = ArmyMarchReadinessGain(*order, *pOperation, *pArmy, members, field.reinforce.vSelected);
 	if (field.armyMarch.fReadinessGain <= 0.0)
 		return;
 	EstimateArmyMarchTheater(kTactical, turn, *pOperation, members, field);
@@ -5084,36 +5127,18 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckReinforce(CvTacticalAI& 
 	return OPERATIONAL_CHECK_PASSED;
 }
 
-// Confirms the prepared order and lets all live, usable members reach Gather.
+// Confirms the order that produced the current March offer.
 eOperationalCheckResult CvTacticalOperationalLoop::CheckArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn,
 	SOperationalBattlefield& field)
 {
-	if (field.reinforce.bChecked)
-		return field.fReinforceEstimate > 0.0 ? OPERATIONAL_CHECK_PASSED : OPERATIONAL_CHECK_NO_REACHABLE;
 	SOperationalTimer timer(turn.bTiming ? &turn.performance.armyMarchCheckNs : NULL);
 	vector<SOperationalPreparedArmy>::iterator order;
 	CvAIOperation* pOperation;
 	CvArmyAI* pArmy;
-	vector<CvUnit*> members;
-	const eOperationalCheckResult eResult = ResolveArmyMarch(kTactical, field, order, pOperation, pArmy, &members);
-	if (eResult != OPERATIONAL_CHECK_PASSED)
-	{
-		if (eResult == OPERATIONAL_CHECK_NO_REACHABLE)
-			field.fReinforceEstimate = 0.0;
-		return eResult;
-	}
-
-	field.reinforce.bChecked = true;
-	field.reinforce.vSelected.clear();
-	for (size_t i = 0; i < members.size(); i++)
-		if (members[i]->canUseNow())
-			field.reinforce.vSelected.push_back(members[i]->GetID());
-	if (field.reinforce.vSelected.empty())
-	{
+	const eOperationalCheckResult eResult = ResolveArmyMarch(kTactical, field, order, pOperation, pArmy);
+	if (eResult == OPERATIONAL_CHECK_NO_REACHABLE)
 		field.fReinforceEstimate = 0.0;
-		return OPERATIONAL_CHECK_NO_REACHABLE;
-	}
-	return OPERATIONAL_CHECK_PASSED;
+	return eResult;
 }
 
 // Reads a plot's danger with the defenders that would actually be there. Both plots use the same
@@ -6245,7 +6270,7 @@ struct SOperationalEngagementScope
 bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 	PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 	bool bTargetDistanceRelevant, SOperationalEngagementReport& report, const SOperationalTurn* pTurn,
-	SOperationalCommandRecord* pCommand, SOperationalFormationMovement* pMovement)
+	SOperationalCommandRecord* pCommand, STacticalMovementGate* pMovement)
 {
 	if (vUnits.empty() || !pTarget)
 		return false;
@@ -6322,7 +6347,7 @@ static vector<STacticalAssignment> SearchEngagementAttempt(PlayerTypes ePlayer, 
 // target distance flag are given, and each attempt is recorded with the rows that ran.
 bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
 	SearchIntent eSearchIntent, const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report,
-	SOperationalFormationMovement* pMovement)
+	STacticalMovementGate* pMovement)
 {
 	int iCount = 0;
 	bool bSuccess = false;
@@ -6343,7 +6368,7 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 			// Rebuild stops before a retry so the search uses live plot permissions.
 			TacticalUnitStops stops;
 			pMovement->BuildStops(currentUnits, stops);
-			STacticalStopScope stopScope(stops, ePlayer, pMovement->pWithdrawStops ? NULL : pMovement);
+			STacticalStopScope stopScope(stops, pMovement);
 			vAssignments = SearchEngagementAttempt(ePlayer, currentUnits, pTarget, eAggLvl, eSearchIntent, flavors,
 				bTargetDistanceRelevant, unuseableUnits, report);
 		}
@@ -6378,14 +6403,14 @@ bool CvTacticalOperationalLoop::SearchAndExecute(PlayerTypes ePlayer, vector<CvU
 			GetUnitsByID(ePlayer, vCurrentIDs, currentUnits);
 			attempt.bCompleted = bSuccess;
 			// A yielded attempt reports its committed prefix only.
-			if (pMovement && pMovement->command.iYieldPlot >= 0)
+			if (pMovement && pMovement->HasYielded())
 				attempt.vRows.resize(attempt.nRowsRun);
 			report.attempts.push_back(attempt);
 			if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 				VoxRlCapture::GetInstance().NoteExecutionResult(bSuccess);
 		}
 	}
-	while (!bSuccess && iCount < 4 && (!pMovement || pMovement->command.iYieldPlot < 0));
+	while (!bSuccess && iCount < 4 && (!pMovement || !pMovement->HasYielded()));
 
 	gDistanceToTargetPlots.clear();
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
@@ -6667,27 +6692,44 @@ static CvPlot* ArmyGatherApproach(CvTacticalAI& kTactical, CvUnit& unit, CvPlot&
 	return pStop;
 }
 
-// Copy of CvTacticalAI::PositionUnitsAroundTarget. Changes: the search runs through ExecuteEngagement over the units
-// still usable after the spotter move, with the kind row, the geographic blend and aggression from RISK; the spotter
-// and path moves skip held garrisons. A shared Withdraw reuses its checked stops. Army March checks danger at its
-// approach stop and records the route it takes. Other path moves go through CanMarch and MarchFlags, whose land units use
-// MOVEFLAG_SAFE_EMBARK_ONLY in place of native's two MOVEFLAG_NO_EMBARK rules (no naval escort in the list, or a first
-// turn ending outside a zone we dominate). A Withdraw skips the spotter, records each unit's starting plot, sends every
-// recruit that can still move and orders damaged units first. After a successful Withdraw search a recruit it used
-// on a plot with no danger stays.
+// Installs the movement gate only for a command that needs it.
 eOperationalPositionResult CvTacticalOperationalLoop::PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnitsIn, CvPlot* pTarget,
 	PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn, SOperationalCommandRecord& command,
 	const vector<SOperationalMarch>* pWithdrawStops, const vector<CvPlot*>* pMarchCorridor)
 {
+	const vector<int> vUnitIDs = GetUnitIDs(vUnitsIn);
+	const bool bArmyMarch = command.eKind == OPERATIONAL_KIND_ARMY_MARCH;
+	if (!bArmyMarch && !pWithdrawStops)
+		return PositionUnitsAroundTargetWithGate(kTactical, vUnitsIn, vUnitIDs, pTarget, eCounterpart, report, turn, command, NULL, NULL);
+
+	const set<int> admitted(vUnitIDs.begin(), vUnitIDs.end());
+	if (bArmyMarch)
+	{
+		SOperationalMarchGate gate(turn, command, *pTarget, pMarchCorridor, admitted);
+		return PositionUnitsAroundTargetWithGate(kTactical, vUnitsIn, vUnitIDs, pTarget, eCounterpart, report, turn, command, &gate, NULL);
+	}
+	SOperationalWithdrawGate gate(turn, *pWithdrawStops, admitted);
+	return PositionUnitsAroundTargetWithGate(kTactical, vUnitsIn, vUnitIDs, pTarget, eCounterpart, report, turn, command, &gate, pWithdrawStops);
+}
+
+// Copy of CvTacticalAI::PositionUnitsAroundTarget. Changes: the search runs through ExecuteEngagement over the units
+// still usable after the spotter move, with the kind row, the geographic blend and aggression from RISK; the spotter
+// and path moves skip held garrisons. A shared Withdraw reuses its checked stops. Army March keeps native's two
+// MOVEFLAG_NO_EMBARK rules for land units (no naval escort in the list, or a first turn ending outside a zone we
+// dominate), checks danger at its approach stop and records the route it takes. Other path moves go through CanMarch
+// and MarchFlags, whose land units use MOVEFLAG_SAFE_EMBARK_ONLY in place of those two rules. A Withdraw skips the
+// spotter, records each unit's starting plot, sends every recruit that can still move and orders damaged units first.
+// After a successful Withdraw search a recruit it used on a plot with no danger stays.
+eOperationalPositionResult CvTacticalOperationalLoop::PositionUnitsAroundTargetWithGate(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnitsIn,
+	const vector<int>& vUnitIDs, CvPlot* pTarget, PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn,
+	SOperationalCommandRecord& command, STacticalMovementGate* pGate, const vector<SOperationalMarch>* pWithdrawStops)
+{
 	const eOperationalKind eKind = command.eKind;
 	const PlayerTypes ePlayer = kTactical.m_pPlayer->GetID();
-	const vector<int> vUnitIDs = GetUnitIDs(vUnitsIn);
 
 	// A Withdraw compares a unit with where it started after the search, so record the starting plots first.
 	const bool bWithdraw = eKind == OPERATIONAL_KIND_WITHDRAW;
 	const bool bArmyMarch = eKind == OPERATIONAL_KIND_ARMY_MARCH;
-	SOperationalFormationMovement movement(turn, command, vUnitsIn, bArmyMarch ? pTarget : NULL, pWithdrawStops, pMarchCorridor);
-	const STacticalMovementGate* pGate = bArmyMarch || pWithdrawStops ? &movement : NULL;
 	map<int, int> startPlots;
 	if (bWithdraw)
 		for (vector<CvUnit*>::const_iterator it = vUnitsIn.begin(); it != vUnitsIn.end(); ++it)
@@ -6719,7 +6761,7 @@ eOperationalPositionResult CvTacticalOperationalLoop::PositionUnitsAroundTarget(
 		if ((*it)->canUseNow())
 			vSimUnits.push_back(*it);
 	bool bTactSimSuccess = vSimUnits.empty() ? false : ExecuteEngagement(ePlayer, vSimUnits, pTarget, eKind, eCounterpart,
-		turn.aiMapped, turn.settings, !bWithdraw, report, &turn, &command, pGate ? &movement : NULL);
+		turn.aiMapped, turn.settings, !bWithdraw, report, &turn, &command, pGate);
 	if (command.iYieldPlot >= 0)
 		return OPERATIONAL_POSITION_YIELDED;
 	GetUnitsByID(ePlayer, vUnitIDs, vUnits);
@@ -6786,7 +6828,7 @@ eOperationalPositionResult CvTacticalOperationalLoop::PositionUnitsAroundTarget(
 		// Shared Withdraw uses the exact first stop that was scored for this layout.
 		if (pWithdrawStops)
 		{
-			CvPlot* pStop = movement.WithdrawStop(*it);
+			CvPlot* pStop = FindWithdrawStop(*pWithdrawStops, *it);
 			if (pStop && pStop != pUnit->plot() && pUnit->canMove())
 				kTactical.ExecuteMoveToPlot(pUnit, pStop, pUnit->getArmyID() == -1, 0, pGate);
 			continue;
@@ -6794,7 +6836,7 @@ eOperationalPositionResult CvTacticalOperationalLoop::PositionUnitsAroundTarget(
 		if (bArmyMarch)
 		{
 			int iFlags = 0;
-			CvPlot* pStop = ArmyGatherApproach(kTactical, *pUnit, *pTarget, bHaveNavalEscort, movement,
+			CvPlot* pStop = ArmyGatherApproach(kTactical, *pUnit, *pTarget, bHaveNavalEscort, *pGate,
 				kTactical.GetRecruitRange(), iFlags);
 			if (pStop)
 				kTactical.ExecuteMoveToPlot(pUnit, pStop, true, iFlags, pGate);
@@ -7207,7 +7249,7 @@ bool OperationalSnapshotEqual(const SOperationalSnapshot& a, const SOperationalS
 {
 	if (a.iPlotIndex != b.iPlotIndex || a.iRank != b.iRank || a.eState != b.eState || a.fEstimate != b.fEstimate ||
 		a.armyMarch.fUnassistedTheater != b.armyMarch.fUnassistedTheater || a.armyMarch.fGoalWeight != b.armyMarch.fGoalWeight ||
-		a.armyMarch.fReadinessGain != b.armyMarch.fReadinessGain || a.armyMarch.fAddedExposure != b.armyMarch.fAddedExposure ||
+		a.armyMarch.fReadinessGain != b.armyMarch.fReadinessGain ||
 		a.fTheater != b.fTheater || a.fSwing != b.fSwing || a.fSelectedSwing != b.fSelectedSwing ||
 		a.fExposureShare != b.fExposureShare || a.fWithdrawExposure != b.fWithdrawExposure ||
 		a.fWithdrawShare != b.fWithdrawShare || a.aiWithdrawDestination[0] != b.aiWithdrawDestination[0] ||
