@@ -1,5 +1,5 @@
 /*	-------------------------------------------------------------------------------------------------------
-	Vox Deorum: the operational loop's own constants (VOX_TACTICAL_OPERATIONAL_LOOP): the base weight and flavor
+	The operational loop's own constants (VOX_TACTICAL_OPERATIONAL_LOOP): the base weight and flavor
 	of each stake weight, a flavor slope per military flavor, and the floors, point constants and readiness
 	failure limit. One table row per constant, so tuning edits one column. A row's name is its name in template
 	overrides, records and the weight sweep. ResolveOperationalWeights turns the tables, a player's mapped flavors
@@ -32,9 +32,12 @@ enum eOperationalConstant
 	OPERATIONAL_CONSTANT_CITY_UNITS,
 	OPERATIONAL_CONSTANT_STRENGTH_RATIO,
 	OPERATIONAL_CONSTANT_READINESS_MAX_FAILURES,
-	// Vox Deorum: 0 turns the Withdraw offer off.
+	// 0 turns the Withdraw offer off.
 	OPERATIONAL_CONSTANT_WITHDRAW_ENABLED,
-	// Vox Deorum: 0 turns the fight exposure split off.
+	// Army enrollment and target discovery switch, followed by the readiness allowance.
+	OPERATIONAL_CONSTANT_MARCH_ENABLED,
+	OPERATIONAL_CONSTANT_MARCH_READY_UNITS,
+	// 0 turns the fight exposure split off.
 	OPERATIONAL_CONSTANT_EXPOSURE_SPLIT,
 	NUM_OPERATIONAL_CONSTANTS
 };

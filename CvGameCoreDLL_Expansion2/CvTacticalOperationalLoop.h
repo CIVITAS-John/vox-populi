@@ -1,5 +1,5 @@
 /*	-------------------------------------------------------------------------------------------------------
-	Vox Deorum: the operational loop (VOX_TACTICAL_OPERATIONAL_LOOP). With the flag on, a non-barbarian player's
+	The operational loop (VOX_TACTICAL_OPERATIONAL_LOOP). With the flag on, a non-barbarian player's
 	ProcessDominanceZones hands its turn to this file's copy, which runs a global loop of battlefields in place of
 	the zone posture routines and the reinforcement sweep. The loop runs fights on enemy units, enemy cities and our own
 	cities, a Reinforce at each of them that marches distant units in, and a Withdraw at enemy centers that pulls the
@@ -13,11 +13,11 @@
 #define CIV5_TACTICAL_OPERATIONAL_LOOP_H
 
 #include "CvTacticalOperationalWeights.h"
-// Vox Deorum: the purpose carried by each operational search and capture.
+// The purpose carried by each operational search and capture.
 #include "VoxDeorumRL/schema/SearchIntent.h"
 
 struct CvDangerPlotContents;
-// Vox Deorum: damage dealt and taken before interception.
+// Damage dealt and taken before interception.
 struct SOperationalAttackDamage;
 
 // one posture row per eTacticalPosture value
@@ -31,6 +31,8 @@ enum eOperationalKind
 	OPERATIONAL_KIND_REINFORCE,
 	OPERATIONAL_KIND_OWN_CITY_FIGHT,
 	OPERATIONAL_KIND_WITHDRAW,
+	// Formation movement in the command queue.
+	OPERATIONAL_KIND_ARMY_MARCH,
 	NUM_OPERATIONAL_KINDS
 };
 
@@ -151,13 +153,13 @@ struct SOperationalThreatDamage
 	int TotalDamage() const { return iDirectDamage + iAreaDamage; }
 };
 
-// Vox Deorum: one city's standard danger result and its per-threat contributions for the current estimate pass.
+// One city's standard danger result and its per-threat contributions.
 struct SOperationalCityDanger
 {
 	int iTotal;
 	vector<SOperationalThreatDamage> threats;
 
-	// Vox Deorum: creates an empty city danger result.
+	// Creates an empty city danger result.
 	SOperationalCityDanger() : iTotal(0) {}
 };
 
@@ -174,7 +176,9 @@ enum eOperationalCenter
 {
 	OPERATIONAL_CENTER_ENEMY_UNIT,
 	OPERATIONAL_CENTER_ENEMY_CITY,
-	OPERATIONAL_CENTER_OUR_CITY
+	OPERATIONAL_CENTER_OUR_CITY,
+	// An enrolled army, keyed by owner, operation and army.
+	OPERATIONAL_CENTER_ARMY
 };
 
 // Where an offer stands in the turn's queue
@@ -195,16 +199,27 @@ struct SOperationalThreatExposure
 {
 	double fExposure;
 	vector<int> vUnitIDs;
-	// Vox Deorum: each victim's exposure allocation, parallel to vUnitIDs.
+	// Each victim's exposure allocation, parallel to vUnitIDs.
 	vector<double> vAllocations;
-	// Vox Deorum: the attacks per turn this threat spends on its victims.
+	// The attacks per turn this threat spends on its victims.
 	int iAttacks;
 
 	// Creates a threat that exposes nothing.
 	SOperationalThreatExposure() : fExposure(0.0), iAttacks(0) {}
 };
 
-// Vox Deorum: the six scalar terms retained by stake records.
+typedef map<pair<int, int>, SOperationalThreatExposure> OperationalThreatMap;
+// A city flag followed by the attacker's owner and ID.
+typedef pair<bool, pair<int, int> > OperationalExposureKey;
+typedef map<OperationalExposureKey, double> OperationalAttackerWeights;
+
+// Allocations grouped by enemy unit or city.
+struct SOperationalExposure
+{
+	OperationalThreatMap units, cities;
+};
+
+// The six scalar terms retained by stake records.
 const int NUM_OPERATIONAL_STAKE_TERMS = 6;
 
 // Weighted fight terms in typical units, their sum, and the damage, relief and fall shares behind them.
@@ -220,9 +235,9 @@ struct SOperationalStake
 	double fReliefShare;   // a_t at a unit target
 	double fFallShare;     // f_att at an enemy city, f_def at ours or the unit target's zone city
 	double fStake;
-	// Vox Deorum: the multiplier applied to the weighted exposure term: s, or 1 with the split off.
+	// The multiplier applied to the weighted exposure term: s, or 1 with the split off.
 	double fExposureShare;
-	// Vox Deorum: unweighted terms retained even when their weight is zero.
+	// Unweighted terms retained even when their weight is zero.
 	double afValue[NUM_OPERATIONAL_STAKE_TERMS];
 
 	// Creates an empty stake.
@@ -241,7 +256,7 @@ struct SOperationalLocalSet
 	bool bSea;                  // the battlefield takes sea units
 	vector<CvUnit*> vStrength;  // strength filter: in-domain land and sea units, spent units and army members included
 	vector<CvUnit*> vDamage;    // damage filter: recruitable units outside armies that can still attack, aircraft included, by ascending ID
-	// Vox Deorum: fighters that can sweep this target from their current plot, by ascending ID.
+	// Fighters that can sweep this target from their current plot, by ascending ID.
 	vector<CvUnit*> vSweepers;
 	bool bCapturer;             // a strength-filter unit passes IsCapturer
 	bool bCanCapture;           // a damage-filter unit passes CanCapture
@@ -250,7 +265,7 @@ struct SOperationalLocalSet
 	SOperationalLocalSet() : bLand(false), bSea(false), bCapturer(false), bCanCapture(false) {}
 };
 
-// Vox Deorum: a deliberate approximation. Sample each target at most once per command loop and keep the sample
+// A deliberate approximation. Sample each target at most once per command loop and keep the sample
 // as the board changes. Targets beyond the budget keep unsampled estimates; readiness checks still use live state.
 struct SOperationalForecast
 {
@@ -261,7 +276,7 @@ struct SOperationalForecast
 	int iRejectedGarrison;
 	set<int> reachableCapturers;
 
-	// Vox Deorum: creates an unsampled forecast.
+	// Creates an unsampled forecast.
 	SOperationalForecast() : bChecked(false), iSpeculative(0), iRejected(0), iSpeculativeGarrison(0),
 		iRejectedGarrison(0) {}
 };
@@ -269,17 +284,17 @@ struct SOperationalForecast
 typedef pair<int, pair<int, int> > OperationalForecastKey;
 typedef map<OperationalForecastKey, SOperationalForecast> OperationalForecastMap;
 
-// Vox Deorum: one friendly victim's exposure, separated into environmental residual and identified sources.
+// One friendly victim's exposure, separated into environmental residual and identified sources.
 struct SOperationalVictimExposure
 {
 	double fResidual;
-	map<pair<bool, pair<int, int> >, double> shares;
+	map<OperationalExposureKey, double> shares;
 
-	// Vox Deorum: creates an empty exposure allocation.
+	// Creates an empty exposure allocation.
 	SOperationalVictimExposure() : fResidual(0.0) {}
 };
 
-// Vox Deorum: whether an attacker can strike now or can reach a legal base when sampled.
+// Whether an attacker can strike now or can reach a legal base when sampled.
 enum eOperationalStrikeReadiness
 {
 	OPERATIONAL_STRIKE_IMMEDIATE,
@@ -301,7 +316,7 @@ struct SOperationalCityDamage
 	int iRemaining;            // R: the city's remaining HP, at least 1
 	int iHeal;                 // H: the city's expected heal
 	vector<int> vKilled;       // garrisons predicted to die, which no later hit may meet again
-	// Vox Deorum: current speculative totals and cumulative rounded discounts for this estimate only.
+	// Current speculative totals and cumulative rounded discounts for this estimate only.
 	int iSpeculative, iSpeculativeGarrison, iRemoved, iRemovedGarrison;
 
 	// Creates an empty simulation.
@@ -310,10 +325,10 @@ struct SOperationalCityDamage
 		iSpeculative(0), iSpeculativeGarrison(0), iRemoved(0), iRemovedGarrison(0) {}
 };
 
-// Vox Deorum: realized lethal damage with a capturer earns full credit; other progress uses scored damage after healing.
+// Realized lethal damage with a capturer earns full credit; other progress uses scored damage after healing.
 double AttackFallShare(double fRealized, int iHeal, int iRemaining, bool bCapture, int iRejected = 0);
 
-// Vox Deorum: the three offers every battlefield carries, in queue tie-break order.
+// The three offers every battlefield carries, in queue tie-break order.
 enum eOperationalSlot
 {
 	OPERATIONAL_SLOT_FIGHT,
@@ -323,30 +338,32 @@ enum eOperationalSlot
 };
 
 struct SOperationalBattlefield;
-// Vox Deorum: the offer identity of one battlefield's slot.
+// The offer identity of one battlefield's slot.
 int OperationalOfferIdentity(int iBattlefield, eOperationalSlot eSlot);
-// Vox Deorum: decodes an offer identity's battlefield index.
+// Decodes an offer identity's battlefield index.
 int OperationalOfferBattlefield(int iOffer);
-// Vox Deorum: decodes an offer identity's slot.
+// Decodes an offer identity's slot.
 eOperationalSlot OperationalOfferSlot(int iOffer);
-// Vox Deorum: the command kind a slot runs at a center.
+// The command kind a slot runs at a center.
 eOperationalKind OperationalSlotKind(eOperationalCenter eCenter, eOperationalSlot eSlot);
-// Vox Deorum: the slot a command kind belongs to.
+// Identifies the slots supported by a row, independently of their current state.
+bool OperationalSupportsSlot(eOperationalCenter eCenter, eOperationalSlot eSlot);
+// The slot a command kind belongs to.
 eOperationalSlot OperationalKindSlot(eOperationalKind eKind);
-// Vox Deorum: one battlefield offer's state by slot.
+// One battlefield offer's state by slot.
 eOperationalOfferState& OperationalOfferState(SOperationalBattlefield& field, eOperationalSlot eSlot);
-// Vox Deorum: one battlefield offer's state by slot, read-only.
+// One battlefield offer's state by slot, read-only.
 const eOperationalOfferState& OperationalOfferState(const SOperationalBattlefield& field, eOperationalSlot eSlot);
-// Vox Deorum: one battlefield offer's estimate by slot.
+// One battlefield offer's estimate by slot.
 double OperationalOfferEstimate(const SOperationalBattlefield& field, eOperationalSlot eSlot);
 
-// Vox Deorum: the queue rank that breaks equal estimates: our cities' fights 0, enemy cities' fights 1, enemy units'
+// The queue rank that breaks equal estimates: our cities' fights 0, enemy cities' fights 1, enemy units'
 // fights 2, Reinforce 3 and Withdraw 4.
 int OfferRank(eOperationalCenter eCenter, eOperationalSlot eSlot);
 // Whether an offer goes ahead of the best one so far: a higher estimate, then a lower rank, then a lower plot index.
 bool OfferOutranks(double fEstimate, int iRank, int iPlotIndex, double fBest, int iBestRank, int iBestPlotIndex);
 
-// Vox Deorum: a Reinforce candidate within recruit range, including units the same-field fight released.
+// A Reinforce candidate within recruit range, including units the same-field fight released.
 struct SOperationalCandidate
 {
 	int iUnitID;
@@ -360,7 +377,7 @@ struct SOperationalCandidate
 	SOperationalCandidate() : iUnitID(-1), fStrength(0.0), iTravelTurns(1), iJoinTurns(1), bCapturer(false), bHeldGarrison(false) {}
 };
 
-// Vox Deorum: a Reinforce verdict; a competing target also records the plot that blocked the march.
+// A Reinforce verdict; a competing target also records the plot that blocked the march.
 struct SOperationalReinforceReach
 {
 	enum Result { PASSED, INITIAL_REACH, MARCH, COMPETING_TARGET };
@@ -396,12 +413,13 @@ struct SOperationalReinforce
 		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), bChecked(false) {}
 };
 
-// Vox Deorum: one checked Withdraw recruit, with its city and first-turn stop.
+// One checked path mover, with its destination and first-turn stop.
 struct SOperationalMarch
 {
 	int iUnitID;
 	int iDestination;
 	int iStop;
+	int iMoveFlags; // Path flags for a checked formation Withdraw stop.
 
 	// Orders marches by recruit ID so readiness and admission use the same tie break.
 	bool operator<(const SOperationalMarch& other) const { return iUnitID < other.iUnitID; }
@@ -409,18 +427,27 @@ struct SOperationalMarch
 
 // The turns a unit needs for a plain distance at its moves per turn: max(1, ceil(distance / moves)).
 int TravelTurns(int iDistance, int iMoves);
-// Vox Deorum: selects Reinforce candidates nearest first (join turns, travel turns, unit ID) until their full strength
+// Selects Reinforce candidates nearest first (join turns, travel turns, unit ID) until their full strength
 // meets max(0, rT - L), storing the supplied L and T in out. When bNeedCapturer is set and no selected unit can capture, appends the
 // nearest capturer as the role unit, or marks the role missing. Keeps strength shares, counted sets, rejections and check flag.
 void SelectReinforcement(const vector<SOperationalCandidate>& candidates, double fLocal, double fEnemy, double fRatio, bool bNeedCapturer,
 	SOperationalReinforce& out);
 
-// Vox Deorum: scalar theater components shared with unit targets in the same city zone.
+// Scalar theater components shared with unit targets in the same city zone.
 struct SOperationalTheater
 {
 	double fImportance, fPressure, fContest, fDamageLevel;
-	// Vox Deorum: a field without a city uses the theater floor.
+	// A field without a city uses the theater floor.
 	SOperationalTheater() : fImportance(0.0), fPressure(0.0), fContest(0.0), fDamageLevel(0.0) {}
+};
+
+// The ArmyMarch inputs that can change between estimation and execution.
+struct SOperationalArmyMarchScore
+{
+	double fUnassistedTheater, fGoalWeight, fReadinessGain, fAddedExposure;
+
+	// Starts with no formation or projected progress.
+	SOperationalArmyMarchScore() : fUnassistedTheater(0.0), fGoalWeight(0.0), fReadinessGain(0.0), fAddedExposure(0.0) {}
 };
 
 // One battlefield of the turn, its fight offer, its Reinforce offer and its Withdraw offer
@@ -433,11 +460,15 @@ struct SOperationalBattlefield
 	int iZoneCityPlot;             // unit target: zone city plot, fixed for the turn, or -1
 	PlayerTypes eOwner;           // the target's owner
 	int iTargetID;                // enemy unit ID or city ID, or our city's ID: the identity for the turn
+	// Army rows use the target ID for the army and also carry the operation ID.
+	int iOperation;
 	double fImportance;           // city centers only: city value / Z_C, capped at 1, fixed for the turn
 	SOperationalTheater theater;
 	double fTheater;              // refreshed from the zone city at each estimate pass
 	double fGround;               // fixed for the turn; unit targets only
 	bool bNearOurCity;            // fixed: within 3 plots of one of our cities
+	// Enrolled formations with a reason to fight this target.
+	set<int> fightArmies;
 	bool bCanAttackOurUnits;      // rebuilt with the threat maps after each command
 	eOperationalOfferState eFight;
 	double fEstimate;             // theater times stake
@@ -450,24 +481,26 @@ struct SOperationalBattlefield
 	eOperationalOfferState eReinforce;
 	double fReinforceEstimate;    // fight priority times strength swing
 	SOperationalReinforce reinforce;
-	// Vox Deorum: the Withdraw offer's state.
+	SOperationalArmyMarchScore armyMarch;
+	vector<SOperationalMarch> vArmyMarchStops;  // checked stops for this battlefield's current March
+	// The Withdraw offer's state.
 	eOperationalOfferState eWithdraw;
-	// Vox Deorum: the Withdraw priority, 0 while it has no endangered recruit.
+	// The Withdraw priority, 0 while it has no endangered recruit.
 	double fWithdrawEstimate;
-	// Vox Deorum: X, the removable exposure in worth units before dividing by Z_T.
+	// X, the removable exposure in worth units before dividing by Z_T.
 	double fWithdrawExposure;
-	// Vox Deorum: s, the strength share saved at the tally.
+	// S, the strength share saved at the tally.
 	double fExposureShare;
-	// Vox Deorum: s+, the strength share the Withdraw estimate used.
+	// S+, the strength share the Withdraw estimate used.
 	double fWithdrawShare;
-	// Vox Deorum: failed Withdraw readiness checks this turn.
+	// Failed Withdraw readiness checks this turn.
 	int iWithdrawFailures;
-	// Vox Deorum: the Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
+	// The Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
 	int aiWithdrawDestination[2];
 
 	// Creates a ready battlefield with no target.
 	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), iZoneCityPlot(-1), eOwner(NO_PLAYER),
-		iTargetID(-1), fImportance(0.0), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
+		iTargetID(-1), iOperation(-1), fImportance(0.0), fTheater(0.0), fGround(0.0), bNearOurCity(false), bCanAttackOurUnits(false),
 		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), bReleaseLocal(false),
 		bHasEndangered(false), bBorder(false), bWithdrawPosture(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0),
 		eWithdraw(OPERATIONAL_OFFER_INACTIVE), fWithdrawEstimate(0.0), fWithdrawExposure(0.0), fExposureShare(0.0),
@@ -476,19 +509,25 @@ struct SOperationalBattlefield
 		aiWithdrawDestination[0] = -1;
 		aiWithdrawDestination[1] = -1;
 	}
+
+	// Discards the cached Reinforce or March reach check and any checked March stops.
+	void ResetReinforceCheck()
+	{
+		reinforce.bChecked = false;
+		vArmyMarchStops.clear();
+	}
 };
 
-// Vox Deorum: city results shared during one estimate pass, indexed by city plot.
+// City results shared during one estimate pass, indexed by city plot.
 struct SOperationalEstimateCache
 {
 	map<int, double> cityTheaters;
 	map<int, SOperationalTheater> theaters;
-	map<int, SOperationalCityDanger> cityDanger;
-	// Vox Deorum: victim shares expire with this estimate pass when the board changes.
+	// Victim shares expire with this estimate pass when the board changes.
 	map<int, SOperationalVictimExposure> victimExposure;
 };
 
-// Vox Deorum: exclusive stages and nested work counters for one complete command-loop call.
+// Exclusive stages and nested work counters for one complete command-loop call.
 struct SOperationalPerformance
 {
 	unsigned long long totalNs;
@@ -510,6 +549,8 @@ struct SOperationalPerformance
 	unsigned long long spottingNs;
 	unsigned long long greedyAirNs;
 	unsigned long long marchingNs;
+	// The queued army command's check and positioning path work.
+	unsigned long long armyMarchCheckNs, armyMarchMoveNs;
 	unsigned long long searchNs;
 	unsigned long long estimates;
 	unsigned long long forceTallies;
@@ -520,13 +561,35 @@ struct SOperationalPerformance
 	unsigned long long engagements;
 	unsigned long long attempts;
 
-	// Vox Deorum: starts all stage times and work counts at zero.
+	// Starts all stage times and work counts at zero.
 	SOperationalPerformance() : totalNs(0), setupNs(0), estimateNs(0), selectNs(0), readinessNs(0),
 		executeNs(0), retireNs(0), recordNs(0), otherNs(0), forceTallyNs(0),
 		dangerReadNs(0), choiceNs(0), reinforceReachNs(0), admissionNs(0), flavorsNs(0),
-		cityFireNs(0), spottingNs(0), greedyAirNs(0), marchingNs(0), searchNs(0),
+		cityFireNs(0), spottingNs(0), greedyAirNs(0), marchingNs(0), armyMarchCheckNs(0), armyMarchMoveNs(0), searchNs(0),
 		estimates(0), forceTallies(0), dangerReads(0), checks(0), reinforceReachChecks(0),
 		commands(0), engagements(0), attempts(0) {}
+};
+
+// Distinguishes normal positioning from an interrupted March.
+enum eOperationalPositionResult
+{
+	OPERATIONAL_POSITION_COMPLETE,
+	OPERATIONAL_POSITION_YIELDED
+};
+
+struct SOperationalFormationMovement;
+
+// Copies the unit path so later native searches cannot overwrite March's estimate.
+struct SOperationalMarchPath
+{
+	const CvPlot* pStart;
+	const CvPlot* pWaypoint;
+	int iStartMoves;
+	bool bFound;
+	CvPathNodeArray nodes;
+
+	// Starts without a cached route.
+	SOperationalMarchPath() : pStart(NULL), pWaypoint(NULL), iStartMoves(0), bFound(false) {}
 };
 
 // One player-turn of the loop: settings, weights, the fixed scales, the threat maps and the battlefields
@@ -534,8 +597,10 @@ struct SOperationalTurn
 {
 	mutable SOperationalPerformance performance;
 	bool bTiming;
+	// Enables live discovery and combat army enrollment for this pass.
+	bool bMarchEnabled;
 	mutable bool bEstimating;
-	// Vox Deorum: sampled rejection shares keyed by target.
+	// Sampled rejection shares keyed by target.
 	mutable OperationalForecastMap forecasts;
 	PlayerTypes ePlayer;
 	OperationalSettings settings;
@@ -544,29 +609,43 @@ struct SOperationalTurn
 	double fTypicalUnitWorth;  // Z_T: mean base worth of our reference military types
 	double fCityUnit;    // C = city.units, fixed for the turn
 	double fCityScale;   // Z_C, fixed for the turn
-	// each enemy unit's and city's share of our units' exposure, keyed by (owner, ID): rebuilt after each command
-	map<pair<int, int>, SOperationalThreatExposure> unitThreats;
-	map<pair<int, int>, SOperationalThreatExposure> cityThreats;
+	// Each attacker's share of our units' exposure in the Fight layout.
+	OperationalThreatMap unitThreats, cityThreats;
+	// Independent Withdraw uses its own layout when Fight includes formations.
+	OperationalThreatMap withdrawUnitThreats, withdrawCityThreats;
+	// Army IDs enrolled in the current board.
+	set<int> preparedArmies;
+	// Contact already observed this turn cannot yield another segment.
+	mutable set<OperationalExposureKey> marchContacts;
+	// The live board used for March and formation Withdraw projections.
+	mutable SOperationalExposure sharedExposure;
+	mutable bool bSharedExposureBuilt;
+	// Standard city danger serves both Fight enrollment and estimates until the board is rebuilt.
+	mutable map<int, SOperationalCityDanger> cityDanger;
 	int iStrikeScan;     // the largest baseMoves(false) x 4 among our land and sea units: native's striking distance
 	// each city of ours by ID, and the visible enemy combat units by (owner, ID) whose path to it, as the nearest of our
 	// cities, is at most twice their moves plus their range: rebuilt after each command
 	map<int, vector<pair<int, int> > > cityApproach;
 	// our units outside friendly cities with a positive threat entry, by ID and whole danger: rebuilt after each command
 	map<int, int> endangeredUnits;
-	// Vox Deorum: the tactical roster unit IDs when the loop started.
+	// The tactical roster unit IDs when the loop started.
 	set<int> startRoster;
-	// Vox Deorum: units that went through a Withdraw this turn.
+	// Units that went through a Withdraw this turn.
 	set<int> withdrawnUnits;
 	vector<SOperationalBattlefield> battlefields;
+	// Readiness paths by (army row, unit), retained across commands for the turn.
+	map<pair<int, int>, SOperationalMarchPath> armyMarchPaths;
+	// Mapped FLAVOR_GOLD for pillage missions.
+	int iMarchGold;
 	mutable unsigned int iNextDecision;
 	mutable unsigned int iStateRevision;
 
 	// Creates an empty turn.
-	SOperationalTurn() : bTiming(true), bEstimating(false), ePlayer(NO_PLAYER), fTypicalUnitWorth(0.0), fCityUnit(0.0), fCityScale(0.0),
-		iStrikeScan(0), iNextDecision(0), iStateRevision(0) {}
+	SOperationalTurn() : bTiming(true), bMarchEnabled(false), bEstimating(false), ePlayer(NO_PLAYER), fTypicalUnitWorth(0.0), fCityUnit(0.0), fCityScale(0.0),
+		bSharedExposureBuilt(false), iStrikeScan(0), iMarchGold(50), iNextDecision(0), iStateRevision(0) {}
 };
 
-// Vox Deorum: identifies a synchronous callback and the state it reads. Hosts may supply branch identities.
+// Identifies a synchronous callback and the state it reads. Hosts may supply branch identities.
 struct SOperationalDecisionIdentity
 {
 	unsigned int iDecision;
@@ -577,12 +656,14 @@ struct SOperationalDecisionIdentity
 	int iBattlefield;
 	eOperationalKind eKind;
 	int iTargetPlot;
-	// Vox Deorum: creates an unbound decision.
+	// Own operation and army for ArmyMarch, unset for other decisions.
+	int iOperation, iArmy;
+	// Creates an unbound decision.
 	SOperationalDecisionIdentity() : iDecision(0), iRevision(0), ePlayer(NO_PLAYER), iCommand(-1), iStep(-1), iBattlefield(-1),
-		eKind(OPERATIONAL_KIND_UNIT_FIGHT), iTargetPlot(-1) {}
+		eKind(OPERATIONAL_KIND_UNIT_FIGHT), iTargetPlot(-1), iOperation(-1), iArmy(-1) {}
 };
 
-// Vox Deorum: one supplied adapter response or recovery transition, linked to its shared callback. The DLL never fills these responses.
+// One supplied adapter response or recovery transition, linked to its shared callback. The DLL never fills these responses.
 struct SOperationalProviderResponse
 {
 	SOperationalDecisionIdentity identity;
@@ -590,38 +671,38 @@ struct SOperationalProviderResponse
 	std::string stage, status, reason;
 	bool bUseNative;
 	int iOffer, iMappedOffer;
-	// Vox Deorum: requested rank order and optional probabilities keyed by entry position.
+	// Requested rank order and optional probabilities keyed by entry position.
 	vector<int> vOffers;
 	vector<pair<int, double> > vProbabilities;
 	int iEntry;
 	vector<pair<int, int> > vUnits;
 	int aiFlavors[STacticalFlavors::NUM_SLOTS];
-	// Vox Deorum: starts an empty host response record.
+	// Starts an empty host response record.
 	SOperationalProviderResponse() : iPass(0), iAttempt(0), iReplyDecision(0), iReplyRevision(0), bUseNative(true), iOffer(-1), iMappedOffer(-1), iEntry(-1)
 	{ for (int i = 0; i < STacticalFlavors::NUM_SLOTS; ++i) aiFlavors[i] = 0; }
 };
 
-// Vox Deorum: one selectable identity, with the native estimate and permitted command forces.
+// One selectable identity, with the native estimate and permitted command forces.
 struct SOperationalSelectableOffer
 {
 	int iOffer; // the offer identity: OperationalOfferIdentity
 	SOperationalBattlefield field;
 	eOperationalSlot eSlot;
-	// Vox Deorum: creates an invalid offer identity.
+	// Creates an invalid offer identity.
 	SOperationalSelectableOffer() : iOffer(-1), eSlot(OPERATIONAL_SLOT_FIGHT) {}
 };
 
-// Vox Deorum: command choice over the current queue, in build order, with the exact native proposal.
+// Command choice over the current queue, in build order, with the exact native proposal.
 struct SOperationalChoiceRequest
 {
 	SOperationalDecisionIdentity identity;
 	vector<SOperationalSelectableOffer> offers;
-	// Vox Deorum: host-only mapping inputs, independent of native readiness.
+	// Host-only mapping inputs, independent of native readiness.
 	vector<SOperationalBattlefield> battlefields;
 	vector<int> vAvailable;
 	int aiMapped[STacticalFlavors::NUM_SLOTS];
 	int iNative;
-	// Vox Deorum: creates an empty queue with neutral mapped flavors.
+	// Creates an empty queue with neutral mapped flavors.
 	SOperationalChoiceRequest() : iNative(-1)
 	{
 		for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
@@ -629,7 +710,7 @@ struct SOperationalChoiceRequest
 	}
 };
 
-// Vox Deorum: distinguishes native admission, refusal, empty eligibility and invalid replies.
+// Distinguishes native admission, refusal, empty eligibility and invalid replies.
 enum eOperationalAdmissionResult
 {
 	OPERATIONAL_ADMISSION_ABSENT,
@@ -640,7 +721,7 @@ enum eOperationalAdmissionResult
 	OPERATIONAL_ADMISSION_INVALID
 };
 
-// Vox Deorum: admission before any participant acts; geometry describes the native proposal.
+// Admission before any participant acts; geometry describes the native proposal.
 struct SOperationalAdmissionRequest
 {
 	SOperationalDecisionIdentity identity;
@@ -650,16 +731,16 @@ struct SOperationalAdmissionRequest
 	SOperationalReinforce reinforce;
 };
 
-// Vox Deorum: use native admission or an explicit subset, including an explicit refusal.
+// Use native admission or an explicit subset, including an explicit refusal.
 struct SOperationalAdmissionReply
 {
 	bool bUseNative;
 	vector<int> vUnits;
-	// Vox Deorum: defaults to the native proposal.
+	// Defaults to the native proposal.
 	SOperationalAdmissionReply() : bUseNative(true) {}
 };
 
-// Vox Deorum: retains decision inputs and outputs without repeating reach or strength queries for records.
+// Retains decision inputs and outputs without repeating reach or strength queries for records.
 struct SOperationalAdmissionDecision
 {
 	SOperationalAdmissionRequest request;
@@ -668,11 +749,11 @@ struct SOperationalAdmissionDecision
 	vector<int> vEffective;
 	vector<int> vFailedReach;
 	SOperationalReinforce effectiveReinforce;
-	// Vox Deorum: starts with no optional callback.
+	// Starts with no optional callback.
 	SOperationalAdmissionDecision() : eResult(OPERATIONAL_ADMISSION_ABSENT) {}
 };
 
-// Vox Deorum: final geometry and native search vector after spotting and greedy air, with separate aggression.
+// Final geometry and native search vector after spotting and greedy air, with separate aggression.
 struct SOperationalFlavorRequest
 {
 	SOperationalDecisionIdentity identity;
@@ -681,18 +762,18 @@ struct SOperationalFlavorRequest
 	int iRepresentativeZone;
 	STacticalFlavors native;
 	int iAggressionRisk;
-	// Vox Deorum: no-search commands carry an empty geometry and neutral aggression.
+	// No-search commands carry an empty geometry and neutral aggression.
 	SOperationalFlavorRequest() : iRepresentativeZone(-1), iAggressionRisk(50) {}
 };
 
-// Vox Deorum: keeps choice values separate so records can copy them without running the decoder again.
+// Keeps choice values separate so records can copy them without running the decoder again.
 struct SOperationalChoiceDecision
 {
 	SOperationalChoiceRequest request;
 	int iRequested;
 	int iEffective;
 	bool bInvalid;
-	// Vox Deorum: creates a decision with no selected offer.
+	// Creates a decision with no selected offer.
 	SOperationalChoiceDecision() : iRequested(-1), iEffective(-1), bInvalid(false) {}
 };
 
@@ -718,15 +799,18 @@ struct SOperationalEngagementReport
 	SOperationalEngagementReport() : iRepresentativeZone(-1), iAggressionRisk(50), eAggLvl(AL_LOW), bSuccess(false), searchNs(0), iAttempts(0), bInvalidFlavors(false), bTiming(true) {}
 };
 
-// The board facts a command can change that the wake rule reads
+// The board facts a command can change that discovery and the wake rule read.
 struct SOperationalBoard
 {
 	map<pair<int, int>, int> enemyUnitPlots;  // visible living enemy units by (owner, ID), and their plots
+	map<int, int> visibleEnemyCityOwners;    // visible enemy city owners by plot, recorded for March
 	map<int, int> cityOwners;                 // each city battlefield's plot and its owner, ours included
 	map<int, int> ourUnitPlots;               // our units by ID, and their plots
+	// Army membership is recorded when March is enabled to detect release.
+	set<int> ourArmyUnits;
 };
 
-// Vox Deorum: both ends of a friendly plot change; -1 means the unit was absent on that board.
+// Both ends of a friendly plot change; -1 means the unit was absent on that board.
 struct SOperationalFriendlyMove
 {
 	int iUnitID;
@@ -738,8 +822,11 @@ struct SOperationalFriendlyMove
 struct SOperationalChanges
 {
 	vector<int> vEnemyPlots;        // plots where a visible enemy unit died, left, arrived or was revealed
+	vector<int> vEnemyCityPlots;    // changed visible enemy cities, used for discovery only
 	vector<int> vCapturedPlots;     // city battlefields whose owner changed
 	vector<SOperationalFriendlyMove> vFriendlyMoves;
+	// Surviving former army members, whether or not their plot changed.
+	vector<int> vReleasedUnits;
 };
 
 // The result of one readiness check: a pass, or the first condition that failed
@@ -753,42 +840,46 @@ enum eOperationalCheckResult
 	OPERATIONAL_CHECK_NO_DEFENDERS, // own city: no local defender and no endangered recruit can still act
 	OPERATIONAL_CHECK_NO_NEARBY_ENEMY, // own city: no visible enemy within 5 plots and no endangered recruit
 	OPERATIONAL_CHECK_NO_REACHABLE,    // Reinforce has no reachable recruit, or Withdraw has no march worth taking
-	OPERATIONAL_CHECK_REDUCED         // Vox Deorum: readiness lowered a viable offer's estimate
+	OPERATIONAL_CHECK_REDUCED         // Readiness lowered a viable offer's estimate
 };
 
-// Vox Deorum: one offer identity, written once when its battlefield enters the pass.
+// One offer identity, written once when its battlefield enters the pass.
 struct SOperationalOfferRecord
 {
 	int iBattlefield, iTargetID, iPlotIndex, iZoneID;
 	eOperationalKind eKind;
 	PlayerTypes eOwner;
+	// ArmyMarch uses iTargetID as its army ID and carries the operation separately.
+	int iOperation;
 };
 
-// Vox Deorum: identifies offers that cannot return to the queue during this pass.
+// Identifies offers that cannot return to the queue during this pass.
 bool OperationalOfferIsClosed(eOperationalOfferState state);
-// Vox Deorum: names closure from retained state and kind, without reading the board.
+// Names closure from retained state and kind, without reading the board.
 const char* OperationalOfferClosedReason(eOperationalOfferState state, eOperationalKind kind);
-// Vox Deorum: maps the scalar stake terms to this offer's resolved pass weights.
+// Maps the scalar stake terms to this offer's resolved pass weights.
 int OperationalStakeWeight(int iTerm, eOperationalKind kind);
 
-// Vox Deorum: one scalar queue row, with no per-unit lists or cached game objects.
+// One scalar queue row, with no per-unit lists or cached game objects.
 struct SOperationalSnapshot
 {
+	// Score details apply only to an ArmyMarch offer.
+	SOperationalArmyMarchScore armyMarch;
 	int iBattlefield, iRank, iPlotIndex;
 	eOperationalSlot eSlot;
 	eOperationalOfferState eState;
-	// Vox Deorum: names why a closed offer left the queue.
+	// Names why a closed offer left the queue.
 	const char* szReason;
 	double fEstimate, fTheater, fSwing, fSelectedSwing;
-	// Vox Deorum: the battlefield's strength share and the Withdraw estimate's inputs.
+	// The battlefield's strength share and the Withdraw estimate's inputs.
 	double fExposureShare, fWithdrawExposure, fWithdrawShare;
-	// Vox Deorum: the Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
+	// The Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
 	int aiWithdrawDestination[2];
 	SOperationalTheater theater;
 	SOperationalStake stake;
 };
 
-// Vox Deorum: an ordered queue transition; checks and commands index the built record vectors.
+// An ordered queue transition; checks and commands index the built record vectors.
 struct SOperationalEvent
 {
 	const char* szType;
@@ -798,7 +889,7 @@ struct SOperationalEvent
 	double fBefore, fAfter;
 };
 
-// Vox Deorum: one estimate pass through its terminating command or loop end.
+// One estimate pass through its terminating command or loop end.
 struct SOperationalStep
 {
 	int iStep, iCommand;
@@ -806,7 +897,7 @@ struct SOperationalStep
 	unsigned long long estimateNs, readinessNs, executeNs;
 	vector<SOperationalSnapshot> snapshot;
 	vector<SOperationalEvent> events;
-	// Vox Deorum: starts an open step with no terminating command.
+	// Starts an open step with no terminating command.
 	SOperationalStep() : iStep(0), iCommand(-1), szEnd(""), estimateNs(0), readinessNs(0), executeNs(0) {}
 };
 
@@ -824,13 +915,19 @@ struct SOperationalCheckRecord
 // One executed command, for the records
 struct SOperationalCommandRecord
 {
+	// The chosen ArmyMarch score, after checking the proposed stops.
+	SOperationalArmyMarchScore armyMarch;
 	int iCommand;
 	int iStep;
 	int iBattlefield;
 	int iPlotIndex;
 	eOperationalKind eKind;
 	PlayerTypes eOwner;
-	// Vox Deorum: retains the chosen estimate components for later scalar closure snapshots.
+	// ArmyMarch mission identity; iPlotIndex is the waypoint that ran.
+	int iOperation, iArmy;
+	// Observed plot that interrupted this segment, or -1 when it did not yield.
+	int iYieldPlot;
+	// Retains the chosen estimate components for later scalar closure snapshots.
 	double fTheater, fSwing;
 	SOperationalStake stake;
 	bool bCityFireAttempted;
@@ -843,19 +940,19 @@ struct SOperationalCommandRecord
 	vector<pair<int, bool> > vEndangered;  // endangered recruits by unit ID, and whether the search placed them
 	vector<int> vSelected;      // Reinforce: the checked selection; Withdraw: the admitted recruits, by unit ID
 	bool bMoved;                // Reinforce or Withdraw: an admitted unit changed plot or died
-	vector<int> vMoved;         // Vox Deorum: admitted Reinforce or Withdraw units whose plot changed or who died
+	vector<int> vMoved;         // Admitted Reinforce or Withdraw units whose plot changed or who died
 	vector<int> vRetiredReinforce;  // battlefields whose Reinforce this command retired
 	vector<int> vRetiredWithdraw;  // battlefields whose Withdraw this command retired
-	// Vox Deorum: the removable exposure and the strength share a Withdraw ran at, after its check; 0 for other commands.
+	// The removable exposure and the strength share a Withdraw ran at, after its check; 0 for other commands.
 	double fWithdrawExposure, fWithdrawShare;
 
 	// Creates an empty record.
 	SOperationalCommandRecord() : iCommand(-1), iStep(-1), iBattlefield(-1), iPlotIndex(-1), eKind(OPERATIONAL_KIND_UNIT_FIGHT),
-		eOwner(NO_PLAYER), fTheater(0.0), fSwing(1.0), bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
+		eOwner(NO_PLAYER), iOperation(-1), iArmy(-1), iYieldPlot(-1), fTheater(0.0), fSwing(1.0), bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
 		fWithdrawExposure(0.0), fWithdrawShare(0.0) {}
 };
 
-// Vox Deorum: one pass's queue trace, built commands and checks, turn inputs and complete performance counters.
+// One pass's queue trace, built commands and checks, turn inputs and complete performance counters.
 struct SOperationalTurnRecord
 {
 	bool bRan;
@@ -866,13 +963,13 @@ struct SOperationalTurnRecord
 	SOperationalPerformance performance;
 	vector<SOperationalOfferRecord> offers;
 	vector<SOperationalStep> steps;
-	// Vox Deorum: the latest full snapshot is the baseline for replacement rows.
+	// The latest full snapshot is the baseline for replacement rows.
 	vector<SOperationalSnapshot> latestSnapshot;
-	// Vox Deorum: estimate time already assigned to steps.
+	// Estimate time already assigned to steps.
 	unsigned long long recordedEstimateNs;
 	vector<SOperationalCommandRecord> commands;
 	vector<SOperationalChoiceDecision> choices;
-	// Vox Deorum: supplied replies and bounded recovery, without exposing the private record to providers.
+	// Supplied replies and bounded recovery, without exposing the private record to providers.
 	vector<SOperationalProviderResponse> responses;
 	vector<SOperationalCheckRecord> checks;
 	vector<int> vSkipped;
@@ -889,43 +986,82 @@ public:
 	// Copy of CvTacticalAI::ProcessDominanceZones for a non-barbarian player: global high priority; the zone loop runs
 	// emergency purchases only; the command loop; deferred garrisons; global mid and low priority; the review.
 	static void ProcessDominanceZones(CvTacticalAI& kTactical);
-	// Vox Deorum: monotonic host clock in nanoseconds; its value never participates in decisions.
+	// Checks both switches for the player, using already resolved settings when available.
+	static bool IsMarchEnabled(const CvPlayer& kPlayer, const OperationalSettings* pSettings = NULL);
+	// Prepares a combat operation at the native army pass and records its waypoint.
+	static bool PrepareArmy(CvTacticalAI& kTactical, CvAIOperation& kOperation, SOperationalPreparedArmy& prepared);
+	// Releases a terminal operation's army, reports the result, and removes its prepared entry.
+	static vector<SOperationalPreparedArmy>::iterator RemovePreparedOperation(CvTacticalAI& kTactical,
+		vector<SOperationalPreparedArmy>::iterator order, CvAIOperation& kOperation, CvArmyAI* pArmy);
+	// Cleans up missing or already aborted operations and updates waypoints for changed orders.
+	static void RefreshPreparedArmies(CvTacticalAI& kTactical);
+	// Runs safety, finishes pending operations, and clears the prepared list on loop exit.
+	static void FinishPreparedArmies(CvTacticalAI& kTactical);
+	// Runs the existing safety moves for unused army members.
+	static void MoveArmyUnitsToSafety(const vector<CvUnit*>& vUnits);
+	// Monotonic host clock in nanoseconds; its value never participates in decisions.
 	static unsigned long long ClockNs();
-	// Vox Deorum: reads whether the host has stopped without evaluating game rules again.
+	// Reads whether the host has stopped without evaluating game rules again.
 	static bool IsHostStopped();
-	// Vox Deorum: copies the queue after an estimate pass, assigning stable ready ranks.
+	// Copies the queue after an estimate pass, assigning stable ready ranks.
 	static void RecordStep(const SOperationalTurn& turn, SOperationalTurnRecord& record);
-	// Vox Deorum: closes the last trace step before working-turn teardown, including exception unwinding.
+	// Closes the last trace step before working-turn teardown, including exception unwinding.
 	static void CloseRecord(const SOperationalTurn& turn, SOperationalTurnRecord* pRecord);
-	// Vox Deorum: runs one pass, selecting, checking and executing fights, Reinforce and Withdraw offers, and optionally
+	// Runs one pass, selecting, checking and executing fights, Reinforce and Withdraw offers, and optionally
 	// retains its trace, settings and complete counters.
 	static void RunCommandLoop(CvTacticalAI& kTactical, SOperationalTurnRecord* pRecord = NULL, SOperationalPerformance* pPerformance = NULL, bool bTotalOnly = false);
+
+	// Refreshes the board and retires covered offers after a command commits.
+	static void RefreshAfterCommand(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field,
+		SOperationalCommandRecord& command, bool bArmyMarchOrderChanged, const SOperationalBoard& before, SOperationalChanges& changes);
 
 	// Resolves the turn's weights, typical unit worth Z_T, best city value Z_C, city allowance C and striking-distance scan.
 	static void BuildTurn(CvTacticalAI& kTactical, SOperationalTurn& turn);
 	// Rebuilds each enemy unit's and city's share of our units' exposure, our endangered units, each city's approach
 	// list and each battlefield's bCanAttackOurUnits.
-	static void BuildThreats(SOperationalTurn& turn);
-	// Vox Deorum: allocates the threats on one tile against its live or projected occupants.
+	static void BuildThreats(CvTacticalAI& kTactical, SOperationalTurn& turn);
+	// Allocates threats against a plot's occupants. A shared city can also return Fight's unadjusted shares.
 	static void AllocatePlotExposure(PlayerTypes ePlayer, const CvPlot& kPlot, vector<SPlacedUnit>& occupants, int iRisk,
-		map<pair<int, int>, SOperationalThreatExposure>& units, map<pair<int, int>, SOperationalThreatExposure>& cities,
-		map<int, int>* pEndangered);
-	// Vox Deorum: a threat's largest allocations up to its attacks per turn, leaving out the victims in pExclude when set.
+		OperationalThreatMap& units, OperationalThreatMap& cities, map<int, int>* pEndangered, bool bAllVictims = false,
+		const set<int>* pEnrolled = NULL, SOperationalExposure* pCityFight = NULL);
+	// A threat's largest allocations up to its attacks per turn, leaving out the victims in pExclude when set.
 	static double CappedExposure(const SOperationalThreatExposure& threat, const set<int>* pExclude);
 	// Builds one battlefield per hostile combat unit and hostile city target in the snapshot, with its theater, ground,
 	// near-city flag and zone gates, then one per city of ours.
 	static void BuildBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
+	// Appends enrolled rows, retaining their indices when an operation retargets or drops.
+	static void SyncArmyBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn);
+	// Finds the enrolled order for an army row.
+	static vector<SOperationalPreparedArmy>::iterator FindPreparedArmy(CvTacticalAI& kTactical, const SOperationalBattlefield& field);
+	// Resolves a live March order and optionally gathers its members in formation order.
+	static eOperationalCheckResult ResolveArmyMarch(CvTacticalAI& kTactical, const SOperationalBattlefield& field,
+		vector<SOperationalPreparedArmy>::iterator& order, CvAIOperation*& pOperation, CvArmyAI*& pArmy,
+		vector<CvUnit*>* pMembers = NULL);
+	// Estimates a formation's readiness gain and projected theater.
+	static void EstimateArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Checks the formation's first stops and scores their exposure.
+	static eOperationalCheckResult CheckArmyMarch(CvTacticalAI& kTactical, SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Appends a classified enemy target and initializes its battlefield.
+	static bool AddEnemyBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, const CvTacticalTarget& target,
+		const CvPlot& kPlot, const CvUnit* pDefender, set<pair<int, int> >& seenUnits, set<pair<int, int> >& seenCities);
+	// Appends unseen battlefield identities in plot order from the current observations.
+	static void DiscoverEnemyBattlefields(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalBoard& board,
+		SOperationalChanges* pChanges);
+	// Sets a battlefield's threat flag from the current allocations.
+	static void UpdateBattlefieldThreat(const SOperationalTurn& turn, SOperationalBattlefield& field);
+	// Computes the Fight eligibility shared by estimates, checks and execution.
+	static void UpdateFightArmies(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
 	// True when the zone is ours or neighbors one of ours, read from our own analysis map.
 	static bool IsBorderZone(CvTacticalAI& kTactical, const CvTacticalDominanceZone& kZone);
 	// Appends our city's battlefield: its land zone, or its water zone without one, and its theater.
 	static void AddOwnCityBattlefield(CvTacticalAI& kTactical, SOperationalTurn& turn, CvCity& kCity);
-	// Vox Deorum: estimates cities before units with one fresh cache, then updates open offers.
+	// Estimates cities before units with one fresh cache, then updates open offers.
 	static void EstimateOffers(CvTacticalAI& kTactical, SOperationalTurn& turn, const SOperationalChanges* pChanges);
-	// Vox Deorum: gathers one local set, computes theater, and can wake a waiting fight before estimating Reinforce and
+	// Gathers one local set, computes theater, and can wake a waiting fight before estimating Reinforce and
 	// the Withdraw. Returns false when the target died or its city changed owner. Closed cities need only their theater.
 	static bool EstimateBattlefield(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache,
 		SOperationalBattlefield& field, bool bStake, bool bReinforce, bool bWithdraw, const SOperationalChanges* pChanges = NULL);
-	// Vox Deorum: tallies L, T and the strength share for every battlefield, then computes the city's theater or inherits
+	// Tallies L, T and the strength share for every battlefield, then computes the city's theater or inherits
 	// it. The share is saved before Reinforce bookkeeping can change it.
 	static void EstimateTheater(const SOperationalTurn& turn, const SOperationalEstimateCache& cache, const CvPlot& kPlot,
 		const SOperationalLocalSet& local, SOperationalBattlefield& field);
@@ -936,25 +1072,26 @@ public:
 	// an enemy city, or city danger and endangered recruits at ours. Uses the battlefield's shared theater.
 	static bool EstimateFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache, const SOperationalLocalSet& local,
 		const CvCity* pZoneCity, SOperationalBattlefield& field, bool bSample = false);
-	// Vox Deorum: selects incoming help, computes its rise in strength share and multiplies by the fight priority.
+	// Selects incoming help, computes its rise in strength share and multiplies by the fight priority.
 	// Enemy centers require a border zone, a posture other than Withdraw and full selected strength covering need.
 	static void EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 		SOperationalBattlefield& field);
-	// Vox Deorum: our combat units at a battlefield that can leave: threat victims and local strength, on the start
-	// roster, outside armies, with movement left, outside friendly cities and held garrisons, and not already withdrawn.
+	// Local combat units and enrolled formations threatened here that still have movement.
 	// Sorted by ascending ID. Our own cities have no recruits.
 	static void GatherWithdrawRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		const SOperationalLocalSet& local, vector<CvUnit*>& vRecruits);
-	// Vox Deorum: the change in capped exposure; the opening estimate omits the recruits without projecting stops.
-	static double WithdrawExposureSaved(const SOperationalTurn& turn, const vector<SOperationalMarch>& marches, bool bProjectStops);
-	// Vox Deorum: the Withdraw priority from the removable exposure, the risk weight and the share help does not cover.
+	// The change in capped exposure; the opening estimate omits the recruits without projecting stops.
+	// Optional uncovered shares by unit/city attacker; ArmyMarch includes every friendly victim.
+	static double ExposureSaved(const SOperationalTurn& turn, const vector<SOperationalMarch>& marches, bool bProjectStops,
+		const OperationalAttackerWeights* pAttackerWeights = NULL, bool bFormationWithdraw = false);
+	// The Withdraw priority from the removable exposure, the risk weight and the share help does not cover.
 	static void EstimateWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 		SOperationalBattlefield& field);
-	// Vox Deorum: the Withdraw priority from an exposure list, the theater and the share help does not cover. The check
+	// The Withdraw priority from an exposure list, the theater and the share help does not cover. The check
 	// reuses it when it drops recruits that cannot leave.
 	static double WithdrawPriority(const SOperationalTurn& turn, const SOperationalBattlefield& field, double fExposure,
 		double fShare);
-	// Vox Deorum: gathers available units outside armies in the destination's domains and recruit range.
+	// Gathers available units outside armies in the destination's domains and recruit range.
 	// Local units qualify once the same-field fight releases them. Uses native's carrier, healing, siege, donor-zone
 	// and civilian-cover filters and excludes the battlefield's rejections. Enemy-city candidates must also pass
 	// CanStrikeCity. A held garrison qualifies within the search's reach.
@@ -964,10 +1101,10 @@ public:
 	static int StrikeReach(const CvUnit& kUnit);
 	// Gathers our local set around a center in the given domains; bDamage also gathers the damage filter.
 	static void GatherLocalSet(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kPlot, bool bLand, bool bSea,
-		SOperationalLocalSet& local, bool bDamage = true);
-	// Vox Deorum: gathers a local set in the target plot's domains, using terrain alone for unit target estimates.
+		SOperationalLocalSet& local, bool bDamage = true, const SOperationalBattlefield* pFight = NULL);
+	// Gathers a local set in the target plot's domains, using terrain alone for unit target estimates.
 	static void GatherTargetLocalSet(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kTarget,
-		SOperationalLocalSet& local, bool bDamage, bool bUnitTarget = false);
+		SOperationalLocalSet& local, bool bDamage, bool bUnitTarget = false, const SOperationalBattlefield* pFight = NULL);
 	// Whether native recruitment would take this unit against the city: no capture prohibition, and for a ranged unit an
 	// attack from its plot that meets native's minimum expected damage.
 	static bool CanStrikeCity(CvTacticalAI& kTactical, CvUnit& kUnit, const CvCity& kCity);
@@ -975,28 +1112,28 @@ public:
 	static int ExpectedCityHeal(const CvCity& kCity);
 	// Starts a damage simulation against the city: its garrison and health, remaining HP and expected heal.
 	static void StartCityDamage(const CvCity& kCity, SOperationalCityDamage& damage);
-	// Vox Deorum: tests a projected city hit with its planned interceptor and applies the readiness discount.
+	// Tests a projected city hit with its planned interceptor and applies the readiness discount.
 	// Counts city and starting garrison damage and replaces a garrison predicted to die.
 	static void SimulateCityAttack(const CvCity& kCity, const CvUnit& kAttacker, const CvUnit* pInterceptor,
 		SOperationalAttackDamage hit, SOperationalCityDamage& damage, int iRisk, SOperationalForecast* pForecast, bool bSample,
 		eOperationalStrikeReadiness eReadiness);
-	// Vox Deorum: estimates realizable damage from city fire and local units; reports rejected damage separately for scoring.
+	// Estimates realizable damage from city fire and local units; reports rejected damage separately for scoring.
 	static int LocalUnitDamage(PlayerTypes ePlayer, const CvUnit& kTarget, const SOperationalLocalSet& local, int iRisk, int& iRejected,
 		SOperationalForecast* pForecast = NULL, bool bSample = false);
-	// Vox Deorum: keeps admitted air attacks and legal immediate strikes at their full estimate.
+	// Keeps admitted air attacks and legal immediate strikes at their full estimate.
 	static bool StrikeNow(const CvUnit& kUnit, const CvPlot& kTarget);
-	// Vox Deorum: checks native ranged target legality independently of the current firing origin.
+	// Checks native ranged target legality independently of the current firing origin.
 	static bool CanRangeStrikeTarget(const CvUnit& kUnit, const CvPlot& kTarget);
-	// Vox Deorum: checks each attacker for a legal firing or melee base reached with movement left.
+	// Checks each attacker for a legal firing or melee base reached with movement left.
 	static bool StrikeReachable(const CvUnit& kUnit, const CvPlot& kTarget);
-	// Vox Deorum: reapplies a sampled rejection fraction to current speculative damage, rounded once.
+	// Reapplies a sampled rejection fraction to current speculative damage, rounded once.
 	static int RejectedDamage(int iCurrent, int iRejected, int iSampled);
-	// Vox Deorum: samples a first native-selected target within the shared per-loop budget and reranks a reduced offer.
+	// Samples a first native-selected target within the shared per-loop budget and reranks a reduced offer.
 	static eOperationalCheckResult CheckForecastReadiness(CvTacticalAI& kTactical, const SOperationalTurn& turn,
 		SOperationalBattlefield& field);
-	// Vox Deorum: divides exposure over identified threats while preserving the victim's residual danger.
+	// Divides exposure over identified threats while preserving the victim's residual danger.
 	static SOperationalVictimExposure AttributeExposure(double fExposure, int iDanger, const vector<SOperationalThreatDamage>& threats);
-	// Vox Deorum: caps each source's attacks, attributes retained shares to victims, then applies geometric decay.
+	// Caps each source's attacks, attributes retained shares to victims, then applies geometric decay.
 	static double CityDefenseExposure(const SOperationalTurn& turn, SOperationalEstimateCache& cache,
 		const vector<CvUnit*>& vEndangered, const map<int, int>& dangers);
 	// Enemy unit damage valued without a ready-upgrade premium.
@@ -1017,26 +1154,28 @@ public:
 	// The enemy strength T against our city: its approach list together with the visible units native danger says can
 	// attack it next turn, each once. pCounted, when given, receives the counted units.
 	static double EnemyCityStrength(const SOperationalTurn& turn, const CvCity& kCity, set<pair<int, int> >* pCounted = NULL);
-	// Vox Deorum: enemy strength T includes visible hostile non-air combat units within 4 plots in the given domains,
+	// Enemy strength T includes visible hostile non-air combat units within 4 plots in the given domains,
 	// visible hostile cities within 4 plots at no less than 1 HP, and a revealed center city even in fog.
-	// A counted city's garrison is part of its strength; units in fog stay excluded.
+	// A counted city's garrison is part of its strength; units in fog stay excluded. The extra player counts as hostile.
 	static double EnemyCenterStrength(PlayerTypes ePlayer, const CvPlot& kTarget, bool bLand, bool bSea,
-		set<pair<int, int> >& countedUnits, set<pair<int, int> >& countedCities);
+		set<pair<int, int> >& countedUnits, set<pair<int, int> >& countedCities, PlayerTypes eExtraHostile = NO_PLAYER);
 	// True for a unit that can capture a city on a later turn: a land melee combat unit outside armies that may enter
 	// cities, whether or not it has moves or attacks left.
 	static bool IsCapturer(const CvUnit& kUnit);
-	// The roster unit with this ID when a city fight can recruit it: usable by the tactical AI, outside armies and on
-	// the map. NULL otherwise.
-	static CvUnit* CityRecruit(CvTacticalAI& kTactical, int iUnitID);
+	// Resolves a usable city recruit on the map, allowing members of a Fight's eligible armies when supplied.
+	static CvUnit* CityRecruit(CvTacticalAI& kTactical, int iUnitID, const SOperationalBattlefield* pFight = NULL);
+	// Recruits for the live strike using the same army eligibility in readiness and execution.
+	static bool FindFightRecruits(CvTacticalAI& kTactical, const SOperationalTurn& turn,
+		const SOperationalBattlefield& field, CvPlot* pPlot, vector<int>& armyRecruits);
 	// Our city fight's endangered recruits from the tactical roster: non-air units within 4 plots on the turn's
 	// endangered list or in a friendly city in danger. Returns their computed dangers when requested.
 	static void GatherCityEndangered(CvTacticalAI& kTactical, const SOperationalTurn& turn, const CvCity& kCity,
-		vector<CvUnit*>& vEndangered, map<int, int>* pDangers = NULL);
+		vector<CvUnit*>& vEndangered, const SOperationalBattlefield& field, map<int, int>* pDangers = NULL);
 	// Our city fight's defenders from the tactical roster, leaving out the given endangered recruits: local units within
 	// strike reach, the held garrison, and aircraft in reach with their carriers under the air search. Resets the air caches
 	// and paths carrier reach, so only readiness and execution call it.
 	static void GatherCityDefenders(CvTacticalAI& kTactical, const CvCity& kCity, const vector<CvUnit*>& vEndangered,
-		vector<CvUnit*>& vDefenders);
+		vector<CvUnit*>& vDefenders, const SOperationalTurn& turn, const SOperationalBattlefield& field);
 	// Fills a native target with the battlefield's type, plot and zone, for native recruitment and damage estimates.
 	static CvTacticalTarget FightTarget(const SOperationalBattlefield& field, const CvPlot& kPlot);
 	// The fight's readiness check: native city strike and striking-distance recruitment with the damage test, or for our
@@ -1058,20 +1197,21 @@ public:
 	// safe enough first stop. Failures join the turn's rejections and the selection is made again until every selected
 	// unit passed. A selection checked since the last command passes at once.
 	static eOperationalCheckResult CheckReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field);
-	// Vox Deorum: finds destinations by domain, then scores the available first-turn stops together.
+	// Finds destinations by domain, then scores the available first-turn stops together.
 	static eOperationalCheckResult CheckWithdraw(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalBattlefield& field,
-		vector<SOperationalMarch>& marches);
-	// Vox Deorum: returns the first safe stop; a recruit already in reach may hold for a Reinforce search.
-	static CvPlot* CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false);
+		vector<SOperationalMarch>& marches, bool& bFormationWithdraw);
+	// Returns the first safe stop; a recruit already in reach may hold for a Reinforce search.
+	static CvPlot* CanMarch(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget, bool bWithdraw = false,
+		bool bArmyMarch = false);
 	// The positioning copy's path flags for a unit marching toward the target.
-	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw = false);
+	static int MarchFlags(const CvUnit& kUnit, const CvPlot& kTarget, bool bWithdraw = false, bool bArmyMarch = false);
 	// Plots within the search's near distance of the target for one domain, measured as the search measures it.
 	static ReachablePlots SearchReachPlots(PlayerTypes ePlayer, CvPlot* pTarget, DomainTypes eDomain);
-	// Vox Deorum: picks a reachable friendly city for one domain, preferring shelter on routes of similar length.
+	// Picks a reachable friendly city for one domain, preferring shelter on routes of similar length.
 	static int WithdrawDestination(CvTacticalAI& kTactical, PlayerTypes ePlayer, const CvPlot& kStart, DomainTypes eDomain);
-	// Vox Deorum: admits a checked march once, then positions the admitted units in groups by destination.
+	// Validates the selected army's order, then admits and positions units by destination.
 	static void ExecuteMarch(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
-		const vector<SOperationalMarch>& withdraw, SOperationalCommandRecord& record);
+		const vector<SOperationalMarch>& withdraw, SOperationalCommandRecord& record, bool bFormationWithdraw, bool& bArmyMarchOrderChanged);
 
 	// The fight row of the overlap rule: an enemy-unit fight that ran its search retires an unexecuted enemy-unit fight
 	// within 2 plots of its target in a compatible zone, unless that fight's target can attack our units or stands near
@@ -1084,8 +1224,10 @@ public:
 	static void SnapshotBoard(const SOperationalTurn& turn, SOperationalBoard& board);
 	// Compares two snapshots into the changes a command made.
 	static void DiffBoard(const SOperationalBoard& before, const SOperationalBoard& after, SOperationalChanges& changes);
-	// Vox Deorum: drops temporary march and competing-target failures affected by the last command.
-	static void RetryReinforce(const CvPlot& kTarget, int iRange, const SOperationalChanges& changes, SOperationalReinforce& reinforce);
+	// Marks cached March paths affected by enemy changes so the next estimate rebuilds them.
+	static void InvalidateArmyMarchPaths(SOperationalTurn& turn, const vector<int>& vEnemyPlots);
+	// Drops temporary march and competing-target failures affected by the last command.
+	static void RetryReinforce(const CvPlot& kTarget, int iRange, const SOperationalChanges& changes, SOperationalBattlefield& field);
 	// True when a change can turn the waiting fight's failed check into a pass: an enemy change or capture within
 	// striking distance of its target, or a unit of ours that moved within its own striking distance and is available.
 	// An own-city fight wakes on an enemy change within 5 plots, an available unit of ours now within its strike reach, or
@@ -1110,46 +1252,46 @@ public:
 	// True for a unit that can capture a city: a melee combat unit with moves and an attack left that may enter cities.
 	static bool CanCapture(const CvUnit& kUnit);
 
-	// Vox Deorum: constructs and stamps a callback identity on the current synchronous state.
+	// Constructs and stamps a callback identity on the current synchronous state.
 	static SOperationalDecisionIdentity DecisionIdentity(const SOperationalTurn& turn, const SOperationalCommandRecord* pCommand);
-	// Vox Deorum: exactly reproduces the original OfferOutranks scan, including stable build-order ties.
+	// Exactly reproduces the original OfferOutranks scan, including stable build-order ties.
 	static int NativeCommandChoice(const SOperationalChoiceRequest& request);
-	// Vox Deorum: applies optional admission once, validating membership and extra Reinforce reach before any action.
+	// Applies optional admission once, validating membership and extra Reinforce reach before any action.
 	static bool AdmitParticipants(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalBattlefield& field,
 		vector<CvUnit*>& vUnits, SOperationalCommandRecord& record);
-	// Vox Deorum: the common Reinforce reach test for checked proposals and provider additions.
+	// The common Reinforce reach test for checked proposals and provider additions.
 	static SOperationalReinforceReach ReinforceReach(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget,
 		const ReachablePlots& relevantPlots, map<int, ReachablePlots>& searchPlots);
-	// Vox Deorum: recomputes admitted strength, help, swing and capture role without changing command priority.
+	// Recomputes admitted strength, help, swing and capture role without changing command priority.
 	static void AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, bool bNeedCapturer,
 		const vector<int>& vAdmitted, double fSteepness, SOperationalReinforce& out);
-	// Vox Deorum: restricts native air or landing recruitment to the already admitted group.
+	// Restricts native air or landing recruitment to the already admitted group.
 	static void FilterRecruits(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits);
 
 	// Host seams. The DLL defines them in this file; the simulator defines its own and does not extract these.
-	// Vox Deorum: host identity, choice, optional admission and final flavor seams; DLL replies are always native.
+	// Host identity, choice, optional admission and final flavor seams; DLL replies are always native.
 	static void StampDecision(SOperationalDecisionIdentity& identity);
-	// Vox Deorum: reports whether the host needs operational observations.
+	// Reports whether the host needs operational observations.
 	static bool HasOperationalProvider();
-	// Vox Deorum: enables a supplied menu even when native has no ready offer.
+	// Enables a supplied menu even when native has no ready offer.
 	static bool UsesPermittedMenu();
-	// Vox Deorum: reports confirmed checks or completed commands to the host.
+	// Reports confirmed checks or completed commands to the host.
 	static void ReportExecution(int iOffer, int iResult, const SOperationalCommandRecord* pCommand);
-	// Vox Deorum: lets the host rebuild candidates from permitted own-unit inputs.
+	// Lets the host rebuild candidates from permitted own-unit inputs.
 	static void PrepareAdmission(SOperationalAdmissionRequest& request);
-	// Vox Deorum: reports admission capability before building candidates or geometry.
+	// Reports admission capability before building candidates or geometry.
 	static bool HasAdmission();
-	// Vox Deorum: returns a current offer identity.
+	// Returns a current offer identity.
 	static int ChooseCommand(const SOperationalChoiceRequest& request);
-	// Vox Deorum: returns false when the provider has no admission capability.
+	// Returns false when the provider has no admission capability.
 	static bool AdmitCommand(const SOperationalAdmissionRequest& request, SOperationalAdmissionReply& reply);
-	// Vox Deorum: returns the final search vector, already resolved by native when unchanged.
+	// Returns the final search vector, already resolved by native when unchanged.
 	static STacticalFlavors ChooseSearchFlavors(const SOperationalFlavorRequest& request);
 	// A plot's ground weight with the resources the player's team has revealed.
 	static double GroundPlotWeight(PlayerTypes ePlayer, const CvPlot& kPlot);
-	// Opens and closes one command's work: the simulator records the command's effects in the battlefield's zone.
-	static void BeginCommand(CvTacticalAI& kTactical, int iCommand, int iZoneID);
-	// Vox Deorum: closes the host work entry, retaining revisions even when execution stops the pass.
+	// Opens the host work entry with the command's identity and battlefield zone.
+	static void BeginCommand(CvTacticalAI& kTactical, const SOperationalCommandRecord& command, int iZoneID);
+	// Closes the host work entry, retaining revisions even when execution stops the pass.
 	static void EndCommand(CvTacticalAI& kTactical);
 
 	// Copy of TacticalAIHelpers::FindAndExecuteBestUnitAssignments for one engagement: gathers the geometry first,
@@ -1158,15 +1300,16 @@ public:
 	static bool ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
 		bool bTargetDistanceRelevant, SOperationalEngagementReport& report, const SOperationalTurn* pTurn = NULL,
-		SOperationalCommandRecord* pCommand = NULL);
+		SOperationalCommandRecord* pCommand = NULL, SOperationalFormationMovement* pMovement = NULL);
 	// The retry loop of TacticalAIHelpers::FindAndExecuteBestUnitAssignments with given flavors, aggression and target
 	// distance flag: native FindBestUnitAssignments unchanged, up to four attempts, each recorded with the rows that ran.
 	static bool SearchAndExecute(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl,
-		SearchIntent eSearchIntent, const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report);
+		SearchIntent eSearchIntent, const STacticalFlavors& flavors, bool bTargetDistanceRelevant, SOperationalEngagementReport& report,
+		SOperationalFormationMovement* pMovement = NULL);
 	// Copy of the plot gathering in TacticalAIHelpers::FindBestUnitAssignments: the search's plots for all units before
 	// the participant cap, without remote air bases, counted by zone. Zone 0, the unknown zone, is left out.
 	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, bool bTargetDistanceRelevant,
-		map<int, int>& zonePlots);
+		map<int, int>& zonePlots, bool bUseEmbarked = false);
 	// Blends the mapped search flavors and the neutral-based aggression risk over the same zones, with the civ,
 	// operation and zone modifiers, posture rows and the kind row. Search RISK always counts as set.
 	static STacticalFlavors BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots, eOperationalKind eKind,
@@ -1175,11 +1318,11 @@ public:
 
 	// Copy of CvTacticalAI::PositionUnitsAroundTarget with the loop's engagement in place of AL_LOW and the search intent:
 	// the geometry, blend and aggression follow the spotter move. The spotter and path moves skip held garrisons, and
-	// path moves go through CanMarch. A Withdraw skips the spotter move, sends every recruit that can still move, orders
-	// damaged units first and leaves civilians last.
-	static bool PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
-		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
-		SOperationalEngagementReport& report, const SOperationalTurn* pTurn = NULL, SOperationalCommandRecord* pCommand = NULL);
+	// far movers reuse checked stops for Army March and shared Withdraw. Other far movers go through CanMarch.
+	// A Withdraw skips the spotter move, sends every recruit that can still move and orders damaged units first.
+	static eOperationalPositionResult PositionUnitsAroundTarget(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits, CvPlot* pTarget,
+		PlayerTypes eCounterpart, SOperationalEngagementReport& report, const SOperationalTurn& turn, SOperationalCommandRecord& command,
+		const vector<SOperationalMarch>& armyMarchStops, const vector<SOperationalMarch>* pWithdrawStops);
 	// Copy of the unit overload of CvDangerPlotContents::GetDanger, with enemy-roll damage and per-threat contributions.
 	// A falling city destroys its garrison at f_def's threshold. Capturable civilians and units in cities list no threats.
 	static int GetDangerByThreat(CvDangerPlotContents& kContents, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage,
@@ -1188,24 +1331,24 @@ public:
 	// Copy of the city overload of CvDangerPlotContents::GetDanger with optional per-attacker damage and scoped enemy rolls.
 	static int GetCityDangerByThreat(CvDangerPlotContents& kContents, const CvCity* pCity, const CvUnit* pPretendGarrison,
 		const SUnitIDValueContainer& extraUnitDamage, int iExtraSelfDamage, vector<SOperationalThreatDamage>* pThreats, int iRisk);
-	// Vox Deorum: computes standard city danger once per city plot per estimate pass, including per-threat damage.
-	static const SOperationalCityDanger& CachedCityDanger(const SOperationalTurn& turn, SOperationalEstimateCache& cache, const CvCity& kCity);
+	// Computes standard city danger and its attacker list once per city plot on the current board.
+	static const SOperationalCityDanger& CachedCityDanger(const SOperationalTurn& turn, const CvCity& kCity);
 
 	// True for a city's garrison the garrison pass left to zone work: only a search may move it.
 	static bool IsHeldGarrison(const CvUnit* pUnit);
 };
 
-// Vox Deorum: charges one scope, optionally excluding trace construction from an enclosing stage.
+// Charges one scope, optionally excluding trace construction from an enclosing stage.
 struct SOperationalTimer
 {
 	unsigned long long* pTotal;
 	const unsigned long long* pExclude;
 	unsigned long long startNs, excludeNs;
-	// Vox Deorum: starts timing only when an accumulator is supplied.
+	// Starts timing only when an accumulator is supplied.
 	SOperationalTimer(unsigned long long* pValue, const unsigned long long* pExcluded = NULL) :
 		pTotal(pValue), pExclude(pExcluded), startNs(pValue ? CvTacticalOperationalLoop::ClockNs() : 0),
 		excludeNs(pExcluded ? *pExcluded : 0) {}
-	// Vox Deorum: keeps an enclosing stage exclusive of trace work, including on unwinding.
+	// Keeps an enclosing stage exclusive of trace work, including on unwinding.
 	~SOperationalTimer()
 	{
 		if (pTotal) *pTotal += CvTacticalOperationalLoop::ClockNs() - startNs - (pExclude ? *pExclude - excludeNs : 0);

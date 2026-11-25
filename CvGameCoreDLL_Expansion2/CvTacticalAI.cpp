@@ -377,6 +377,8 @@ void CvTacticalAI::CleanUp()
 	m_ZoneTargets.clear();
 	// Vox Deorum: the operational loop's snapshot ends with the targets it copies.
 	m_OperationalTargets.clear();
+	// Vox Deorum: discard any unfinished army work with this tactical pass.
+	m_PreparedArmies.clear();
 }
 
 /// Add a temporary focus of attention around a short-term target
@@ -535,6 +537,42 @@ void CvTacticalAI::UpdateVisibilityFromBorders(CvPlot* pPlot)
 
 // PRIVATE METHODS
 
+// Vox Deorum: classify a hostile city or combat unit. The opening pass can use native memory;
+// loop discoveries require sight of the city or the defender.
+bool CvTacticalAI::ClassifyEnemyTarget(const CvPlot& kPlot, CvTacticalTarget& target, bool bObservedOnly, bool* pHasDefender) const
+{
+	const TeamTypes eTeam = m_pPlayer->getTeam();
+	if (bObservedOnly && !kPlot.isVisible(eTeam))
+		return false;
+
+	if (const CvCity* pCity = kPlot.getPlotCity())
+	{
+		if (!atWar(eTeam, pCity->getTeam()) || (bObservedOnly && kPlot.getRevealedOwner(eTeam) != pCity->getOwner()))
+			return false;
+		target.SetTargetType(AI_TACTICAL_TARGET_ENEMY_CITY);
+		target.SetAuxIntData(m_pPlayer->isBarbarian() ? 20 : 100);
+		return true;
+	}
+
+	CvUnit* pUnit = kPlot.getBestDefender(NO_PLAYER, m_pPlayer->GetID(), NULL, true, !bObservedOnly);
+	if (!pUnit)
+		return false;
+	const bool bCanSeeUnit = kPlot.isVisible(eTeam) && !pUnit->isInvisible(eTeam, false);
+	if (!bCanSeeUnit && (bObservedOnly || !m_pPlayer->IsVanishedUnit(pUnit->GetIDInfo())))
+		return false;
+	if (pHasDefender)
+		*pHasDefender = true;
+
+	// Minors ignore barbarians until they are close to their borders.
+	if (m_pPlayer->isMinorCiv() && pUnit->isBarbarian() && !kPlot.isAdjacentTeam(eTeam))
+		return false;
+
+	target.SetTargetType(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT);
+	target.SetUnitPtr(pUnit);
+	target.SetAuxIntData(50);
+	return true;
+}
+
 /// Make lists of everything we might want to target with the tactical AI this turn
 void CvTacticalAI::FindTacticalTargets()
 {
@@ -582,33 +620,17 @@ void CvTacticalAI::FindTacticalTargets()
 				}
 
 				// ... enemy city
-				else if (atWar(m_pPlayer->getTeam(), pCity->getTeam()))
-				{
-					newTarget.SetTargetType(AI_TACTICAL_TARGET_ENEMY_CITY);
-					//barbarians don't care about cities much compared to normal players
-					newTarget.SetAuxIntData( m_pPlayer->isBarbarian() ? 20 : 100);
+				else if (ClassifyEnemyTarget(*pLoopPlot, newTarget, false))
 					m_AllTargets.push_back(newTarget);
-				}
 			}
 			else
 			{
-				// ... enemy combat unit? we allow visible ones and some we remember from the previous turn
-				CvUnit* pUnit = pLoopPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), NULL, true, true);
-				bool bCanSeeUnit = pUnit && pLoopPlot->isVisible(m_pPlayer->getTeam()) && !pUnit->isInvisible(m_pPlayer->getTeam(), false);
-				bool bRememberUnit = pUnit && m_pPlayer->IsVanishedUnit(pUnit->GetIDInfo());
-				if (bCanSeeUnit || bRememberUnit)
-				{
-					//minors ignore barbarians until they are close to their borders
-					if (!m_pPlayer->isMinorCiv() || !pUnit->isBarbarian() || pUnit->plot()->isAdjacentTeam(m_pPlayer->getTeam()))
-					{
-						newTarget.SetTargetType(AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT);
-						newTarget.SetUnitPtr(pUnit);
-						newTarget.SetAuxIntData(50);
-						m_AllTargets.push_back(newTarget);
-					}
-				}
+				// Vox Deorum: a defender ignored by a minor still prevents a civilian target.
+				bool bHasDefender = false;
+				if (ClassifyEnemyTarget(*pLoopPlot, newTarget, false, &bHasDefender))
+					m_AllTargets.push_back(newTarget);
 				// ... unprotected enemy civilian?
-				else if (pLoopPlot->isEnemyUnit(m_pPlayer->GetID(),false,true) && !pLoopPlot->isNeutralUnit(m_pPlayer->GetID(),true,true))
+				else if (!bHasDefender && pLoopPlot->isEnemyUnit(m_pPlayer->GetID(),false,true) && !pLoopPlot->isNeutralUnit(m_pPlayer->GetID(),true,true))
 				{
 					for (int iUnitLoop = 0; iUnitLoop < pLoopPlot->getNumUnits(); iUnitLoop++)
 					{
@@ -780,12 +802,23 @@ void CvTacticalAI::FindTacticalTargets()
 	//Let's clean up our naval target list.
 	PrioritizeNavalTargetsAndAddToMainList();
 
-	// Vox Deorum: the operational loop keeps every scored target as a battlefield, before native drops the ones near a
-	// better one.
+	// Vox Deorum: keep enemy targets before native drops the ones near a better one. Store their
+	// identities now, since the high priority passes can replace a defender or change city ownership.
+	m_OperationalTargets.clear();
 	if (MOD_VOX_TACTICAL_OPERATIONAL_LOOP && !m_pPlayer->isBarbarian())
-		m_OperationalTargets = m_AllTargets;
-	else
-		m_OperationalTargets.clear();
+	{
+		for (size_t i = 0; i < m_AllTargets.size(); i++)
+		{
+			const CvTacticalTarget& target = m_AllTargets[i];
+			if (target.GetTargetType() == AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT)
+				m_OperationalTargets.push_back(make_pair(target, target.GetUnitPtr()->GetIDInfo()));
+			else if (target.GetTargetType() == AI_TACTICAL_TARGET_ENEMY_CITY)
+			{
+				const CvCity* pCity = GC.getMap().plot(target.GetTargetX(), target.GetTargetY())->getPlotCity();
+				m_OperationalTargets.push_back(make_pair(target, IDInfo(pCity->getOwner(), pCity->GetID())));
+			}
+		}
+	}
 
 	// since the combat simulation considers a whole area, we don't need to attack for individual units
 	SortTargetListAndDropUselessTargets();
@@ -1341,6 +1374,10 @@ void CvTacticalAI::PlotOperationalArmyMoves()
 	//just so that UnitProcessed() sets the right flags
 	ClearCurrentMoveUnits(AI_TACTICAL_OPERATION);
 
+	// Vox Deorum: prepare combat armies for the loop at the same point as native operation moves.
+	m_PreparedArmies.clear();
+	const bool bMarchEnabled = CvTacticalOperationalLoop::IsMarchEnabled(*m_pPlayer);
+
 	// move all units in operations
 	std::vector<int> opsToKill;
 	for (size_t i=0; i<m_pPlayer->getNumAIOperations(); i++)
@@ -1353,19 +1390,20 @@ void CvTacticalAI::PlotOperationalArmyMoves()
 			// Vox Deorum: operation execution supplies request parent context and restores any enclosing label.
 			VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled,
 				m_pPlayer->GetID(), m_pPlayer->GetID(), VOX_RL_OPERATION_CHANGE_EXECUTION, operationId);
-			progressed = pOp->DoTurn();
+			const ArmyType eArmyType = pOp->GetArmyType();
+			if (bMarchEnabled && !alreadyMoved && (eArmyType == ARMY_TYPE_LAND || eArmyType == ARMY_TYPE_NAVAL || eArmyType == ARMY_TYPE_COMBINED))
+			{
+				SOperationalPreparedArmy army;
+				if (CvTacticalOperationalLoop::PrepareArmy(*this, *pOp, army))
+				{
+					m_PreparedArmies.push_back(army);
+					continue;
+				}
+			}
+			else
+				progressed = pOp->DoTurn();
 		}
-		// Vox Deorum: flush the invocation before another operation can overwrite its state.
-		if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
-		{
-			int result = VOX_RL_OPERATION_RESULT_PROGRESSED;
-			if (alreadyMoved)
-				result = VOX_RL_OPERATION_RESULT_ALREADY_MOVED;
-			else if (!progressed)
-				result = pOp->GetOperationState() == AI_OPERATION_STATE_SUCCESSFUL_FINISH
-					? VOX_RL_OPERATION_RESULT_COMPLETED : VOX_RL_OPERATION_RESULT_ABORTED;
-			VoxRlCapture::GetInstance().OnOperationInvocationComplete(m_pPlayer->GetID(), operationId, result);
-		}
+		ReportOperationResult(*pOp, alreadyMoved, progressed);
 		if (!progressed)
 			opsToKill.push_back(pOp->GetID());
 	}
@@ -1377,6 +1415,21 @@ void CvTacticalAI::PlotOperationalArmyMoves()
 	// Vox Deorum: close the operation execution batch, including zero invocations.
 	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
 		VoxRlCapture::GetInstance().OnOperationalMovesComplete(m_pPlayer->GetID());
+}
+
+// Vox Deorum: flushes an operation's result before cleanup or the next invocation can change its state.
+void CvTacticalAI::ReportOperationResult(CvAIOperation& kOperation, bool bAlreadyMoved, bool bProgressed)
+{
+	if (MOD_IPC_CHANNEL && gVoxRlCaptureEnabled)
+	{
+		int result = VOX_RL_OPERATION_RESULT_PROGRESSED;
+		if (bAlreadyMoved)
+			result = VOX_RL_OPERATION_RESULT_ALREADY_MOVED;
+		else if (!bProgressed)
+			result = kOperation.GetOperationState() == AI_OPERATION_STATE_SUCCESSFUL_FINISH
+				? VOX_RL_OPERATION_RESULT_COMPLETED : VOX_RL_OPERATION_RESULT_ABORTED;
+		VoxRlCapture::GetInstance().OnOperationInvocationComplete(m_pPlayer->GetID(), kOperation.GetID(), result);
+	}
 }
 
 /// Assigns units to pillage enemy improvements
@@ -2784,17 +2837,9 @@ void CvTacticalAI::PlotArmyMovesCombat(CvArmyAI* pThisArmy)
 	// MOVING TO TARGET
 	else if(pThisArmy->GetArmyAIState() == ARMYAISTATE_MOVING_TO_DESTINATION)
 	{
-		//if this operation has a specific target player
-		if (pOperation->GetEnemy() != NO_PLAYER)
-		{
-			//getting too close to another enemy?
-			if (GC.getGame().GetClosestCityDistanceInPlots(pThisTurnTarget) < 3)
-			{
-				PlayerTypes eCityOwner = GC.getGame().GetClosestCityOwnerByPlots(pThisTurnTarget);
-				if (eCityOwner != pOperation->GetEnemy() && m_pPlayer->IsAtWarWith(eCityOwner))
-					pOperation->SetToAbort(AI_ABORT_TOO_DANGEROUS);
-			}
-		}
+		// Vox Deorum: use the same unsafe route check when the command loop holds the army.
+		if (pOperation->IsWaypointTooDangerous(pThisTurnTarget))
+			pOperation->SetToAbort(AI_ABORT_TOO_DANGEROUS);
 
 		//try to arrange the units somewhat closer to the target
 		ExecuteGatherMoves(pThisArmy,pThisTurnTarget);
@@ -3476,7 +3521,8 @@ void GetUnitsByID(PlayerTypes ePlayer, const vector<int>& vIDs, vector<CvUnit*>&
 	}
 }
 
-bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot)
+// Vox Deorum: tries to reveal the target within the command's movement limits.
+bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot, const STacticalMovementGate* pGate)
 {
 	if (pTargetPlot->isVisible(m_pPlayer->getTeam()))
 		return true; //nothing to do
@@ -3511,7 +3557,8 @@ bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTa
 	for (size_t i = 0; i < vCandidates.size(); i++)
 	{
 		CvUnit* pUnit = vCandidates[i];
-		int iFlags = CvUnit::MOVEFLAG_NO_EMBARK;
+		// Vox Deorum: a spotter must follow the army's sea route limits, if any.
+		int iFlags = CvUnit::MOVEFLAG_NO_EMBARK | (pGate ? pGate->MoveFlags(*pUnit) : 0);
 
 		//move into ring 2 unless we are already there and still can't see the target
 		iFlags |= plotDistance(*pTargetPlot, *pUnit->plot()) > 2 ? CvUnit::MOVEFLAG_APPROX_TARGET_RING2 : CvUnit::MOVEFLAG_APPROX_TARGET_RING1;
@@ -3526,7 +3573,8 @@ bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTa
 					break;
 
 				CvPlot* pPathPlot = GC.getMap().plotUnchecked(path[i].m_iX, path[i].m_iY);
-				if (pPathPlot->canSeePlot(pTargetPlot, pUnit->getTeam(), pUnit->visibilityRange(), NO_DIRECTION))
+				if ((!pGate || pGate->Allows(*pUnit, *pPathPlot)) &&
+					pPathPlot->canSeePlot(pTargetPlot, pUnit->getTeam(), pUnit->visibilityRange(), NO_DIRECTION))
 				{
 					//or should we use danger as the sorting criterion?
 					vOptions.push_back(OptionWithScore<pair<CvUnit*, CvPlot*>>(make_pair(pUnit,pPathPlot),path[i].m_iMoves));
@@ -3538,7 +3586,7 @@ bool CvTacticalAI::ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTa
 	if (!vOptions.empty())
 	{
 		std::stable_sort(vOptions.begin(), vOptions.end());
-		ExecuteMoveToPlot(vOptions.front().option.first, vOptions.front().option.second, false, CvUnit::MOVEFLAG_NO_EMBARK);
+		ExecuteMoveToPlot(vOptions.front().option.first, vOptions.front().option.second, false, CvUnit::MOVEFLAG_NO_EMBARK, pGate);
 		return true;
 	}
 
@@ -4269,13 +4317,29 @@ void CvTacticalAI::ExecuteBarbarianRoaming()
 	}
 }
 
+// Vox Deorum: every tile where this mission could stop early must also keep the formation together.
+static bool AllowsTacticalPath(const CvUnit& unit, const STacticalMovementGate& gate)
+{
+	const CvPathNodeArray& path = unit.GetLastPath();
+	for (size_t i = 0; i < path.size(); i++)
+		if (!gate.Allows(unit, *path.GetPlotByIndex(static_cast<int>(i)), false))
+			return false;
+	return true;
+}
+
 /// Move unit to a specific tile, return turns remaining
-int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetProcessed, int iFlags)
+int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetProcessed, int iFlags,
+	const STacticalMovementGate* pGate)
 {
 	int iResult = INT_MAX; //impossible
 
-	if(!pUnit || !pTarget)
+	// Vox Deorum: validate the order before any mission can move this unit.
+	if (!pUnit || !pTarget || (pGate && !pGate->Allows(*pUnit, *pTarget)))
 		return iResult;
+
+	// Vox Deorum: apply the unit's own corridor limits to the path, including intermediate tiles.
+	if (pGate)
+		iFlags |= pGate->MoveFlags(*pUnit);
 
 	//for inspection in GUI
 	pUnit->SetMissionAI(MISSIONAI_TACTMOVE, pTarget, NULL);
@@ -4293,6 +4357,8 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 		int iTurns = INT_MAX;
 		if (pUnit->GeneratePath(pTarget,iFlags,INT_MAX,&iTurns))
 		{
+			if (pGate && (pUnit->GetPathEndFirstTurnPlot() != pTarget || !AllowsTacticalPath(*pUnit, *pGate)))
+				return iResult;
 			//pillage if it makes sense and we have movement points to spare
 			if (pUnit->shouldPillage(pUnit->plot(), true, true) && (pUnit->hasFreePillageMove() || pUnit->GetMovementPointsAtCachedTarget()>=GD_INT_GET(MOVE_DENOMINATOR)))
 			{
@@ -4308,6 +4374,15 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 
 			pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pTarget->getX(), pTarget->getY(), iFlags, false, false, MISSIONAI_TACTMOVE, pTarget);
 			iResult = iTurns - 1;
+			// Vox Deorum: return to the queue before an opportunity attack or any further path order.
+			if (pGate && pGate->AfterAction())
+			{
+				if (pUnit->plot() != pTarget)
+					pUnit->ClearMissionQueue();
+				else if (bSetProcessed)
+					UnitProcessed(pUnit->GetID());
+				return iResult;
+			}
 
 			bool bAlreadyThere = false;
 			if (iFlags&CvUnit::MOVEFLAG_APPROX_TARGET_RING2)
@@ -4318,7 +4393,7 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 				bAlreadyThere = pUnit->at(pTarget->getX(), pTarget->getY());
 
 			//typically because of MOVEFLAG_ABORT_IN_DANGER and newly revealed enemies ...
-			if (bSetProcessed && !bAlreadyThere && pUnit->canMove() && pUnit->getArmyID()==-1)
+			if (!pGate && bSetProcessed && !bAlreadyThere && pUnit->canMove() && pUnit->getArmyID()==-1)
 			{
 				//try to go to a better place if we're sure the unit will not be moved again this turn
 				pTarget = TacticalAIHelpers::FindSafestPlotInReach(pUnit, true).first;
@@ -4327,7 +4402,7 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 			}
 		}
 		//maybe units are blocking our way? 
-		else if (pUnit->GeneratePath(pTarget,iFlags|CvUnit::MOVEFLAG_IGNORE_STACKING_SELF,INT_MAX,&iTurns))
+		else if (!pGate && pUnit->GeneratePath(pTarget,iFlags|CvUnit::MOVEFLAG_IGNORE_STACKING_SELF,INT_MAX,&iTurns))
 		{
 			//already close? try to push the other unit out
 			if (iTurns == 0)
@@ -4930,8 +5005,27 @@ CvUnit* CvTacticalAI::FindUnitForThisMove(AITacticalMove eMove, CvPlot* pTarget,
 	}
 }
 
+// Vox Deorum: keeps native roster order and appends each additional Fight recruit once.
+static const list<int>& MergeRecruitRoster(const list<int>& roster, const vector<int>* pExtraUnits, list<int>& merged)
+{
+	if (!pExtraUnits || pExtraUnits->empty())
+		return roster;
+	merged = roster;
+	for (size_t i = 0; i < pExtraUnits->size(); i++)
+		if (std::find(merged.begin(), merged.end(), (*pExtraUnits)[i]) == merged.end())
+			merged.push_back((*pExtraUnits)[i]);
+	return merged;
+}
+
+// Vox Deorum: when Fight supplies an army roster, excludes army units outside it.
+static bool IsExcludedArmyUnit(const CvUnit& unit, const vector<int>* pExtraUnits)
+{
+	return pExtraUnits && unit.getArmyID() != -1 &&
+		std::find(pExtraUnits->begin(), pExtraUnits->end(), unit.GetID()) == pExtraUnits->end();
+}
+
 /// Fills m_CurrentMoveUnits with all units within X turns of a target (returns TRUE if 1 or more found)
-bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
+bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget, const vector<int>* pExtraUnits)
 {
 	m_CurrentMoveUnits.clear();
 	// Vox Deorum: the air caches, carrier reach among them, are rebuilt for every recruitment, as earlier combat may have
@@ -4944,11 +5038,13 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 	CvUnit* pDefender = pTarget->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), NULL, false, true);
 
 	//todo: check if defender can be damaged at all or if an attacker would die?
-	// Loop through all units available to tactical AI this turn
-	for(list<int>::const_iterator it = m_CurrentTurnUnits.begin(); it != m_CurrentTurnUnits.end(); it++)
+	list<int> recruits;
+	const list<int>& roster = MergeRecruitRoster(m_CurrentTurnUnits, pExtraUnits, recruits);
+	for (list<int>::const_iterator it = roster.begin(); it != roster.end(); ++it)
 	{
 		CvUnit* pLoopUnit = m_pPlayer->getUnit(*it);
-		if(!pLoopUnit || !pLoopUnit->canUseForTacticalAI())
+		if (!pLoopUnit || !pLoopUnit->canUseForTacticalAI() ||
+			IsExcludedArmyUnit(*pLoopUnit, pExtraUnits))
 			continue;
 
 		// Don't pull barbarian units out of camps to attack.
@@ -5105,17 +5201,22 @@ bool CvTacticalAI::FindCitiesWithinStrikingDistance(CvPlot* pTargetPlot)
 }
 
 
-bool CvTacticalAI::FindEmbarkedUnitsAroundTarget(CvPlot* pTarget, int iMaxDistance)
+// Vox Deorum: collects live independent and eligible claimed landers for the city follow-up.
+bool CvTacticalAI::FindEmbarkedUnitsAroundTarget(CvPlot* pTarget, int iMaxDistance, const vector<int>* pExtraUnits)
 {
 	m_CurrentMoveUnits.clear();
 
 	if (!pTarget)
 		return false;
 
-	// Loop through all units available to tactical AI this turn
-	for(list<int>::const_iterator it = m_CurrentTurnUnits.begin(); it != m_CurrentTurnUnits.end(); it++)
+	list<int> recruits;
+	const list<int>& roster = MergeRecruitRoster(m_CurrentTurnUnits, pExtraUnits, recruits);
+	for (list<int>::const_iterator it = roster.begin(); it != roster.end(); ++it)
 	{
 		CvUnit* pLoopUnit = m_pPlayer->getUnit(*it);
+		if (pExtraUnits && (!pLoopUnit || !pLoopUnit->plot() || !pLoopUnit->canUseNow() ||
+			IsExcludedArmyUnit(*pLoopUnit, pExtraUnits)))
+			continue;
 		if(pLoopUnit && pLoopUnit->canUseForTacticalAI() && pLoopUnit->IsCombatUnit() && pLoopUnit->isEmbarked() && plotDistance(*pLoopUnit->plot(),*pTarget)<=iMaxDistance )
 		{
 			CvTacticalUnit unit(pLoopUnit->GetID());
@@ -10073,6 +10174,37 @@ static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTac
 		return ScorePlotForNonFightingUnitMove(unit, testPlot, assumedPosition, evalMode);
 }
 
+// Vox Deorum: the search shares one scope across all its branches and capture fallback.
+static const TacticalUnitStops* gOperationalStops = NULL;
+
+// Vox Deorum: installs the order's destinations for this search.
+STacticalStopScope::STacticalStopScope(const TacticalUnitStops& stops)
+	: pPrevious(gOperationalStops)
+{
+	gOperationalStops = &stops;
+}
+
+// Vox Deorum: restores the surrounding search context.
+STacticalStopScope::~STacticalStopScope()
+{
+	gOperationalStops = pPrevious;
+}
+
+// Vox Deorum: shared formation searches can start with embarked units beside their escorts.
+bool STacticalStopScope::UsesEmbarked()
+{
+	return gOperationalStops != NULL;
+}
+
+// Vox Deorum: independent units keep the ordinary search rules.
+bool STacticalStopScope::Allows(int iUnit, int iPlot)
+{
+	if (!gOperationalStops)
+		return true;
+	const TacticalUnitStops::const_iterator it = gOperationalStops->find(iUnit);
+	return it == gOperationalStops->end() || it->second.count(iPlot) > 0;
+}
+
 void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const
 {
 	//the challenge is that often a move can be good or bad depending on what our *other* units end up doing. so there are two strategies:
@@ -10110,7 +10242,8 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 	{
 		//the plot we're checking right now
 		const CvTacticalPlot* testPlot = getTactPlot(it->iPlotIndex);
-		if (!testPlot)
+		// Vox Deorum: a move or an advancing melee attack must use a permitted stop.
+		if (!testPlot || !STacticalStopScope::Allows(unit.iUnitID, it->iPlotIndex))
 			continue;
 
 		//if there is an enemy in the plot, we want to attack
@@ -12047,7 +12180,8 @@ void CvTacticalPosition::updateMoveAndAttackPlotsForUnit(SUnitStats unit)
 			if (unit.eMoveStrategy == MS_EMBARKED)
 			{
 				//only allow disembarking if it takes us closer to the target
-				if (TacticalAIHelpers::GetPlotDistanceToTarget(it->iPlotIndex, pUnit->getDomainType()) >= TacticalAIHelpers::GetPlotDistanceToTarget(pUnit->plot()->GetPlotIndex(), pUnit->getDomainType()))
+				if (!(STacticalStopScope::UsesEmbarked() && pUnit->isEmbarked()) &&
+					TacticalAIHelpers::GetPlotDistanceToTarget(it->iPlotIndex, pUnit->getDomainType()) >= TacticalAIHelpers::GetPlotDistanceToTarget(pUnit->plot()->GetPlotIndex(), pUnit->getDomainType()))
 					continue;
 			}
 			else
@@ -12687,7 +12821,8 @@ bool CvTacticalPosition::addAvailableUnit(const CvUnit* pUnit)
 	//also, only land units can embark and but melee ships can move into certain land plots (cities) so it's tricky
 
 	//if were not looking to fight but about to embark then keep the unit away from enemies
-	if (!haveEnemies() && !pUnit->isNativeDomain(pTargetPlot) && pUnit->CanEverEmbark() && pUnit->IsCombatUnit())
+	if ((STacticalStopScope::UsesEmbarked() && pUnit->isEmbarked()) ||
+		(!haveEnemies() && !pUnit->isNativeDomain(pTargetPlot) && pUnit->CanEverEmbark() && pUnit->IsCombatUnit()))
 	{
 		eStrategy = MS_EMBARKED;
 	}
@@ -13219,6 +13354,9 @@ void CvSupportPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, i
 	for (ReachablePlots::const_iterator it = reachablePlots.begin(); it != reachablePlots.end(); ++it)
 	{
 		//the plot we're checking right now
+		// Vox Deorum: support moves follow the same stop limits as combat moves.
+		if (!STacticalStopScope::Allows(unit.iUnitID, it->iPlotIndex))
+			continue;
 		const CvPlot* pTestPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
 		if (!pTestPlot)
 			continue;
@@ -13269,6 +13407,9 @@ bool CvSupportPosition::hasAcceptableMoveForUnit(const SUnitStats& unit, bool bL
 	const ReachablePlots& reachablePlots = getReachablePlotsForUnit(unit);
 	for (ReachablePlots::const_iterator it = reachablePlots.begin(); it != reachablePlots.end(); ++it)
 	{
+		// Vox Deorum: support moves follow the same stop limits as combat moves.
+		if (!STacticalStopScope::Allows(unit.iUnitID, it->iPlotIndex))
+			continue;
 		const CvPlot* pTestPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
 		if (!pTestPlot)
 			continue;
@@ -14521,7 +14662,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		//exception: since we ignore garrisoned units for tactsim, we can still use units (ships) in cities if a (land) garrison is present
 		if (pUnit && pUnit->canUseNow())
 		{
-			if (pUnit->isNativeDomain(pUnit->plot()) || pUnit->plot()->getNumUnits() == 1 || pUnit->plot()->isCity())
+			if (pUnit->isNativeDomain(pUnit->plot()) || pUnit->plot()->getNumUnits() == 1 || pUnit->plot()->isCity() ||
+				(STacticalStopScope::UsesEmbarked() && pUnit->isEmbarked()))
 			{
 				ourUnits.push_back(vUnits[i]);
 				unitXP.push_back(vUnits[i]->getExperienceTimes100());
@@ -14802,7 +14944,53 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	return result;
 }
 
-bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun)
+// Vox Deorum: validates every unit an assignment could move, including a swap partner.
+static bool AllowsTacticalAssignment(PlayerTypes ePlayer, const vector<STacticalAssignment>& assignments, size_t i,
+	const CvUnit& unit, const CvPlot& destination, const STacticalMovementGate& gate)
+{
+	const STacticalAssignment& row = assignments[i];
+	if (!gate.Allows(unit, *unit.plot()))
+		return false;
+	switch (row.eAssignmentType)
+	{
+	case A_MOVE_SWAP:
+	{
+		if (i + 1 >= assignments.size() || assignments[i + 1].eAssignmentType != A_MOVE_SWAP_REVERSE)
+			return false;
+		const CvUnit* pOther = GET_PLAYER(ePlayer).getUnit(assignments[i + 1].iUnitID);
+		if (!pOther || pOther->plot() != &destination || !destination.isAdjacent(unit.plot()) || !gate.Allows(*pOther, *unit.plot()))
+			return false;
+		// Native chooses the swap partner from the destination's stack.
+		for (int j = 0; j < destination.getNumUnits(); j++)
+		{
+			const CvUnit* pCandidate = destination.getUnitByIndex(j);
+			if (pCandidate != pOther && pCandidate->IsCombatUnit() && pCandidate->getDomainType() == unit.getDomainType() &&
+				pCandidate->ReadyToSwap())
+				return false;
+		}
+		return gate.Allows(unit, destination);
+	}
+	case A_MOVE:
+	case A_MOVE_FORCED:
+	case A_CAPTURE:
+	case A_MELEEATTACK:
+	case A_MELEEKILL:
+	case A_MELEEKILL_NO_ADVANCE:
+		return gate.Allows(unit, destination);
+	default:
+		return true;
+	}
+}
+
+// Vox Deorum: marks the units with committed finish orders, including when a command yields.
+static void FinishTacticalAssignments(PlayerTypes ePlayer, const vector<int>& finishedUnits)
+{
+	for (vector<int>::const_iterator it = finishedUnits.begin(); it != finishedUnits.end(); ++it)
+		GET_PLAYER(ePlayer).GetTacticalAI()->UnitProcessed(*it);
+}
+
+bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun,
+	const STacticalMovementGate* pGate)
 {
 	static const BuildTypes eCitadel = (BuildTypes)GC.getInfoTypeForString("BUILD_CITADEL");
 	static const BuildTypes eOrdo = MOD_BALANCE_VP ? (BuildTypes)GC.getInfoTypeForString("BUILD_ORDO") : NO_BUILD;
@@ -14830,8 +15018,22 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		CvPlot* pFromPlot = GC.getMap().plotByIndexUnchecked(vAssignments[i].iFromPlotIndex);
 		CvPlot* pToPlot = GC.getMap().plotByIndexUnchecked(vAssignments[i].iToPlotIndex);
 
+		// Vox Deorum: a prior assignment may have changed the formation's legal stops.
+		if (pGate && !AllowsTacticalAssignment(ePlayer, vAssignments, i, *pUnit, *pToPlot, *pGate))
+		{
+			FinishTacticalAssignments(ePlayer, finishedUnits);
+			return false;
+		}
+
 		//abort movement and retry if we find eg an enemy submarine
 		int iMoveflags = CvUnit::MOVEFLAG_IGNORE_DANGER | CvUnit::MOVEFLAG_NO_STOPNODES | CvUnit::MOVEFLAG_ABORT_IF_NEW_ENEMY_REVEALED;
+		// Vox Deorum: Withdraw reuses checked path flags; other orders add their corridor limits.
+		if (pGate)
+		{
+			if (pGate->bUseCheckedMoveFlags)
+				iMoveflags = CvUnit::MOVEFLAG_ABORT_IF_NEW_ENEMY_REVEALED;
+			iMoveflags |= pGate->MoveFlags(*pUnit);
+		}
 		bool bPrecondition = false;
 		bool bPostcondition = false;
 
@@ -14850,6 +15052,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		case A_CAPTURE:
 			pUnit->ClearPathCache(); //make sure there's no stale path which coincides with our target
 			bPrecondition = pUnit->canMove() && (pUnit->plot() == pFromPlot) && !(pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //no enemy
+			if (bPrecondition && pGate)
+				bPrecondition = pUnit->GeneratePath(pToPlot, iMoveflags, 0) &&
+					pUnit->GetPathEndFirstTurnPlot() == pToPlot && AllowsTacticalPath(*pUnit, *pGate);
 #ifdef TACTDEBUG
 			if (bPrecondition)
 			{
@@ -15021,6 +15226,18 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		if (pnRowsRun && bPrecondition)
 			*pnRowsRun = i + 1;
 
+		// Vox Deorum: even a move whose postcondition failed may have revealed a new threat.
+		if (pGate && bPrecondition && vAssignments[i].eAssignmentType != A_MOVE_SWAP_REVERSE && pGate->AfterAction())
+		{
+			if (pnRowsRun && vAssignments[i].eAssignmentType == A_MOVE_SWAP && bPostcondition)
+				*pnRowsRun = i + 2;
+			if (!bPostcondition && (vAssignments[i].eAssignmentType == A_MOVE || vAssignments[i].eAssignmentType == A_MOVE_FORCED ||
+				vAssignments[i].eAssignmentType == A_CAPTURE))
+				pUnit->ClearMissionQueue();
+			FinishTacticalAssignments(ePlayer, finishedUnits);
+			return false;
+		}
+
 #ifdef TACTDEBUG
 		//this can happen sometimes because of randomness or splash damage etc
 		if (!bPrecondition || !bPostcondition)
@@ -15054,10 +15271,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		*pnRowsRun = vAssignments.size();
 
 	// Only do this once we know were successful
-	for (vector<int>::const_iterator it = finishedUnits.begin(); it != finishedUnits.end(); ++it)
-	{
-		GET_PLAYER(ePlayer).GetTacticalAI()->UnitProcessed(*it);
-	}
+	FinishTacticalAssignments(ePlayer, finishedUnits);
 
 	return true;
 }

@@ -578,10 +578,11 @@ int CvAIOperation::GrabUnitsFromTheReserves(CvPlot* pMusterPlot, CvPlot* pTarget
 	return iCount;
 }
 
-CvPlot* CvAIOperation::GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget, int iStep, bool bForward) const
+// Vox Deorum: finds an army route using the operation's native land or naval rules.
+SPath CvAIOperation::GetStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget) const
 {
-	if (!pCurrentPosition || !pTarget || iStep<0)
-		return NULL;
+	if (!pCurrentPosition || !pTarget)
+		return SPath();
 
 	//make sure the start position is valid
 	//target is handled automatically via approximate mode
@@ -591,7 +592,7 @@ CvPlot* CvAIOperation::GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTar
 			pCurrentPosition = MilitaryAIHelpers::GetCoastalWaterNearPlot(pCurrentPosition);
 
 		if (!pCurrentPosition)
-			return NULL;
+			return SPath();
 	}
 
 	//once the army has gathered both pure and mixed naval ops can only use water plots
@@ -600,42 +601,36 @@ CvPlot* CvAIOperation::GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTar
 	if (GetArmy(0) && !GetArmy(0)->IsAllOceanGoing())
 		data.iFlags |= CvUnit::MOVEFLAG_NO_OCEAN;
 
-	SPath path = GC.GetStepFinder().GetPath(pCurrentPosition, pTarget, data);
+	return GC.GetStepFinder().GetPath(pCurrentPosition, pTarget, data);
+}
+
+// Vox Deorum: picks a step in either direction and optionally keeps the corridor for March.
+CvPlot* CvAIOperation::GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget, int iStep, bool bForward,
+	std::vector<CvPlot*>* pCorridor) const
+{
+	if (iStep < 0)
+		return NULL;
+
+	const SPath path = GetStepPath(pCurrentPosition, pTarget);
 	if (!path)
 		return NULL;
 
-	int iNodeIndex = 0;
-	if (bForward)
-		iNodeIndex = std::min( path.length()-1, iStep );
-	else
-		iNodeIndex = std::max( 0, path.length()-1-iStep );
-					
+	if (pCorridor)
+	{
+		pCorridor->resize(path.length());
+		for (int i = 0; i < path.length(); ++i)
+			(*pCorridor)[i] = path.get(i);
+	}
+
+	const int iNodeIndex = bForward ? std::min(path.length() - 1, iStep) : std::max(0, path.length() - 1 - iStep);
 	return path.get(iNodeIndex);
 }
 
+// Vox Deorum: counts the path's plots, including its start, with the native failure sentinel.
 int CvAIOperation::GetStepDistanceBetweenPlots(CvPlot* pCurrentPosition, CvPlot* pTarget) const
 {
-	if (!pCurrentPosition || !pTarget)
-		return -1;
-
-	//make sure the start position is valid
-	//target is handled automatically via approximate mode
-	if (IsNavalOperation())
-	{
-		if (!pCurrentPosition->isWater())
-			pCurrentPosition = MilitaryAIHelpers::GetCoastalWaterNearPlot(pCurrentPosition);
-
-		if (!pCurrentPosition)
-			return -1;
-	}
-
-	//use the step path finder to compute distance (pass type param 1 to ignore barbarian camps)
-	//once the army has gathered both pure and mixed naval ops can only use water plots
-	SPathFinderUserData data(m_eOwner, IsNavalOperation() ? PT_ARMY_WATER : PT_ARMY_LAND, m_eEnemy, INT_MAX);
-	if (GetArmy(0) && !GetArmy(0)->IsAllOceanGoing())
-		data.iFlags |= CvUnit::MOVEFLAG_NO_OCEAN;
-
-	return GC.GetStepFinder().GetPathLengthInPlots(pCurrentPosition, pTarget, data);
+	const SPath path = GetStepPath(pCurrentPosition, pTarget);
+	return !path ? -1 : path.length();
 }
 
 /// Report percentage distance traveled from muster point to target (using army that is furthest along)
@@ -774,16 +769,15 @@ void CvAIOperation::Kill()
 	GET_PLAYER(eOwner).deleteAIOperation(iID);
 }
 
-bool CvAIOperation::Move()
+// Vox Deorum: recruits reserves, updates checkpoints and remembers the army's starting formation.
+CvArmyAI* CvAIOperation::PrepareMove(SAIOperationMoveStart& start)
 {
-	// Vox Deorum: retain the cause through nested native calls and early returns.
-	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_EXECUTION, GetID());
 	//single army only for now
 	CvArmyAI* pThisArmy = GetArmy(0);
 	if (!pThisArmy)
 	{
 		SetToAbort(AI_ABORT_NO_UNITS);
-		return false;
+		return NULL;
 	}
 
 	//recruit more units if needed
@@ -796,12 +790,50 @@ bool CvAIOperation::Move()
 	if (ShouldAbort())
 	{
 		pThisArmy->ReleaseAllUnits();
+		return NULL;
+	}
+
+	start.fVarX = start.fVarY = 0.0f;
+	start.pCenter = pThisArmy->GetCenterOfMass(false, &start.fVarX, &start.fVarY);
+	return pThisArmy;
+}
+
+// Vox Deorum: runs the post-movement abort check, releases on abort and stamps a successful move pass.
+bool CvAIOperation::FinishMove(CvArmyAI* pThisArmy, const SAIOperationMoveStart& start)
+{
+	//this might cause us to abort
+	if (ShouldAbort())
+	{
+		pThisArmy->ReleaseAllUnits();
 		return false;
 	}
 
-	float fOldVarX;
-	float fOldVarY;
-	CvPlot* pOldCOM = pThisArmy->GetCenterOfMass(false,&fOldVarX,&fOldVarY);
+	//exclude rapid response ops etc
+	if (pThisArmy->GetNumSlotsFilled()>3)
+	{
+		float fNewVarX;
+		float fNewVarY;
+		//center of mass should be moving
+		CvPlot* pNewCOM = pThisArmy->GetCenterOfMass(false, &fNewVarX, &fNewVarY);
+		if (pNewCOM == start.pCenter && fNewVarX >= max(5.f, start.fVarX) && fNewVarY >= max(5.f, start.fVarY))
+		{
+			OutputDebugString(CvString::format("Warning: Operation %d with army at (%d,%d) not making movement progress!\n", m_iID, pNewCOM->getX(), pNewCOM->getY()).c_str());
+		}
+	}
+
+	SetLastTurnMoved(GC.getGame().getGameTurn());
+	return true;
+}
+
+// Vox Deorum: dispatches native movement between the same prepare and finish used by the loop.
+bool CvAIOperation::Move()
+{
+	// Vox Deorum: retain the cause through nested native calls and early returns.
+	VoxRlOperationCaptureScope captureScope(MOD_IPC_CHANNEL && gVoxRlCaptureEnabled, GetOwner(), GetOwner(), VOX_RL_OPERATION_CHANGE_EXECUTION, GetID());
+	SAIOperationMoveStart start;
+	CvArmyAI* pThisArmy = PrepareMove(start);
+	if (!pThisArmy)
+		return false;
 
 	//todo: move the relevant code from tactical AI to operations
 	switch (GetArmyType())
@@ -819,28 +851,14 @@ bool CvAIOperation::Move()
 		return false;
 	}
 
-	//this might cause us to abort
-	if (ShouldAbort())
-	{
-		pThisArmy->ReleaseAllUnits();
-		return false;
-	}
+	return FinishMove(pThisArmy, start);
+}
 
-	//exclude rapid response ops etc
-	if (pThisArmy->GetNumSlotsFilled()>3)
-	{
-		float fNewVarX;
-		float fNewVarY;
-		//center of mass should be moving
-		CvPlot* pNewCOM = pThisArmy->GetCenterOfMass(false, &fNewVarX, &fNewVarY);
-		if (pNewCOM == pOldCOM && fNewVarX >= max(5.f, fOldVarX) && fNewVarY >= max(5.f, fOldVarY))
-		{
-			OutputDebugString(CvString::format("Warning: Operation %d with army at (%d,%d) not making movement progress!\n", m_iID, pNewCOM->getX(), pNewCOM->getY()).c_str());
-		}
-	}
-
-	SetLastTurnMoved(GC.getGame().getGameTurn());
-	return true;
+// Vox Deorum: applies the native stage transition once the operation has finished its move pass.
+void CvAIOperation::FinishTurn()
+{
+	CheckTransitionToNextStage();
+	LogOperationStatus(false);
 }
 
 /// Update operation for the next turn
@@ -855,8 +873,7 @@ bool CvAIOperation::DoTurn()
 
 	if ( Move() )
 	{
-		CheckTransitionToNextStage();
-		LogOperationStatus(false);
+		FinishTurn();
 		return true;
 	}
 	else
@@ -940,6 +957,13 @@ void CvAIOperation::UnitWasRemoved(int iArmyID, int iSlotID)
 /// Pick this turn's desired "center of mass" for the army
 CvPlot* CvAIOperation::ComputeTargetPlotForThisTurn(CvArmyAI* pArmy) const
 {
+	// Vox Deorum: the native move only needs the waypoint.
+	return ComputeTargetPlotForThisTurn(pArmy, NULL);
+}
+
+// Vox Deorum: chooses the native waypoint and can also return the corridor used to find it.
+CvPlot* CvAIOperation::ComputeTargetPlotForThisTurn(CvArmyAI* pArmy, std::vector<CvPlot*>* pCorridor) const
+{
 	CvPlot* pRtnValue = NULL;
 	CvPlot* pNextWaypoint = NULL;
 
@@ -975,7 +999,8 @@ CvPlot* CvAIOperation::ComputeTargetPlotForThisTurn(CvArmyAI* pArmy) const
 		}
 
 		//get where we want to be next. always put the carrot a little bit further out
-		pRtnValue = GetPlotXInStepPath(pCurrent, pNextWaypoint, pArmy->GetMovementRate() + 1, true);
+		// Vox Deorum: keep the corridor from this search when preparing March.
+		pRtnValue = GetPlotXInStepPath(pCurrent, pNextWaypoint, pArmy->GetMovementRate() + 1, true, pCorridor);
 		if (!pRtnValue)
 		{
 			// Can't plot a path, probably due to change of control of hexes.  Will probably abort the operation
@@ -986,6 +1011,15 @@ CvPlot* CvAIOperation::ComputeTargetPlotForThisTurn(CvArmyAI* pArmy) const
 	}
 
 	return pRtnValue;
+}
+
+// Vox Deorum: checks whether a combat army's advance would take it too close to a different enemy's city.
+bool CvAIOperation::IsWaypointTooDangerous(const CvPlot* pWaypoint) const
+{
+	if (GetEnemy() == NO_PLAYER || GC.getGame().GetClosestCityDistanceInPlots(pWaypoint) >= 3)
+		return false;
+	const PlayerTypes eCityOwner = GC.getGame().GetClosestCityOwnerByPlots(pWaypoint);
+	return eCityOwner != GetEnemy() && GET_PLAYER(GetOwner()).IsAtWarWith(eCityOwner);
 }
 
 bool CvAIOperation::BuyFinalUnit()
@@ -1060,6 +1094,12 @@ void CvAIOperation::Write(FDataStream& kStream) const
 {
 	CvStreamSaveVisitor serialVisitor(kStream);
 	Serialize(*this, serialVisitor);
+}
+
+// Vox Deorum: use the same next route tile for Fight eligibility and March yield.
+CvPlot* CvAIOperation::GetMarchRouteStep(CvPlot* pFrom, CvPlot* pWaypoint) const
+{
+	return pFrom && pWaypoint && pFrom != pWaypoint ? GetPlotXInStepPath(pFrom, pWaypoint, 1, true) : NULL;
 }
 
 FDataStream& operator>>(FDataStream& stream, CvAIOperation& aiOperation)

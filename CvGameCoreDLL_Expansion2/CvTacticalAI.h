@@ -11,6 +11,8 @@
 #define CIV5_TACTICAL_AI_H
 
 #include "CvAStar.h"
+// Vox Deorum: the native operation state and move preparation used by enrolled armies.
+#include "CvAIOperation.h"
 // Vox Deorum: share the stable purpose identifiers used by tactical capture.
 #include "VoxDeorumRL/schema/SearchIntent.h"
 // Vox Deorum: the air search's interceptor state and helpers (VOX_TACTICAL_AIR_SEARCH)
@@ -323,6 +325,25 @@ struct CvFocusArea
 FDataStream& operator<<(FDataStream&, const CvFocusArea&);
 FDataStream& operator>>(FDataStream&, CvFocusArea&);
 
+// Vox Deorum: a combat army prepared at the native army pass and held until the loop finishes.
+struct SOperationalPreparedArmy
+{
+	PlayerTypes eOwner;
+	int iOperation;
+	int iArmy;
+	AIOperationState eStage;
+	const CvPlot* pObjective;
+	// Vox Deorum: keep the muster and deployment goal with the waypoint that was prepared for them.
+	const CvPlot* pMuster;
+	const CvPlot* pGoal;
+	CvPlot* pWaypoint;
+	SAIOperationMoveStart start;
+	// Vox Deorum: the prepared March corridor, from the formation center to the goal.
+	vector<CvPlot*> vMarchCorridor;
+};
+
+struct STacticalMovementGate;
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //  CLASS:      CvTacticalAI
 //!  \brief		A player's AI to control units as they fight out battles
@@ -387,6 +408,8 @@ private:
 
 	// Internal turn update routines - commandeered unit processing
 	void FindTacticalTargets();
+	// Vox Deorum: classifies enemy city and unit targets for the opening scan and live discovery.
+	bool ClassifyEnemyTarget(const CvPlot& kPlot, CvTacticalTarget& target, bool bObservedOnly, bool* pHasDefender = NULL) const;
 	void PrioritizeNavalTargetsAndAddToMainList();
 	void ProcessDominanceZones();
 	void AssignGlobalHighPrioMoves();
@@ -399,6 +422,8 @@ private:
 	void PlotGrabGoodyMoves();
 	void PlotMovesToSafety(bool bCombatUnits);
 	void PlotOperationalArmyMoves();
+	// Vox Deorum: reports a native invocation when the operation has finished its work for this turn.
+	void ReportOperationResult(CvAIOperation& kOperation, bool bAlreadyMoved, bool bProgressed);
 	void PlotPillageMoves(AITacticalTargetType eTarget, bool bImmediate);
 	void PlotPlunderTradeUnitMoves(DomainTypes eDomain);
 	void PlotBlockadeMoves();
@@ -456,7 +481,8 @@ private:
 	void ExecutePlunderTradeUnit(CvPlot* pTargetPlot);
 	void ExecuteParadropPillage(CvPlot* pTargetPlot);
 	void ExecuteLandingOperation(CvPlot* pTargetPlot);
-	bool ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot);
+	// Vox Deorum: the shared spotter can carry an ArmyMarch formation's movement restrictions.
+	bool ExecuteSpotterMove(const vector<CvUnit*>& vUnits, CvPlot* pTargetPlot, const STacticalMovementGate* pGate = NULL);
 	bool ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl, SearchIntent eSearchIntent);
 	bool ExecuteAttackWithCities(CvUnit* pDefender);
 	bool PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget, SearchIntent eSearchIntent);
@@ -466,7 +492,8 @@ private:
 	void ExecuteMovesToSafestPlot(CvUnit* pUnit);
 	void ExecuteHeals(bool bFirstPass);
 	void ExecuteBarbarianRoaming();
-	int ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetProcessed = true, int iFlags = 0);
+	int ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetProcessed = true, int iFlags = 0,
+		const STacticalMovementGate* pGate = NULL);
 	bool ExecuteMoveOfBlockingUnit(CvUnit* pBlockingUnit, CvPlot* pPreferredDirection=NULL);
 	void ExecuteNavalBlockadeMove(CvPlot* pTarget);
 	void ExecuteAirPatrolMoves();
@@ -478,10 +505,10 @@ private:
 	// Internal low-level utility routines
 	CvPlot* GetBestRepositionPlot(CvUnit* pUnit, CvPlot* plotTarget, int iAcceptableDanger);
 	CvUnit* FindUnitForThisMove(AITacticalMove eMove, CvPlot* pTargetPlot, int iNumTurnsAway=0);
-	bool FindUnitsWithinStrikingDistance(CvPlot *pTargetPlot);
+	bool FindUnitsWithinStrikingDistance(CvPlot *pTargetPlot, const vector<int>* pExtraUnits = NULL); // Vox Deorum: checked formation candidates
 	bool FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int iMinHitpoints, int iMaxHitpoints, DomainTypes eDomain, bool bMustHaveMovesLeft, bool bAllowEmbarkation, int iMaxNumUnits=3, bool bPlunderTradeRoute=false);
 	bool FindParatroopersWithinStrikingDistance(CvPlot *pTargetPlot, bool bCheckDanger);
-	bool FindEmbarkedUnitsAroundTarget(CvPlot *pTargetPlot, int iMaxDistance);
+	bool FindEmbarkedUnitsAroundTarget(CvPlot *pTargetPlot, int iMaxDistance, const vector<int>* pExtraUnits = NULL); // Vox Deorum: include eligible army members.
 	bool FindCitiesWithinStrikingDistance(CvPlot* pTargetPlot);
 	CvPlot* FindAirTargetNearTarget(CvUnit* pUnit, CvPlot* pApproximateTargetPlot);
 
@@ -517,8 +544,10 @@ private:
 
 	// Lists of targets for the turn
 	vector<CvTacticalTarget> m_AllTargets;
-	// Vox Deorum: the scored targets before SortTargetListAndDropUselessTargets, for the operational loop.
-	vector<CvTacticalTarget> m_OperationalTargets;
+	// Vox Deorum: enemy targets and their original identities, before SortTargetListAndDropUselessTargets.
+	vector<pair<CvTacticalTarget, IDInfo> > m_OperationalTargets;
+	// Vox Deorum: per-turn operation work that the command loop still needs to finish.
+	vector<SOperationalPreparedArmy> m_PreparedArmies;
 	vector<CvTacticalTarget*> m_ZoneTargets; //pointers only!
 	vector<CvTacticalTarget> m_NavalBlockadePoints;
 
@@ -686,6 +715,43 @@ protected:
 	short iDamageDelta;
 	short iOldPlotScore;
 	short iRankBonus; // Vox Deorum: see RankScore()
+};
+
+// Vox Deorum: optional legal destinations for the units a command needs to keep together.
+typedef map<int, set<int> > TacticalUnitStops;
+
+// Vox Deorum: exposes the command's stops to native search, including search through capture.
+struct STacticalStopScope
+{
+	// Vox Deorum: installs and restores the stops for one synchronous search.
+	explicit STacticalStopScope(const TacticalUnitStops& stops);
+	~STacticalStopScope();
+
+	// Vox Deorum: returns whether the search may place this unit here.
+	static bool Allows(int iUnit, int iPlot);
+
+	// Vox Deorum: ships and embarked recruits may share a legal starting tile.
+	static bool UsesEmbarked();
+
+	const TacticalUnitStops* pPrevious;
+};
+
+// Vox Deorum: keeps command rules outside the tactical replay and applies them at action boundaries.
+struct STacticalMovementGate
+{
+	bool bUseCheckedMoveFlags; // Vox Deorum: use the checked path flags in place of tactical path defaults.
+
+	// Vox Deorum: selects whether a command replays its checked flags.
+	explicit STacticalMovementGate(bool bUseChecked) : bUseCheckedMoveFlags(bUseChecked) {}
+	// Vox Deorum: allows destruction through the movement interface.
+	virtual ~STacticalMovementGate() {}
+
+	// Vox Deorum: checks the new stop before an order is committed.
+	virtual bool Allows(const CvUnit& unit, const CvPlot& plot, bool bEndpoint = true) const = 0;
+	// Vox Deorum: returns the corridor limits for this participant.
+	virtual int MoveFlags(const CvUnit& unit) const = 0;
+	// Vox Deorum: asks whether the command must yield after an indivisible action.
+	virtual bool AfterAction() const = 0;
 };
 
 // Vox Deorum: one accepted plan a teacher search reports beside its winner. The rank is one-based
@@ -2159,7 +2225,7 @@ namespace TacticalAIHelpers
 	// Vox Deorum: refreshes the next trade steps the search's turn-end score reads when the trade connections changed
 	void UpdateTradeSteps();
 	// Vox Deorum: pnRowsRun, when given, receives how many leading rows ran before the stream stopped (the operational loop)
-	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun = NULL);
+	bool ExecuteUnitAssignments(PlayerTypes ePlayer, const vector<STacticalAssignment>& vAssignments, size_t* pnRowsRun = NULL, const STacticalMovementGate* pGate = NULL);
 	bool AddSupportMoves(CvTacticalPosition& positionAfterCombatMoves, const vector<const CvUnit*>& ourUnits, bool bEarlyExit = false);
 }
 

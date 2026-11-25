@@ -1,5 +1,5 @@
 /*	-------------------------------------------------------------------------------------------------------
-	Vox Deorum: the operational loop's own constants. See CvTacticalOperationalWeights.h. Edit a column and
+	The operational loop's own constants. See CvTacticalOperationalWeights.h. Edit a column and
 	rebuild to change what the game runs; the simulator can override any row by name.
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
@@ -43,6 +43,9 @@ const OperationalConstant OPERATIONAL_CONSTANT[] =
 	{ "reinforce.strengthRatio", 1.0 },
 	{ "readiness.maxFailures",  3.0 },
 	{ "withdraw.enabled",       1.0 },
+	// Opt in to army enrollment and target discovery.
+	{ "march.enabled",          0.0 },
+	{ "march.readyUnits",       2.0 },
 	{ "exposure.split",         1.0 },
 };
 typedef char OperationalConstantRowsMatchConstants[(sizeof(OPERATIONAL_CONSTANT) / sizeof(OPERATIONAL_CONSTANT[0]) == NUM_OPERATIONAL_CONSTANTS) ? 1 : -1];

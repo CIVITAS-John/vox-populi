@@ -18,6 +18,7 @@
 
 class CvArmyAI;
 struct CvAttackTarget;
+struct SPath; // Vox Deorum: the native army step path.
 
 FDataStream& operator<<(FDataStream&, const ArmyType&);
 FDataStream& operator>>(FDataStream&, ArmyType&);
@@ -135,6 +136,14 @@ FDataStream& operator>>(FDataStream&, OperationSlot&);
 //!  - Based class: behavior is inherited from this class for each individual maneuver
 //!  - AI operations are launched by some player strategies
 //!  - Each operations manages one or more armies (multiple armies in an operation not yet tested)
+// Vox Deorum: the starting center and spread for the operation's movement progress diagnostic.
+struct SAIOperationMoveStart
+{
+	CvPlot* pCenter;
+	float fVarX;
+	float fVarY;
+};
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 class CvAIOperation
 {
@@ -201,6 +210,8 @@ public:
 	virtual void Reset();
 	virtual bool IsOffensive() const;
 	virtual bool IsNeverEnding() const { return false; }
+	// Vox Deorum: the next tile of the native corridor toward the prepared waypoint.
+	CvPlot* GetMarchRouteStep(CvPlot* pFrom, CvPlot* pWaypoint) const;
 
 	virtual int GetGatherTolerance(CvArmyAI* pArmy, CvPlot* pPlot) const;
 	virtual bool ShouldAbort();
@@ -208,6 +219,15 @@ public:
 	virtual void Kill();
 	virtual bool DoTurn();
 	virtual bool Move();
+
+	// Vox Deorum: prepare the native army move and retain its starting formation.
+	CvArmyAI* PrepareMove(SAIOperationMoveStart& start);
+	// Vox Deorum: check the mission after movement and stamp a successful move pass.
+	bool FinishMove(CvArmyAI* pArmy, const SAIOperationMoveStart& start);
+	// Vox Deorum: apply the stage transition after a successful move pass.
+	void FinishTurn();
+	// Vox Deorum: checks whether a waypoint approaches a different enemy's city.
+	bool IsWaypointTooDangerous(const CvPlot* pWaypoint) const;
 
 	virtual int  PercentFromMusterPointToTarget() const;
 
@@ -222,6 +242,8 @@ public:
 	virtual int GrabUnitsFromTheReserves(CvPlot* pMusterPlot, CvPlot* pTargetPlot, CvArmyAI* pArmy = NULL);
 	virtual void UnitWasRemoved(int iArmyID, int iSlotID);
 	virtual CvPlot* ComputeTargetPlotForThisTurn(CvArmyAI* pArmy) const;
+	// Vox Deorum: keeps the step path used to select a March waypoint.
+	CvPlot* ComputeTargetPlotForThisTurn(CvArmyAI* pArmy, std::vector<CvPlot*>* pCorridor) const;
 
 	template<typename AIOperation, typename Visitor>
 	static void Serialize(AIOperation& aiOperation, Visitor& visitor);
@@ -238,8 +260,13 @@ public:
 protected:
 	static CvString GetLogFileName(CvString& playerName);
 
-	CvPlot* GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget, int iStep, bool bForward) const;
+	// Vox Deorum: finds a route with the operation's native path rules.
+	SPath GetStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget) const;
+	// Vox Deorum: measures routes with the operation's native path rules.
 	int GetStepDistanceBetweenPlots(CvPlot* pCurrentPosition, CvPlot* pTarget) const;
+	// Vox Deorum: selects a step and optionally keeps its corridor for March.
+	CvPlot* GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget, int iStep, bool bForward,
+		std::vector<CvPlot*>* pCorridor = NULL) const;
 
 	virtual CvArmyAI* AddArmy(MultiunitFormationTypes eFormation);
 	virtual bool SetUpArmy(CvArmyAI* pArmyAI, CvPlot* pMusterPlot, CvPlot* pTargetPlot, CvPlot* pDeployPlot = NULL);
