@@ -44,8 +44,7 @@ const OperationalConstant OPERATIONAL_CONSTANT[] =
 	{ "reinforce.strengthRatio", 1.0 },
 	{ "readiness.maxFailures",  3.0 },
 	{ "withdraw.enabled",       1.0 },
-	// Opt in to army enrollment and target discovery.
-	{ "march.enabled",          0.0 },
+	{ "march.enabled",          1.0 },
 	{ "march.readyUnits",       2.0 },
 	{ "exposure.split",         1.0 },
 	{ "camp.nearPlots",         5.0 },
