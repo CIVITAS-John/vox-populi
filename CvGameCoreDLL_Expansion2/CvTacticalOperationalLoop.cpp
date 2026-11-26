@@ -1105,6 +1105,8 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				aeStateBefore[iSlot] = OperationalOfferState(field, eSlot);
 				afEstimateBefore[iSlot] = OperationalOfferEstimate(field, eSlot);
 			}
+			const double fRealizedReinforceBefore = field.reinforce.fRealizedEstimate;
+			const double fShareWithHelpBefore = field.reinforce.fShareWithHelp;
 			const unsigned long long readinessBefore = turn.performance.readinessNs;
 			vector<SOperationalMarch> withdraw;
 			bool bFormationWithdraw = false;
@@ -1195,13 +1197,13 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 					}
 				}
 			}
-			// A Withdraw reads the Reinforce share, so a check that changed the Reinforce re-estimates it
-			// before the next selection. The update event below records the change.
+			// Withdraw reads the share with help from a Reinforce that scores on realized stake, so refresh it when either changes.
 			if ((eBestSlot == OPERATIONAL_SLOT_FIGHT || eBestSlot == OPERATIONAL_SLOT_REINFORCE) &&
 				OperationalSupportsSlot(field.eCenter, OPERATIONAL_SLOT_WITHDRAW) &&
 				(field.eWithdraw == OPERATIONAL_OFFER_READY || field.eWithdraw == OPERATIONAL_OFFER_INACTIVE) &&
 				(field.eReinforce != aeStateBefore[OPERATIONAL_SLOT_REINFORCE] ||
-					field.fReinforceEstimate != afEstimateBefore[OPERATIONAL_SLOT_REINFORCE]))
+					field.reinforce.fRealizedEstimate != fRealizedReinforceBefore ||
+					field.reinforce.fShareWithHelp != fShareWithHelpBefore))
 			{
 				CvPlot* pWithdrawTarget = GC.getMap().plotByIndex(field.iPlotIndex);
 				if (pWithdrawTarget)
@@ -1265,12 +1267,13 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				{
 					const SOperationalReinforce& reinforce = field.reinforce;
 					kTactical.LogTacticalMessage(CvString::format(
-						"Operational step %d check of Reinforce %d at plot %d, estimate %.6f: %s; theater %.6f, stake %.6f, L %.0f, T %.0f, "
+						"Operational step %d check of Reinforce %d at plot %d, estimate %.6f: %s; theater %.6f, realized stake %.6f, L %.0f, T %.0f, "
 						"need %.0f, selected strength %.0f, help %.0f, share %.6f, share with help %.6f, swing %.6f, role unit %d, role help "
-						"%.0f, missing role %d",
-						iCommands, iBest, field.iPlotIndex, field.fReinforceEstimate, aszResults[eResult], field.fTheater, field.stake.fStake,
+						"%.0f, missing role %d; total stake %.6f, potential stake %.6f, turns to contact %.6f, potential weight %.6f",
+						iCommands, iBest, field.iPlotIndex, field.fReinforceEstimate, aszResults[eResult], field.fTheater, field.stake.fRealized,
 						reinforce.fLocal, reinforce.fEnemy, reinforce.fNeed, reinforce.fSelectedStrength, reinforce.fHelp, reinforce.fShare,
-						reinforce.fShareWithHelp, reinforce.fSwing, reinforce.iRoleUnit, reinforce.fRoleHelp, reinforce.bMissingRole ? 1 : 0));
+						reinforce.fShareWithHelp, reinforce.fSwing, reinforce.iRoleUnit, reinforce.fRoleHelp, reinforce.bMissingRole ? 1 : 0,
+						field.stake.fStake, field.stake.fPotential, reinforce.fTurnsToContact, reinforce.fPotentialWeight));
 				}
 				else if (eBestSlot == OPERATIONAL_SLOT_WITHDRAW)
 					kTactical.LogTacticalMessage(CvString::format(
@@ -1310,7 +1313,12 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			command.iFailuresBefore = eBestSlot == OPERATIONAL_SLOT_WITHDRAW ? field.iWithdrawFailures
 				: eBestSlot == OPERATIONAL_SLOT_REINFORCE ? 0 : field.iFailures;
 			command.fTheater = field.fTheater;
-			command.fSwing = eBestSlot == OPERATIONAL_SLOT_REINFORCE && !bArmyMarch && !bCampClaim ? field.reinforce.fSwing : 1.0;
+			if (eBestSlot == OPERATIONAL_SLOT_REINFORCE && !bArmyMarch && !bCampClaim)
+			{
+				command.fSwing = field.reinforce.fSwing;
+				command.fTurnsToContact = field.reinforce.fTurnsToContact;
+				command.fPotentialWeight = field.reinforce.fPotentialWeight;
+			}
 			command.stake = field.stake;
 			// The field keeps the checked exposure, so a Withdraw records the inputs its reduced estimate used.
 			if (eBestSlot == OPERATIONAL_SLOT_WITHDRAW)
@@ -3146,7 +3154,7 @@ bool CvTacticalOperationalLoop::EstimateBattlefield(CvTacticalAI& kTactical, con
 		{
 			if (!IsKnownUnownedCamp(*pPlot, GET_PLAYER(turn.ePlayer).getTeam()))
 				return false;
-			field.stake.fStake = field.fCampValue;
+			field.stake.fStake = field.stake.fRealized = field.fCampValue;
 		}
 		else
 		{
@@ -3196,11 +3204,13 @@ bool CvTacticalOperationalLoop::EstimateCampClaim(CvTacticalAI& kTactical, CvPlo
 		field.iCampClaimant = pUnit ? pUnit->GetID() : -1;
 	}
 	const double fHaste = kPlayer.IsAtWarAnyMajor() ? 1.0 : 0.5;
-	field.stake.fStake = pUnit ? field.fCampValue / (1.0 + fHaste * field.iCampTurns) : 0.0;
+	field.stake.fStake = field.fCampValue;
+	field.stake.fRealized = pUnit ? field.fCampValue / (1.0 + fHaste * field.iCampTurns) : 0.0;
+	field.stake.fPotential = field.stake.fStake - field.stake.fRealized;
 	if (field.iCampTurns == 0)
-		field.fEstimate = field.fTheater * field.stake.fStake;
+		field.fEstimate = field.fTheater * field.stake.fRealized;
 	else
-		field.fReinforceEstimate = field.fTheater * field.stake.fStake;
+		field.fReinforceEstimate = field.fTheater * field.stake.fRealized;
 	return true;
 }
 
@@ -3461,8 +3471,8 @@ static vector<SOperationalAirExchange> PlanAirExchanges(PlayerTypes ePlayer, con
 	return vExchanges;
 }
 
-// Values what local attackers can destroy and what the fight can protect, in typical units. The exposure
-// term counts the part our strength can protect, s, unless the exposure split is off.
+// Values the whole battlefield and what local attackers can realize, in typical units. The realized exposure
+// counts the part our strength can protect, s, unless the exposure split is off.
 bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOperationalTurn& turn, SOperationalEstimateCache& cache, const SOperationalLocalSet& local,
 	const CvCity* pZoneCity, SOperationalBattlefield& field, bool bSample)
 {
@@ -3489,16 +3499,23 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		stake.fDamageShare = DamageShare(ScoredDamage(iDamage, iRejected), pUnit->GetCurrHitPoints());
 		OperationalThreatMap::const_iterator threat = turn.unitThreats.find(make_pair(static_cast<int>(field.eOwner), field.iTargetID));
 		const double fExposure = threat != turn.unitThreats.end() ? threat->second.fExposure : 0.0;
+		double fFullDestruction = 0.0, fFullExposure = 0.0, fFullRelief = 0.0;
 		if (fUnitScale > 0.0)
 		{
 			const double fDestroyed = DestroyedUnitValue(*pUnit, iDamage, iRejected);
+			const double fLiving = DestroyedUnitValue(*pUnit, pUnit->GetCurrHitPoints(), 0);
 			stake.afValue[0] = fDestroyed / fUnitScale;
+			stake.afFull[0] = fLiving / fUnitScale;
 			stake.fDestruction = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fDestroyed / fUnitScale;
-			stake.afValue[1] = fExposure / fUnitScale;
+			fFullDestruction = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fLiving / fUnitScale;
+			stake.afFull[1] = stake.afValue[1] = fExposure / fUnitScale;
 			stake.fExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale * fSplit;
+			fFullExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale;
 		}
 		stake.afValue[2] = stake.fDamageShare * field.fGround;
+		stake.afFull[2] = field.fGround;
 		stake.fGround = stake.fDamageShare * afWeight[OPERATIONAL_WEIGHT_HOLD_GROUND] * field.fGround;
+		const double fFullGround = afWeight[OPERATIONAL_WEIGHT_HOLD_GROUND] * field.fGround;
 		if (pZoneCity && pZoneCity->getOwner() == turn.ePlayer)
 		{
 			const SOperationalCityDanger& danger = CachedCityDanger(turn, *pZoneCity);
@@ -3514,12 +3531,18 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 			// City danger is the sum of these attack contributions.
 			stake.fReliefShare = iDanger > 0 ? static_cast<double>(iTargetDamage) / iDanger : 0.0;
 			stake.afValue[3] = stake.fDamageShare * turn.fCityUnit * stake.fFallShare * stake.fReliefShare;
+			stake.afFull[3] = turn.fCityUnit * stake.fFallShare * stake.fReliefShare;
 			stake.fRelief = stake.fDamageShare * afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * turn.fCityUnit *
 				stake.fFallShare * stake.fReliefShare;
+			fFullRelief = afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * turn.fCityUnit * stake.fFallShare * stake.fReliefShare;
 		}
-		stake.fStake = stake.fDestruction + stake.fExposure + stake.fGround + stake.fRelief;
+		stake.fRealized = stake.fDestruction + stake.fExposure + stake.fGround + stake.fRelief;
+		stake.fStake = fFullDestruction + fFullExposure + fFullGround + fFullRelief;
 		if (field.fCampValue >= 0.0)
-			stake.fStake += stake.fDamageShare * field.fCampValue;
+		{
+			stake.fRealized += stake.fDamageShare * field.fCampValue;
+			stake.fStake += field.fCampValue;
+		}
 	}
 	else if (field.eCenter == OPERATIONAL_CENTER_OUR_CITY)
 	{
@@ -3536,13 +3559,18 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		field.bHasEndangered = !vEndangered.empty();
 
 		stake.afValue[4] = turn.fCityUnit * stake.fFallShare;
+		stake.afFull[4] = turn.fCityUnit;
 		stake.fCityProgress = afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * turn.fCityUnit * stake.fFallShare;
+		const double fFullProgress = afWeight[OPERATIONAL_WEIGHT_HOLD_CITY] * turn.fCityUnit;
+		double fFullExposure = 0.0;
 		if (fUnitScale > 0.0)
 		{
-			stake.afValue[1] = fExposure / fUnitScale;
+			stake.afFull[1] = stake.afValue[1] = fExposure / fUnitScale;
 			stake.fExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale * fSplit;
+			fFullExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale;
 		}
-		stake.fStake = stake.fCityProgress + stake.fExposure;
+		stake.fRealized = stake.fCityProgress + stake.fExposure;
+		stake.fStake = fFullProgress + fFullExposure;
 	}
 	else
 	{
@@ -3601,7 +3629,9 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 		}
 		stake.fFallShare = AttackFallShare(damage.iCityDamage, damage.iHeal, damage.iRemaining, bCanCapture, damage.iRemoved);
 		stake.afValue[4] = turn.fCityUnit * stake.fFallShare;
+		stake.afFull[4] = turn.fCityUnit;
 		stake.fCityProgress = afWeight[OPERATIONAL_WEIGHT_OCCUPATION] * turn.fCityUnit * stake.fFallShare;
+		const double fFullProgress = afWeight[OPERATIONAL_WEIGHT_OCCUPATION] * turn.fCityUnit;
 
 		CvUnit* pGarrison = pCity->GetGarrisonedUnit();
 		double fExposure = 0.0;
@@ -3614,22 +3644,29 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 			if (threat != turn.unitThreats.end())
 				fExposure += threat->second.fExposure;
 		}
+		double fFullGarrison = 0.0, fFullExposure = 0.0;
 		if (fUnitScale > 0.0)
 		{
 			if (damage.pGarrison && damage.iGarrisonHealth > 0)
 			{
 				const double fDestroyed = DestroyedUnitValue(*damage.pGarrison,
 					stake.fFallShare >= 1.0 ? damage.iGarrisonHealth : damage.iGarrisonDamage, damage.iRemovedGarrison);
+				const double fLiving = stake.fFallShare >= 1.0 ? fDestroyed : DestroyedUnitValue(*damage.pGarrison, damage.iGarrisonHealth, 0);
 				stake.afValue[5] = fDestroyed / fUnitScale;
+				stake.afFull[5] = fLiving / fUnitScale;
 				stake.fGarrison = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fDestroyed / fUnitScale;
+				fFullGarrison = afWeight[OPERATIONAL_WEIGHT_ATTRITION] * fLiving / fUnitScale;
 			}
-			stake.afValue[1] = fExposure / fUnitScale;
+			stake.afFull[1] = stake.afValue[1] = fExposure / fUnitScale;
 			stake.fExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale * fSplit;
+			fFullExposure = afWeight[OPERATIONAL_WEIGHT_RISK] * fExposure / fUnitScale;
 		}
-		stake.fStake = stake.fCityProgress + stake.fGarrison + stake.fExposure;
+		stake.fRealized = stake.fCityProgress + stake.fGarrison + stake.fExposure;
+		stake.fStake = fFullProgress + fFullGarrison + fFullExposure;
 	}
+	stake.fPotential = stake.fStake - stake.fRealized;
 	field.stake = stake;
-	field.fEstimate = field.fTheater * stake.fStake;
+	field.fEstimate = field.fTheater * stake.fRealized;
 	return true;
 }
 
@@ -3653,14 +3690,34 @@ static bool TallyLocalOutsideCandidates(const SOperationalLocalSet& local, const
 	return bCapturer;
 }
 
-// Prices the swing from incoming strength, using camp value as a floor for the fight priority.
-static double ScoreReinforce(const SOperationalBattlefield& field)
+// Uses the incoming force's weighted join time at enemy targets and one turn at our city. Fogged camps have no potential.
+static double ReinforceTurnsToContact(eOperationalCenter eCenter, const SOperationalReinforce& reinforce)
 {
-	const double fBase = field.fCampValue >= 0.0 ? std::max(field.fEstimate, field.fTheater * field.fCampValue) : field.fEstimate;
-	return fBase * field.reinforce.fSwing;
+	if (eCenter == OPERATIONAL_CENTER_CAMP)
+		return 0.0;
+	return eCenter == OPERATIONAL_CENTER_OUR_CITY || reinforce.fHelp <= 0.0 ? 1.0 :
+		std::max(1.0, reinforce.fSelectedStrength / reinforce.fHelp);
 }
 
-// The fight supplies theater and stake; incoming strength earns only the share of its outcome it swings.
+// Prices the swing from incoming strength on realized and discounted potential stake, with camp value as a floor.
+static double ScoreReinforce(const SOperationalTurn& turn, SOperationalBattlefield& field)
+{
+	SOperationalReinforce& reinforce = field.reinforce;
+	const double fCampBase = field.fCampValue >= 0.0 ? field.fTheater * field.fCampValue : 0.0;
+	// Keep the original score for Withdraw and for offers that get no credit for potential stake.
+	const double fRealizedBase = field.fCampValue >= 0.0 ? std::max(field.fEstimate, fCampBase) : field.fEstimate;
+	reinforce.fRealizedEstimate = fRealizedBase * reinforce.fSwing;
+	reinforce.fTurnsToContact = ReinforceTurnsToContact(field.eCenter, reinforce);
+	reinforce.fPotentialWeight = reinforce.fTurnsToContact > 0.0 ?
+		PotentialWeight(turn.weights.afConstant[OPERATIONAL_CONSTANT_POTENTIAL_WEIGHT],
+			turn.weights.afConstant[OPERATIONAL_CONSTANT_POTENTIAL_TURN_DISCOUNT], reinforce.fTurnsToContact) : 0.0;
+	if (reinforce.fPotentialWeight == 0.0 || field.stake.fPotential == 0.0)
+		return reinforce.fRealizedEstimate;
+	const double fBase = field.fTheater * (field.stake.fRealized + reinforce.fPotentialWeight * field.stake.fPotential);
+	return (field.fCampValue >= 0.0 ? std::max(fBase, fCampBase) : fBase) * reinforce.fSwing;
+}
+
+// Estimates how much realized and potential stake the selected help can swing.
 void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const SOperationalTurn& turn, const SOperationalLocalSet& local,
 	SOperationalBattlefield& field)
 {
@@ -3668,6 +3725,9 @@ void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const
 	field.fReinforceEstimate = 0.0;
 	reinforce.fShareWithHelp = reinforce.fShare;
 	reinforce.fSwing = 0.0;
+	reinforce.fRealizedEstimate = 0.0;
+	reinforce.fTurnsToContact = 0.0;
+	reinforce.fPotentialWeight = 0.0;
 
 	// Enemy-only gates close recruitment; selection still clears the old offer and records need.
 	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
@@ -3701,7 +3761,7 @@ void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const
 	if (!bOurCity && reinforce.fSelectedStrength < reinforce.fNeed)
 		return;
 
-	field.fReinforceEstimate = ScoreReinforce(field);
+	field.fReinforceEstimate = ScoreReinforce(turn, field);
 }
 
 // Selects the exposure layout before omitted recruits or projected stops change it.
@@ -3895,11 +3955,11 @@ double CvTacticalOperationalLoop::ExposureSaved(const SOperationalTurn& turn, co
 	return fSaved;
 }
 
-// Reads the fight share and any larger share from a currently ready Reinforce.
+// Reads the fight share and any larger share from a Reinforce that scores on realized stake.
 static double ExposureShareWithHelp(const SOperationalBattlefield& field)
 {
 	const bool bReinforceReady = (field.eReinforce == OPERATIONAL_OFFER_READY || field.eReinforce == OPERATIONAL_OFFER_INACTIVE) &&
-		field.fReinforceEstimate > 0.0 && field.reinforce.fEnemy > 0.0;
+		field.reinforce.fRealizedEstimate > 0.0 && field.reinforce.fEnemy > 0.0;
 	return bReinforceReady ? std::max(field.fExposureShare, field.reinforce.fShareWithHelp) : field.fExposureShare;
 }
 
@@ -3945,7 +4005,7 @@ void CvTacticalOperationalLoop::EstimateWithdraw(CvTacticalAI& kTactical, const 
 		bFormationWithdraw |= vRecruits[i]->getArmyID() != -1;
 	}
 	field.fWithdrawExposure = std::max(0.0, ExposureSaved(turn, recruits, false, bFormationWithdraw));
-	// A ready Reinforce supplies s+ from the larger of the fight's share and the Reinforce's projected
+	// A Reinforce that scores on realized stake supplies s+ from the larger of the fight's share and the projected
 	// share, so a released pool that lowers the projection cannot raise the Withdraw priority.
 	field.fWithdrawShare = ExposureShareWithHelp(field);
 	field.fWithdrawEstimate = WithdrawPriority(turn, field, field.fWithdrawExposure, field.fWithdrawShare);
@@ -4462,10 +4522,10 @@ eOperationalCheckResult CvTacticalOperationalLoop::CheckForecastReadiness(CvTact
 	forecast.bChecked = true;
 	if (field.fEstimate < fBefore)
 	{
-		// Retain reinforcement admission gates while immediately correcting its inherited fight score.
-		if (field.fReinforceEstimate > 0.0)
+		// Keep the selection gates while correcting both Reinforce scores after the fight estimate changes.
+		if (field.fReinforceEstimate > 0.0 || field.reinforce.fRealizedEstimate > 0.0)
 		{
-			field.fReinforceEstimate = ScoreReinforce(field);
+			field.fReinforceEstimate = ScoreReinforce(turn, field);
 			if (field.fReinforceEstimate <= 0.0 && field.eReinforce == OPERATIONAL_OFFER_READY)
 				field.eReinforce = OPERATIONAL_OFFER_INACTIVE;
 		}
@@ -6084,7 +6144,7 @@ int CvTacticalOperationalLoop::NativeCommandChoice(const SOperationalChoiceReque
 }
 
 // Recomputes only the chosen group's contribution; the checked offer keeps its execution priority.
-void CvTacticalOperationalLoop::AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, bool bNeedCapturer,
+void CvTacticalOperationalLoop::AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, eOperationalCenter eCenter, bool bNeedCapturer,
 	const vector<int>& vAdmitted, double fSteepness, SOperationalReinforce& out)
 {
 	out.vSelected = vAdmitted;
@@ -6112,6 +6172,7 @@ void CvTacticalOperationalLoop::AdmittedReinforcement(const vector<SOperationalC
 	out.bMissingRole = !bHasCapturer;
 	out.fShareWithHelp = StrengthShare(out.fLocal + out.fHelp, out.fEnemy, fSteepness);
 	out.fSwing = StrengthSwing(out.fShare, out.fShareWithHelp);
+	out.fTurnsToContact = ReinforceTurnsToContact(eCenter, out);
 }
 
 // Admission is resolved once, before spotting, air, search or marching can spend a recruit.
@@ -6233,7 +6294,7 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 			GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, false);
 			const bool bLocalCapturer = field.bReleaseLocal && !bPermittedMenu
 				? TallyLocalOutsideCandidates(local, request.candidates, NULL) : local.bCapturer;
-			AdmittedReinforcement(request.candidates, field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !bLocalCapturer,
+			AdmittedReinforcement(request.candidates, field.eCenter, field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !bLocalCapturer,
 				decision.vEffective, turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_STEEPNESS], decision.effectiveReinforce);
 		}
 	}
@@ -7312,7 +7373,7 @@ int OperationalStakeWeight(int iTerm, eOperationalKind kind)
 	return weights[iTerm];
 }
 
-// Compares every serialized scalar before emitting a replacement snapshot row.
+// Compares the offer's scalar inputs before emitting a replacement snapshot row.
 bool OperationalSnapshotEqual(const SOperationalSnapshot& a, const SOperationalSnapshot& b)
 {
 	if (a.iPlotIndex != b.iPlotIndex || a.iRank != b.iRank || a.eState != b.eState || a.fEstimate != b.fEstimate ||
@@ -7324,6 +7385,10 @@ bool OperationalSnapshotEqual(const SOperationalSnapshot& a, const SOperationalS
 		a.aiWithdrawDestination[1] != b.aiWithdrawDestination[1] || a.stake.fExposureShare != b.stake.fExposureShare ||
 		a.theater.fImportance != b.theater.fImportance || a.theater.fPressure != b.theater.fPressure ||
 		a.theater.fContest != b.theater.fContest || a.theater.fDamageLevel != b.theater.fDamageLevel) return false;
+	// Only Reinforce uses the added stake inputs, so their changes do not emit Fight or Withdraw rows.
+	const bool bReinforce = a.eSlot == OPERATIONAL_SLOT_REINFORCE;
+	if (bReinforce && (a.fTurnsToContact != b.fTurnsToContact || a.fPotentialWeight != b.fPotentialWeight ||
+		a.stake.fStake != b.stake.fStake || a.stake.fRealized != b.stake.fRealized || a.stake.fPotential != b.stake.fPotential)) return false;
 	for (int i = 0; i < NUM_OPERATIONAL_STAKE_TERMS; ++i)
 		if (a.stake.afValue[i] != b.stake.afValue[i]) return false;
 	return a.stake.fDestruction == b.stake.fDestruction && a.stake.fExposure == b.stake.fExposure &&
@@ -7374,6 +7439,8 @@ void CvTacticalOperationalLoop::RecordStep(const SOperationalTurn& turn, SOperat
 				(field.eCenter != OPERATIONAL_CENTER_CAMP || field.bCampFogged);
 			row.fSwing = bReinforce ? (field.fReinforceEstimate > 0.0 ? field.reinforce.fSwing : 0.0) : 1.0;
 			row.fSelectedSwing = bReinforce ? field.reinforce.fSwing : 1.0;
+			row.fTurnsToContact = bReinforce ? field.reinforce.fTurnsToContact : 0.0;
+			row.fPotentialWeight = bReinforce ? field.reinforce.fPotentialWeight : 0.0;
 			if (OperationalSlotKind(field.eCenter, eSlot) == OPERATIONAL_KIND_ARMY_MARCH)
 				row.armyMarch = field.armyMarch;
 			row.stake = field.stake;
@@ -7400,6 +7467,8 @@ void CvTacticalOperationalLoop::RecordStep(const SOperationalTurn& turn, SOperat
 							row.fEstimate = record.commands[c].fEstimate;
 							row.fTheater = record.commands[c].fTheater;
 							row.fSwing = row.fSelectedSwing = record.commands[c].fSwing;
+							row.fTurnsToContact = record.commands[c].fTurnsToContact;
+							row.fPotentialWeight = record.commands[c].fPotentialWeight;
 							row.iPlotIndex = record.commands[c].iPlotIndex;
 							row.stake = record.commands[c].stake;
 							row.armyMarch = record.commands[c].armyMarch;

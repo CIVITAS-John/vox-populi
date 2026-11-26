@@ -24,7 +24,7 @@ enum eOperationalWeight
 };
 
 // The theater floor and exponent, city allowance, Reinforce strength ratio, readiness failure limit, Withdraw switch,
-// exposure split switch, camp distance and the situation offset spans, in row order
+// exposure split switch, camp distance, situation offsets and Reinforce potential settings, in row order
 enum eOperationalConstant
 {
 	OPERATIONAL_CONSTANT_THEATER_FLOOR,
@@ -46,6 +46,9 @@ enum eOperationalConstant
 	OPERATIONAL_CONSTANT_FLAVOR_FOCUS_SPAN,
 	OPERATIONAL_CONSTANT_FLAVOR_RISK_SPAN,
 	OPERATIONAL_CONSTANT_FLAVOR_SOFTENER,
+	// Reinforce counts a share of potential stake, discounted for each further turn to contact.
+	OPERATIONAL_CONSTANT_POTENTIAL_WEIGHT,
+	OPERATIONAL_CONSTANT_POTENTIAL_TURN_DISCOUNT,
 	NUM_OPERATIONAL_CONSTANTS
 };
 

@@ -246,7 +246,7 @@ struct SOperationalExposure
 // The six scalar terms retained by stake records.
 const int NUM_OPERATIONAL_STAKE_TERMS = 6;
 
-// Weighted fight terms in typical units, their sum, and the damage, relief and fall shares behind them.
+// Realized fight terms in typical units, their shares, and the full and potential stake at the battlefield.
 struct SOperationalStake
 {
 	double fDestruction;
@@ -258,17 +258,21 @@ struct SOperationalStake
 	double fDamageShare;   // k_t at a unit target
 	double fReliefShare;   // a_t at a unit target
 	double fFallShare;     // f_att at an enemy city, f_def at ours or the unit target's zone city
-	double fStake;
+	double fStake;         // sum of weighted full terms, including any camp value
+	double fRealized;      // sum of weighted terms at their current shares
+	double fPotential;     // full stake less realized stake
 	// The multiplier applied to the weighted exposure term: s, or 1 with the split off.
 	double fExposureShare;
 	// Unweighted terms retained even when their weight is zero.
 	double afValue[NUM_OPERATIONAL_STAKE_TERMS];
+	// Unweighted terms at full share, in the same order as afValue. Camp value is separate.
+	double afFull[NUM_OPERATIONAL_STAKE_TERMS];
 
 	// Creates an empty stake.
 	SOperationalStake() : fDestruction(0.0), fExposure(0.0), fGround(0.0), fRelief(0.0), fCityProgress(0.0),
-		fGarrison(0.0), fDamageShare(0.0), fReliefShare(0.0), fFallShare(0.0), fStake(0.0), fExposureShare(1.0)
+		fGarrison(0.0), fDamageShare(0.0), fReliefShare(0.0), fFallShare(0.0), fStake(0.0), fRealized(0.0), fPotential(0.0), fExposureShare(1.0)
 	{
-		for (int i = 0; i < NUM_OPERATIONAL_STAKE_TERMS; i++) afValue[i] = 0.0;
+		for (int i = 0; i < NUM_OPERATIONAL_STAKE_TERMS; i++) afValue[i] = afFull[i] = 0.0;
 	}
 };
 
@@ -426,6 +430,9 @@ struct SOperationalReinforce
 	double fShare;               // s: our current strength share
 	double fShareWithHelp;       // s+: our strength share with discounted help
 	double fSwing;               // s+ - s
+	double fRealizedEstimate;    // priority without potential stake, for Withdraw's projected share
+	double fTurnsToContact;      // a: turns until the side that can realize the stake arrives
+	double fPotentialWeight;     // phi: weight used to score the potential stake
 	set<pair<int, int> > countedUnits;   // the enemy units counted in T, by (owner, ID)
 	set<pair<int, int> > countedCities;  // the enemy cities counted in T, by (owner, ID)
 	map<int, SOperationalReinforceReach> rejected;
@@ -433,7 +440,8 @@ struct SOperationalReinforce
 
 	// Creates an empty Reinforce.
 	SOperationalReinforce() : fLocal(0.0), fEnemy(0.0), fNeed(0.0), fSelectedStrength(0.0), fHelp(0.0), fRoleHelp(0.0), iRoleUnit(-1),
-		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), bChecked(false) {}
+		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), fRealizedEstimate(0.0), fTurnsToContact(0.0),
+		fPotentialWeight(0.0), bChecked(false) {}
 };
 
 // One checked Withdraw mover, with its destination, first-turn stop and move flags.
@@ -886,6 +894,8 @@ struct SOperationalSnapshot
 	// Names why a closed offer left the queue.
 	const char* szReason;
 	double fEstimate, fTheater, fSwing, fSelectedSwing;
+	// The turns to contact and discounted weight used to price Reinforce, or 0 when not scored.
+	double fTurnsToContact, fPotentialWeight;
 	// The battlefield's strength share and the Withdraw estimate's inputs.
 	double fExposureShare, fWithdrawExposure, fWithdrawShare;
 	// The Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
@@ -943,7 +953,7 @@ struct SOperationalCommandRecord
 	// Observed plot that interrupted this segment, or -1 when it did not yield.
 	int iYieldPlot;
 	// Retains the chosen estimate components for later scalar closure snapshots.
-	double fTheater, fSwing;
+	double fTheater, fSwing, fTurnsToContact, fPotentialWeight;
 	SOperationalStake stake;
 	bool bCityFireAttempted;
 	double fEstimate;           // the estimated priority the offer ran at, after any reach checks
@@ -963,7 +973,8 @@ struct SOperationalCommandRecord
 
 	// Creates an empty record.
 	SOperationalCommandRecord() : iCommand(-1), iStep(-1), iBattlefield(-1), iPlotIndex(-1), eKind(OPERATIONAL_KIND_UNIT_FIGHT),
-		eOwner(NO_PLAYER), iOperation(-1), iArmy(-1), iYieldPlot(-1), fTheater(0.0), fSwing(1.0), bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
+		eOwner(NO_PLAYER), iOperation(-1), iArmy(-1), iYieldPlot(-1), fTheater(0.0), fSwing(1.0), fTurnsToContact(0.0), fPotentialWeight(0.0),
+		bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
 		fWithdrawExposure(0.0), fWithdrawShare(0.0) {}
 };
 
@@ -1291,8 +1302,8 @@ public:
 	// The common Reinforce reach test for checked proposals and provider additions.
 	static SOperationalReinforceReach ReinforceReach(CvTacticalAI& kTactical, CvUnit* pUnit, CvPlot* pTarget,
 		const ReachablePlots& relevantPlots, map<int, ReachablePlots>& searchPlots);
-	// Recomputes admitted strength, help, swing and capture role without changing command priority.
-	static void AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, bool bNeedCapturer,
+	// Recomputes admitted strength, help, swing, turns to contact and capture role without changing command priority.
+	static void AdmittedReinforcement(const vector<SOperationalCandidate>& candidates, eOperationalCenter eCenter, bool bNeedCapturer,
 		const vector<int>& vAdmitted, double fSteepness, SOperationalReinforce& out);
 	// Restricts native air or landing recruitment to the already admitted group.
 	static void FilterRecruits(CvTacticalAI& kTactical, const vector<CvUnit*>& vUnits);

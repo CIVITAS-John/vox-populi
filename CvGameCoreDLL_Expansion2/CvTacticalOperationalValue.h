@@ -72,6 +72,8 @@ double TheaterContest(double fPressure, double fDamageLevel);
 double TheaterMultiplier(double fFloor, double fImportance, double fContest);
 // Returns the rise in strength share after help arrives.
 double StrengthSwing(double fShare, double fProjectedShare);
+// Returns the weight of potential stake, discounted for each turn beyond the first.
+double PotentialWeight(double fWeight, double fTurnDiscount, double fTurnsToContact);
 // Returns a city's value: its economic value, or its population when that is not positive.
 double CityValue(int iEconomicValue, int iPopulation);
 // Returns a city's value as ePlayer would see it on capture.

@@ -114,6 +114,12 @@ double StrengthSwing(double fShare, double fProjectedShare)
 	return fProjectedShare - fShare;
 }
 
+// Discounts potential stake for each turn beyond the first.
+double PotentialWeight(double fWeight, double fTurnDiscount, double fTurnsToContact)
+{
+	return fWeight * pow(fTurnDiscount, std::max(1.0, fTurnsToContact) - 1.0);
+}
+
 // Uses population when the economic value is not positive.
 double CityValue(int iEconomicValue, int iPopulation)
 {

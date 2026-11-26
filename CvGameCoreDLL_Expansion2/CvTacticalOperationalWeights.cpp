@@ -35,7 +35,7 @@ typedef char OperationalSlopeNamesMatchSlots[(sizeof(OPERATIONAL_FLAVOR_SLOPE_NA
 
 // The theater floor and exponent, city allowance in typical units, Reinforce strength ratio, readiness failure limit,
 // the Withdraw switch, army march settings, the exposure split switch, camp.nearPlots for full camp value, and the
-// situation offset spans and softener.
+// situation offset spans and softener, followed by the Reinforce potential weight and per-turn discount.
 const OperationalConstant OPERATIONAL_CONSTANT[] =
 {
 	{ "floor.theater",          0.2 },
@@ -51,6 +51,8 @@ const OperationalConstant OPERATIONAL_CONSTANT[] =
 	{ "flavor.focusSpan",      40.0 },
 	{ "flavor.riskSpan",       30.0 },
 	{ "flavor.softener",        1.0 },
+	{ "potential.weight",       0.1 },
+	{ "potential.turnDiscount", 0.5 },
 };
 typedef char OperationalConstantRowsMatchConstants[(sizeof(OPERATIONAL_CONSTANT) / sizeof(OPERATIONAL_CONSTANT[0]) == NUM_OPERATIONAL_CONSTANTS) ? 1 : -1];
 
