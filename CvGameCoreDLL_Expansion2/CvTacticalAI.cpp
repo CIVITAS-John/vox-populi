@@ -5079,8 +5079,10 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget, const vector
 			plotDistance(*pLoopUnit->plot(), *pTarget) > pLoopUnit->baseMoves(false) * 4 && !pLoopUnit->getUnitInfo().IsCanChangePort())
 			continue;
 
-		//if it's a fighter plane, don't use it here, we need it for interceptions / sweeps
-		if (pLoopUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_DEFENSE_AIR)
+		// Vox Deorum: with air search on, fighters count as strike recruits and the search chooses between strike and sweep.
+		// With it off, keep fighters for interceptions and sweeps.
+		if (!MOD_VOX_TACTICAL_AIR_SEARCH &&
+			pLoopUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_DEFENSE_AIR)
 			continue;
 
 		if (pLoopUnit->IsCoveringFriendlyCivilian())
