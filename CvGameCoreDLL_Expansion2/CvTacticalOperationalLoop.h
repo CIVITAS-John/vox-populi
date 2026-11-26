@@ -36,7 +36,8 @@ enum eOperationalKind
 	NUM_OPERATIONAL_KINDS
 };
 
-// Additive flavor offsets in 0..100 points per posture and per command kind, in military flavor slot order
+// Additive flavor offsets in 0..100 points per posture and per command kind (the base row under the situation offsets),
+// in military flavor slot order
 extern const signed char OPERATIONAL_POSTURE_FLAVOR_ROWS[][STacticalFlavors::NUM_SLOTS];
 extern const signed char OPERATIONAL_KIND_FLAVOR_ROWS[][STacticalFlavors::NUM_SLOTS];
 // The row names templates override them by: posture.<NAME> and kind.<NAME>
@@ -135,10 +136,32 @@ struct SOperationalZoneFlavors
 	int aiFlavor[STacticalFlavors::NUM_SLOTS];
 };
 
-// Blends zone flavors by plot share, adds the kind row, clamps to 0..100 and rounds once. With no zones the mapped
+// Blends zone flavors by plot share, adds the command offset, clamps to 0..100 and rounds once. With no zones the mapped
 // flavors stand alone. The representative zone has the most plots, ties to the lower ID, or -1 without zones.
 void BlendZoneFlavors(const vector<SOperationalZoneFlavors>& zones, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
-	const int (&aiKindRow)[STacticalFlavors::NUM_SLOTS], int (&aiFlavors)[STacticalFlavors::NUM_SLOTS], int& iRepresentativeZone);
+	const double (&afCommandOffset)[STacticalFlavors::NUM_SLOTS], int (&aiFlavors)[STacticalFlavors::NUM_SLOTS], int& iRepresentativeZone);
+
+// A command's local situation in typical units, read from its battlefield's checked stake, and the flavor offsets it gives
+struct SOperationalSituation
+{
+	bool bApplied;      // a fight or Reinforce computed the offsets; Withdraw and Army March use their base row alone
+	double fCapture;    // V_O: enemy city value we can take this turn, 0 unless the city falls
+	double fKill;       // V_A: enemy unit value we can destroy, plus the largest destruction among covered fights
+	double fSiege;      // V_C: our city value the enemies here can take
+	double fUncovered;  // X_u: exposure our strength share cannot answer
+	bool bOurLand;      // the target plot is held by our side, or the fight is at our city
+	double afOffset[STacticalFlavors::NUM_SLOTS];  // the situation offsets, added to the kind's base row
+
+	// Creates a situation with nothing at stake.
+	SOperationalSituation() : bApplied(false), fCapture(0.0), fKill(0.0), fSiege(0.0), fUncovered(0.0), bOurLand(false)
+	{
+		for (int i = 0; i < STacticalFlavors::NUM_SLOTS; i++) afOffset[i] = 0.0;
+	}
+};
+
+// Fills the situation's offsets. Focus raises OCCUPATION, ATTRITION and HOLD_CITY by their share of the gain
+// G = V_O + V_A + V_C; RISK weighs G against the uncovered exposure; HOLD_GROUND takes RISK's drop on our land.
+void SituationFlavorOffsets(SOperationalSituation& situation, double fFocusSpan, double fRiskSpan, double fSoftener);
 
 // One threat's damage, split between the selected defender and the tile's other occupants.
 struct SOperationalThreatDamage
@@ -784,6 +807,8 @@ struct SOperationalEngagementReport
 	STacticalFlavors requestedFlavors;
 	bool bInvalidFlavors;
 	bool bTiming;
+	// the situation behind the command offset
+	SOperationalSituation situation;
 
 	// Creates an empty report.
 	SOperationalEngagementReport() : iRepresentativeZone(-1), iAggressionRisk(50), eAggLvl(AL_LOW), bSuccess(false), searchNs(0), iAttempts(0), bInvalidFlavors(false), bTiming(true) {}
@@ -1217,6 +1242,12 @@ public:
 	// within 2 plots of its target in a compatible zone, unless that fight's target can attack our units or stands near
 	// our city. City fights, ours included, neither retire nor get retired.
 	static bool RetiresFight(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate);
+	// The reach part of the overlap rule: the candidate is another open enemy-unit fight within 2 plots of the executed
+	// battlefield's center in a compatible zone, so the executed search can attack its target.
+	static bool CoversFight(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate);
+	// Reads a fight or Reinforce command's situation from the stake its battlefield had when the command was chosen and
+	// from the open fights it covers. False when the command has no battlefield in the turn.
+	static bool GatherSituation(const SOperationalTurn& turn, const SOperationalCommandRecord& command, SOperationalSituation& situation);
 	// The Reinforce row of the overlap rule: a Reinforce that moved a unit retires the open Reinforce of every other enemy
 	// battlefield whose target it counted in T. Our city's Reinforce is never retired. The caller checks the move.
 	static bool RetiresReinforce(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate);
@@ -1293,7 +1324,8 @@ public:
 	static void EndCommand(CvTacticalAI& kTactical);
 
 	// Copy of TacticalAIHelpers::FindAndExecuteBestUnitAssignments for one engagement: gathers the geometry first,
-	// blends the flavors over it with the kind row, derives aggression from RISK, then searches and executes.
+	// blends the flavors over it with the command offset (the kind's base row, plus the situation offsets for a fight or
+	// Reinforce run by the loop), derives aggression from RISK, then searches and executes.
 	// bTargetDistanceRelevant is native's search flag: false lets units end farther from the target than they started.
 	static bool ExecuteEngagement(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eOperationalKind eKind,
 		PlayerTypes eCounterpart, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS], const OperationalSettings& settings,
@@ -1309,8 +1341,9 @@ public:
 	static void GatherSearchPlotZones(const vector<CvUnit*>& vUnits, CvPlot* pTarget, bool bTargetDistanceRelevant,
 		map<int, int>& zonePlots, bool bUseEmbarked = false);
 	// Blends the mapped search flavors and the neutral-based aggression risk over the same zones, with the civ,
-	// operation and zone modifiers, posture rows and the kind row. Search RISK always counts as set.
-	static STacticalFlavors BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots, eOperationalKind eKind,
+	// operation and zone modifiers, posture rows and the command offset. Search RISK always counts as set.
+	static STacticalFlavors BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots,
+		const double (&afCommandOffset)[STacticalFlavors::NUM_SLOTS],
 		PlayerTypes eCounterpart, int iOperationID, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
 		const OperationalSettings& settings, int& iRepresentativeZone, int& iAggressionRisk);
 

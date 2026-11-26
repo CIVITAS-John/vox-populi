@@ -23,8 +23,8 @@ enum eOperationalWeight
 	NUM_OPERATIONAL_WEIGHTS
 };
 
-// The theater floor and exponent, city allowance, Reinforce strength ratio, readiness failure limit, Withdraw switch
-// and exposure split switch, in row order
+// The theater floor and exponent, city allowance, Reinforce strength ratio, readiness failure limit, Withdraw switch,
+// exposure split switch, camp distance and the situation offset spans, in row order
 enum eOperationalConstant
 {
 	OPERATIONAL_CONSTANT_THEATER_FLOOR,
@@ -41,6 +41,11 @@ enum eOperationalConstant
 	OPERATIONAL_CONSTANT_EXPOSURE_SPLIT,
 	// Camps within this many plots of our nearest city count at full value.
 	OPERATIONAL_CONSTANT_CAMP_NEAR_PLOTS,
+	// The situation offsets: how far focus can raise the objective flavors and RISK can move, and the softener that keeps
+	// them near 0 when little is at stake, in typical units.
+	OPERATIONAL_CONSTANT_FLAVOR_FOCUS_SPAN,
+	OPERATIONAL_CONSTANT_FLAVOR_RISK_SPAN,
+	OPERATIONAL_CONSTANT_FLAVOR_SOFTENER,
 	NUM_OPERATIONAL_CONSTANTS
 };
 

@@ -65,18 +65,18 @@ const signed char OPERATIONAL_POSTURE_FLAVOR_ROWS[][STacticalFlavors::NUM_SLOTS]
 };
 typedef char OperationalPostureRowsMatchPostures[(sizeof(OPERATIONAL_POSTURE_FLAVOR_ROWS) / sizeof(OPERATIONAL_POSTURE_FLAVOR_ROWS[0]) == NUM_OPERATIONAL_POSTURES) ? 1 : -1];
 
-// Per-kind offsets, added after the blend. City fight and Reinforce are native's CityAssault and Reinforce rows minus
-// the mean of the postures they run from, rounded to 5, so they match native on average and still vary with posture.
-// Own-city fight takes the zone's posture row alone.
+// Per-kind base rows, added after the blend under the situation offsets. Fights and Reinforce leave everything to their
+// situation. Withdraw lowers the objectives so moving away beats fighting; Army March stays cautious and is not drawn
+// into cities on the way. Both run on the base row alone.
 const signed char OPERATIONAL_KIND_FLAVOR_ROWS[][STacticalFlavors::NUM_SLOTS] =
 {
 	//  RISK  OCCUPATION  ATTRITION  HOLD_CITY  HOLD_GROUND
 	{    0,     0,          0,         0,         0 },  // Unit fight
-	{   10,    15,        -25,        -5,        -5 },  // City fight
-	{  -15,   -10,        -10,        10,        20 },  // Reinforce
+	{    0,     0,          0,         0,         0 },  // City fight
+	{    0,     0,          0,         0,         0 },  // Reinforce
 	{    0,     0,          0,         0,         0 },  // Own-city fight
-	{  -30,     0,          0,        10,         0 },  // Withdraw
-	{  -30,     0,          0,         0,         0 },  // ArmyMarch
+	{  -20,   -30,        -10,       -20,       -10 },  // Withdraw
+	{  -30,   -20,          0,         0,         0 },  // ArmyMarch
 };
 typedef char OperationalKindRowsMatchKinds[(sizeof(OPERATIONAL_KIND_FLAVOR_ROWS) / sizeof(OPERATIONAL_KIND_FLAVOR_ROWS[0]) == NUM_OPERATIONAL_KINDS) ? 1 : -1];
 
@@ -339,9 +339,9 @@ void GetMappedMilitaryFlavors(PlayerTypes ePlayer, int (&aiFlavors)[STacticalFla
 // geographic blend
 //------------------------------------------------------------------------------
 
-// Averages the zone vectors by plot share in doubles, then adds the kind row and rounds once.
+// Averages the zone vectors by plot share in doubles, then adds the command offset and rounds once.
 void BlendZoneFlavors(const vector<SOperationalZoneFlavors>& zones, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
-	const int (&aiKindRow)[STacticalFlavors::NUM_SLOTS], int (&aiFlavors)[STacticalFlavors::NUM_SLOTS], int& iRepresentativeZone)
+	const double (&afCommandOffset)[STacticalFlavors::NUM_SLOTS], int (&aiFlavors)[STacticalFlavors::NUM_SLOTS], int& iRepresentativeZone)
 {
 	iRepresentativeZone = -1;
 	int iBestPlots = 0;
@@ -364,14 +364,32 @@ void BlendZoneFlavors(const vector<SOperationalZoneFlavors>& zones, const int (&
 			for (size_t i = 0; i < zones.size(); i++)
 				fValue += static_cast<double>(zones[i].iPlots) * zones[i].aiFlavor[iSlot] / iTotalPlots;
 		}
-		fValue += aiKindRow[iSlot];
+		fValue += afCommandOffset[iSlot];
 		aiFlavors[iSlot] = static_cast<int>(floor(std::min(100.0, std::max(0.0, fValue)) + 0.5));
 	}
 }
 
+// Focus splits the span by each objective's share of the gain and never lowers a flavor. RISK compares the gain with the
+// uncovered exposure, from -span to +span. The softener keeps all offsets near 0 when little is at stake.
+void SituationFlavorOffsets(SOperationalSituation& situation, double fFocusSpan, double fRiskSpan, double fSoftener)
+{
+	const double fGain = situation.fCapture + situation.fKill + situation.fSiege;
+	const double fFocusRoom = fGain + fSoftener;
+	const double fRiskRoom = fGain + situation.fUncovered + fSoftener;
+	const double fFocus = fFocusRoom > 0.0 ? fFocusSpan / fFocusRoom : 0.0;
+	const double fRisk = fRiskRoom > 0.0 ? fRiskSpan * (fGain - situation.fUncovered) / fRiskRoom : 0.0;
+	situation.afOffset[STacticalFlavors::RISK] = fRisk;
+	situation.afOffset[STacticalFlavors::OCCUPATION] = fFocus * situation.fCapture;
+	situation.afOffset[STacticalFlavors::ATTRITION] = fFocus * situation.fKill;
+	situation.afOffset[STacticalFlavors::HOLD_CITY] = fFocus * situation.fSiege;
+	// Danger beyond the gain holds a line on our land; elsewhere caution or Withdraw answers it.
+	situation.afOffset[STacticalFlavors::HOLD_GROUND] = situation.bOurLand ? std::max(0.0, -fRisk) : 0.0;
+}
+
 // Blends the search flavors from the mapped values and the aggression risk from neutral 50 through the same zones,
-// tactical modifiers, posture rows and kind row.
-STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots, eOperationalKind eKind,
+// tactical modifiers, posture rows and command offset.
+STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes ePlayer, const map<int, int>& zonePlots,
+	const double (&afCommandOffset)[STacticalFlavors::NUM_SLOTS],
 	PlayerTypes eCounterpart, int iOperationID, const int (&aiMapped)[STacticalFlavors::NUM_SLOTS],
 	const OperationalSettings& settings, int& iRepresentativeZone, int& iAggressionRisk)
 {
@@ -428,10 +446,10 @@ STacticalFlavors CvTacticalOperationalLoop::BlendEngagementFlavors(PlayerTypes e
 
 	int aiAggression[STacticalFlavors::NUM_SLOTS];
 	int iNeutralRepresentative = -1;
-	BlendZoneFlavors(neutralZones, aiNeutral, settings.aiKindRows[eKind], aiAggression, iNeutralRepresentative);
+	BlendZoneFlavors(neutralZones, aiNeutral, afCommandOffset, aiAggression, iNeutralRepresentative);
 	iAggressionRisk = aiAggression[STacticalFlavors::RISK];
 	STacticalFlavors flavors;
-	BlendZoneFlavors(zones, aiMapped, settings.aiKindRows[eKind], flavors.iFlavor, iRepresentativeZone);
+	BlendZoneFlavors(zones, aiMapped, afCommandOffset, flavors.iFlavor, iRepresentativeZone);
 	flavors.bRiskSet = true;
 	flavors.iCounterpart = eCounterpart;
 	return flavors;
@@ -5433,6 +5451,7 @@ struct SOperationalMarchReportMerge
 			target.iRepresentativeZone = source.iRepresentativeZone;
 			target.flavors = source.flavors;
 			target.iAggressionRisk = source.iAggressionRisk;
+			target.situation = source.situation;
 			target.eAggLvl = source.eAggLvl;
 			target.flavorRequest = source.flavorRequest;
 			target.requestedFlavors = source.requestedFlavors;
@@ -5639,12 +5658,19 @@ void CvTacticalOperationalLoop::ExecuteCampClaim(CvTacticalAI& kTactical, const 
 // Enemy and own city fights are neither retired nor retire others.
 bool CvTacticalOperationalLoop::RetiresFight(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate)
 {
-	if (executed.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT ||
-		candidate.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT || candidate.iID == executed.iID)
-		return false;
-	if (OperationalOfferIsClosed(candidate.eFight))
+	if (executed.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT)
 		return false;
 	if (candidate.bCanAttackOurUnits || candidate.bNearOurCity || !candidate.fightArmies.empty())
+		return false;
+	return CoversFight(executed, candidate);
+}
+
+// The search's reach around any executed center, without the exemptions that keep a fight open for its own command.
+bool CvTacticalOperationalLoop::CoversFight(const SOperationalBattlefield& executed, const SOperationalBattlefield& candidate)
+{
+	if (candidate.eCenter != OPERATIONAL_CENTER_ENEMY_UNIT || candidate.iID == executed.iID)
+		return false;
+	if (OperationalOfferIsClosed(candidate.eFight))
 		return false;
 
 	//land zones have id > 0, water zones id < 0. opposite signs means domain mismatch
@@ -5653,6 +5679,30 @@ bool CvTacticalOperationalLoop::RetiresFight(const SOperationalBattlefield& exec
 	CvPlot* pExecuted = GC.getMap().plotByIndex(executed.iPlotIndex);
 	CvPlot* pCandidate = GC.getMap().plotByIndex(candidate.iPlotIndex);
 	return pExecuted && pCandidate && plotDistance(*pExecuted, *pCandidate) <= 2;
+}
+
+// V_O counts city progress only when the city falls this turn. V_C is city danger at our city and the target's relief
+// at a unit fight. Covered fights add only their largest destruction, and their exposure stays with their own fights.
+bool CvTacticalOperationalLoop::GatherSituation(const SOperationalTurn& turn, const SOperationalCommandRecord& command,
+	SOperationalSituation& situation)
+{
+	if (command.iBattlefield < 0 || command.iBattlefield >= static_cast<int>(turn.battlefields.size()))
+		return false;
+	const SOperationalBattlefield& field = turn.battlefields[command.iBattlefield];
+	const SOperationalStake& stake = command.stake;
+	const bool bOurCity = field.eCenter == OPERATIONAL_CENTER_OUR_CITY;
+	situation.fCapture = field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && stake.fFallShare >= 1.0 ? stake.afValue[4] : 0.0;
+	situation.fSiege = bOurCity ? stake.afValue[4] : stake.afValue[3];
+	double fCovered = 0.0;
+	for (size_t i = 0; i < turn.battlefields.size(); i++)
+		if (CoversFight(field, turn.battlefields[i]))
+			fCovered = std::max(fCovered, turn.battlefields[i].stake.afValue[0]);
+	situation.fKill = stake.afValue[0] + stake.afValue[5] + fCovered;
+	// The battlefield's strength share, which the exposure.split switch does not touch.
+	situation.fUncovered = stake.afValue[1] * (1.0 - std::min(1.0, std::max(0.0, field.fExposureShare)));
+	const CvPlot* pPlot = GC.getMap().plotByIndex(field.iPlotIndex);
+	situation.bOurLand = bOurCity || (pPlot && GroundSide(turn.ePlayer, pPlot->getOwner()) == groundHoldsOurs);
+	return true;
 }
 
 // The executed Reinforce's counted sets are from its last estimate, before it ran.
@@ -6284,7 +6334,21 @@ bool CvTacticalOperationalLoop::ExecuteEngagement(PlayerTypes ePlayer, vector<Cv
 	// Map the same embarked participants that the search will consider.
 	GatherSearchPlotZones(vUnits, pTarget, bTargetDistanceRelevant, report.zonePlots, pMovement != NULL);
 	const int iOperation = eKind == OPERATIONAL_KIND_ARMY_MARCH && pCommand ? pCommand->iOperation : VoxRlCurrentOperationId(ePlayer);
-	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, eKind, eCounterpart, iOperation,
+	// The command offset is the kind's base row plus, for a fight or Reinforce, the offsets from its situation.
+	SOperationalSituation& situation = report.situation;
+	situation = SOperationalSituation();
+	if (pTurn && pCommand && eKind != OPERATIONAL_KIND_WITHDRAW && eKind != OPERATIONAL_KIND_ARMY_MARCH &&
+		GatherSituation(*pTurn, *pCommand, situation))
+	{
+		situation.bApplied = true;
+		SituationFlavorOffsets(situation, settings.afConstant[OPERATIONAL_CONSTANT_FLAVOR_FOCUS_SPAN],
+			settings.afConstant[OPERATIONAL_CONSTANT_FLAVOR_RISK_SPAN], settings.afConstant[OPERATIONAL_CONSTANT_FLAVOR_SOFTENER]);
+	}
+	// The blend clamps and rounds the sum once.
+	double afCommandOffset[STacticalFlavors::NUM_SLOTS];
+	for (int iSlot = 0; iSlot < STacticalFlavors::NUM_SLOTS; iSlot++)
+		afCommandOffset[iSlot] = settings.aiKindRows[eKind][iSlot] + situation.afOffset[iSlot];
+	report.flavors = BlendEngagementFlavors(ePlayer, report.zonePlots, afCommandOffset, eCounterpart, iOperation,
 		aiMapped, settings, report.iRepresentativeZone, report.iAggressionRisk);
 	report.eAggLvl = AggressionFromRisk(report.iAggressionRisk, settings);
 	// A Withdraw never plans a risky melee trade
