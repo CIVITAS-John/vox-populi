@@ -390,7 +390,7 @@ int OfferRank(eOperationalCenter eCenter, eOperationalSlot eSlot);
 // Whether an offer goes ahead of the best one so far: a higher estimate, then a lower rank, then a lower plot index.
 bool OfferOutranks(double fEstimate, int iRank, int iPlotIndex, double fBest, int iBestRank, int iBestPlotIndex);
 
-// A Reinforce candidate within recruit range, including units the same-field fight released.
+// A Reinforce candidate: a unit beyond its strike reach of the target and within recruit range.
 struct SOperationalCandidate
 {
 	int iUnitID;
@@ -508,7 +508,6 @@ struct SOperationalBattlefield
 	eOperationalOfferState eFight;
 	double fEstimate;             // theater times stake
 	int iFailures;
-	bool bReleaseLocal;           // the same-field fight searched or failed to recruit
 	SOperationalStake stake;
 	bool bHasEndangered;          // own city: it had an endangered recruit at the last estimate
 	bool bBorder;                 // fixed: the zone is ours or neighbors one of ours
@@ -536,7 +535,7 @@ struct SOperationalBattlefield
 	SOperationalBattlefield() : iID(-1), eCenter(OPERATIONAL_CENTER_ENEMY_UNIT), iPlotIndex(-1), iZoneID(0), iZoneCityPlot(-1), eOwner(NO_PLAYER),
 		iTargetID(-1), iOperation(-1), fImportance(0.0), fTheater(0.0), fGround(0.0),
 		fCampValue(-1.0), bCampFogged(false), iCampClaimant(-1), iCampTurns(0), bNearOurCity(false), bCanAttackOurUnits(false),
-		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0), bReleaseLocal(false),
+		eFight(OPERATIONAL_OFFER_READY), fEstimate(0.0), iFailures(0),
 		bHasEndangered(false), bBorder(false), bWithdrawPosture(false), eReinforce(OPERATIONAL_OFFER_READY), fReinforceEstimate(0.0),
 		eWithdraw(OPERATIONAL_OFFER_INACTIVE), fWithdrawEstimate(0.0), fWithdrawExposure(0.0), fExposureShare(0.0),
 		fWithdrawShare(0.0), iWithdrawFailures(0)
@@ -1124,11 +1123,11 @@ public:
 	static double WithdrawPriority(const SOperationalTurn& turn, const SOperationalBattlefield& field, double fExposure,
 		double fShare);
 	// Gathers available units outside armies in the destination's domains and recruit range.
-	// Local units qualify once the same-field fight releases them. Uses native's carrier, healing, siege, donor-zone
+	// Local units never qualify. Uses native's carrier, healing, siege, donor-zone
 	// and civilian-cover filters and excludes the battlefield's rejections. Enemy-city candidates must also pass
 	// CanStrikeCity. A held garrison qualifies within the search's reach.
 	static void GatherReinforceCandidates(CvTacticalAI& kTactical, const SOperationalBattlefield& field, const CvPlot& kTarget,
-		bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates, bool bAllowLocal = false);
+		bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates);
 	// A unit's strike reach in plots: its base moves, at least 1, plus its range when it attacks at range.
 	static int StrikeReach(const CvUnit& kUnit);
 	// Gathers our local set around a center in the given domains; bDamage also gathers the damage filter.

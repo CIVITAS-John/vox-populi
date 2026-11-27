@@ -1182,19 +1182,6 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 					field.iFailures++;
 					OperationalOfferState(field, eBestSlot) =
 						field.iFailures >= iMaxFailures ? OPERATIONAL_OFFER_SKIPPED : OPERATIONAL_OFFER_WAITING;
-					if (eResult == OPERATIONAL_CHECK_NO_RECRUITS || eResult == OPERATIONAL_CHECK_NO_DEFENDERS)
-					{
-						field.bReleaseLocal = true;
-						CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
-						if (pTarget && (field.eReinforce == OPERATIONAL_OFFER_READY || field.eReinforce == OPERATIONAL_OFFER_INACTIVE))
-						{
-							SOperationalLocalSet local;
-							GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, false);
-							field.ResetReinforceCheck();
-							EstimateReinforce(kTactical, turn, local, field);
-							field.eReinforce = field.fReinforceEstimate > 0.0 ? OPERATIONAL_OFFER_READY : OPERATIONAL_OFFER_INACTIVE;
-						}
-					}
 				}
 			}
 			// Withdraw reads the share with help from a Reinforce that scores on realized stake, so refresh it when either changes.
@@ -1434,8 +1421,6 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 			else
 			{
 				OperationalOfferState(field, eBestSlot) = bRefused ? OPERATIONAL_OFFER_REFUSED : OPERATIONAL_OFFER_EXECUTED;
-				if (eBestSlot == OPERATIONAL_SLOT_FIGHT)
-					field.bReleaseLocal = command.bSearchRan && !bRefused;
 			}
 			turn.iStateRevision++;
 			if (pRecord && bRefused)
@@ -3168,13 +3153,10 @@ bool CvTacticalOperationalLoop::EstimateBattlefield(CvTacticalAI& kTactical, con
 	}
 	else if (!EstimateFight(kTactical, turn, cache, local, pZoneCity, field))
 		return false;
-	// A waking fight takes back its local units before Reinforce selects candidates.
+	// A waking fight returns to ready before Reinforce selects candidates.
 	if (field.eFight == OPERATIONAL_OFFER_WAITING && pChanges && field.fEstimate > 0.0 &&
 		WakesFight(turn.ePlayer, turn, field, *pChanges))
-	{
 		field.eFight = OPERATIONAL_OFFER_READY;
-		field.bReleaseLocal = false;
-	}
 	if (bReinforce && (!bCamp || field.bCampFogged))
 	{
 		if (pChanges && !field.reinforce.rejected.empty())
@@ -3670,26 +3652,6 @@ bool CvTacticalOperationalLoop::EstimateFight(CvTacticalAI& kTactical, const SOp
 	return true;
 }
 
-// Finds a local capturer and optionally adds local strength outside the candidate pool.
-static bool TallyLocalOutsideCandidates(const SOperationalLocalSet& local, const vector<SOperationalCandidate>& vCandidates,
-	double* pfStrength)
-{
-	set<int> candidates;
-	for (size_t i = 0; i < vCandidates.size(); i++)
-		candidates.insert(vCandidates[i].iUnitID);
-	bool bCapturer = false;
-	for (size_t i = 0; i < local.vStrength.size(); i++)
-	{
-		const CvUnit& kUnit = *local.vStrength[i];
-		if (candidates.count(kUnit.GetID()) > 0)
-			continue;
-		if (pfStrength)
-			*pfStrength += CvTacticalOperationalLoop::UnitStrength(kUnit);
-		bCapturer = bCapturer || CvTacticalOperationalLoop::IsCapturer(kUnit);
-	}
-	return bCapturer;
-}
-
 // Uses the incoming force's weighted join time at enemy targets and one turn at our city. Fogged camps have no potential.
 static double ReinforceTurnsToContact(eOperationalCenter eCenter, const SOperationalReinforce& reinforce)
 {
@@ -3699,14 +3661,16 @@ static double ReinforceTurnsToContact(eOperationalCenter eCenter, const SOperati
 		std::max(1.0, reinforce.fSelectedStrength / reinforce.fHelp);
 }
 
-// Prices the swing from incoming strength on realized and discounted potential stake, with camp value as a floor.
+// Prices the scaled swing from incoming strength on realized and discounted potential stake, with camp value as a floor.
 static double ScoreReinforce(const SOperationalTurn& turn, SOperationalBattlefield& field)
 {
 	SOperationalReinforce& reinforce = field.reinforce;
+	// Selection stops at parity, so the raw swing tops out near one half; the scale puts it on the fight's range.
+	const double fScaledSwing = std::min(1.0, turn.weights.afConstant[OPERATIONAL_CONSTANT_SWING_SCALE] * reinforce.fSwing);
 	const double fCampBase = field.fCampValue >= 0.0 ? field.fTheater * field.fCampValue : 0.0;
 	// Keep the original score for Withdraw and for offers that get no credit for potential stake.
 	const double fRealizedBase = field.fCampValue >= 0.0 ? std::max(field.fEstimate, fCampBase) : field.fEstimate;
-	reinforce.fRealizedEstimate = fRealizedBase * reinforce.fSwing;
+	reinforce.fRealizedEstimate = fRealizedBase * fScaledSwing;
 	reinforce.fTurnsToContact = ReinforceTurnsToContact(field.eCenter, reinforce);
 	reinforce.fPotentialWeight = reinforce.fTurnsToContact > 0.0 ?
 		PotentialWeight(turn.weights.afConstant[OPERATIONAL_CONSTANT_POTENTIAL_WEIGHT],
@@ -3714,7 +3678,7 @@ static double ScoreReinforce(const SOperationalTurn& turn, SOperationalBattlefie
 	if (reinforce.fPotentialWeight == 0.0 || field.stake.fPotential == 0.0)
 		return reinforce.fRealizedEstimate;
 	const double fBase = field.fTheater * (field.stake.fRealized + reinforce.fPotentialWeight * field.stake.fPotential);
-	return (field.fCampValue >= 0.0 ? std::max(fBase, fCampBase) : fBase) * reinforce.fSwing;
+	return (field.fCampValue >= 0.0 ? std::max(fBase, fCampBase) : fBase) * fScaledSwing;
 }
 
 // Estimates how much realized and potential stake the selected help can swing.
@@ -3736,20 +3700,9 @@ void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const
 	const double fRatio = turn.weights.afConstant[OPERATIONAL_CONSTANT_STRENGTH_RATIO];
 	vector<SOperationalCandidate> vCandidates;
 	if (bOpen)
-		GatherReinforceCandidates(kTactical, field, *pTarget, local.bLand, local.bSea, vCandidates, field.bReleaseLocal);
-	bool bLocalCapturer = local.bCapturer;
-	if (field.bReleaseLocal && bOpen)
-	{
-		// A leftover enters the selection pool instead of counting as current strength or an existing capturer.
-		// A rejected recruit no longer enters the pool, so start each selection from the live local set again.
-		reinforce.fLocal = bOurCity ? CityStrength(*pTarget->getPlotCity()) : 0.0;
-		bLocalCapturer = TallyLocalOutsideCandidates(local, vCandidates, &reinforce.fLocal);
-		reinforce.fShare = StrengthShare(reinforce.fLocal, reinforce.fEnemy,
-			turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_STEEPNESS]);
-		reinforce.fShareWithHelp = reinforce.fShare;
-	}
+		GatherReinforceCandidates(kTactical, field, *pTarget, local.bLand, local.bSea, vCandidates);
 	SelectReinforcement(vCandidates, reinforce.fLocal, reinforce.fEnemy, fRatio,
-		bOpen && field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !bLocalCapturer, reinforce);
+		bOpen && field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !local.bCapturer, reinforce);
 	if (reinforce.vSelected.empty())
 		return;
 
@@ -4006,7 +3959,7 @@ void CvTacticalOperationalLoop::EstimateWithdraw(CvTacticalAI& kTactical, const 
 	}
 	field.fWithdrawExposure = std::max(0.0, ExposureSaved(turn, recruits, false, bFormationWithdraw));
 	// A Reinforce that scores on realized stake supplies s+ from the larger of the fight's share and the projected
-	// share, so a released pool that lowers the projection cannot raise the Withdraw priority.
+	// share, so a lower projection cannot raise the Withdraw priority.
 	field.fWithdrawShare = ExposureShareWithHelp(field);
 	field.fWithdrawEstimate = WithdrawPriority(turn, field, field.fWithdrawExposure, field.fWithdrawShare);
 }
@@ -4016,7 +3969,7 @@ void CvTacticalOperationalLoop::EstimateWithdraw(CvTacticalAI& kTactical, const 
 // range bounds by plain distance; destination dominance gates apply to enemy centers only; units covering a civilian
 // are left out without native's skip and processing; generals, admirals and civilian sappers fall to the combat test.
 void CvTacticalOperationalLoop::GatherReinforceCandidates(CvTacticalAI& kTactical, const SOperationalBattlefield& field, const CvPlot& kTarget,
-	bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates, bool bAllowLocal)
+	bool bLand, bool bSea, vector<SOperationalCandidate>& vCandidates)
 {
 	vCandidates.clear();
 	const CvTacticalAnalysisMap* pZoneMap = kTactical.GetTacticalAnalysisMap();
@@ -4035,11 +3988,11 @@ void CvTacticalOperationalLoop::GatherReinforceCandidates(CvTacticalAI& kTactica
 		if (!((bLand && pUnit->getDomainType() == DOMAIN_LAND) || (bSea && pUnit->getDomainType() == DOMAIN_SEA)))
 			continue;
 
-		// Keep local units for the same-field fight until it has used or released them.
+		// Local units count as strength already at the battlefield, so they are never help.
 		const int iDistance = plotDistance(*pUnit->plot(), kTarget);
 		const bool bHeld = IsHeldGarrison(pUnit);
 		if ((bHeld && field.eCenter == OPERATIONAL_CENTER_CAMP) ||
-			(!bAllowLocal && iDistance <= StrikeReach(*pUnit)) ||
+			iDistance <= StrikeReach(*pUnit) ||
 			iDistance > (bHeld ? std::min(iRecruitRange, static_cast<int>(TACTICAL_COMBAT_MAX_TARGET_DISTANCE)) : iRecruitRange))
 			continue;
 
@@ -6213,7 +6166,7 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 	{
 		const CvCity* pCity = pTarget->getPlotCity();
 		GatherReinforceCandidates(kTactical, field, *pTarget, pCity != NULL || !pTarget->isWater(),
-			pCity ? pCity->isCoastal() : pTarget->isWater(), request.candidates, field.bReleaseLocal);
+			pCity ? pCity->isCoastal() : pTarget->isWater(), request.candidates);
 	}
 	else
 		for (size_t i = 0; i < vUnits.size(); i++)
@@ -6292,9 +6245,7 @@ bool CvTacticalOperationalLoop::AdmitParticipants(CvTacticalAI& kTactical, const
 		{
 			SOperationalLocalSet local;
 			GatherTargetLocalSet(kTactical, turn.ePlayer, *pTarget, local, false);
-			const bool bLocalCapturer = field.bReleaseLocal && !bPermittedMenu
-				? TallyLocalOutsideCandidates(local, request.candidates, NULL) : local.bCapturer;
-			AdmittedReinforcement(request.candidates, field.eCenter, field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !bLocalCapturer,
+			AdmittedReinforcement(request.candidates, field.eCenter, field.eCenter == OPERATIONAL_CENTER_ENEMY_CITY && !local.bCapturer,
 				decision.vEffective, turn.weights.afConstant[OPERATIONAL_CONSTANT_THEATER_STEEPNESS], decision.effectiveReinforce);
 		}
 	}

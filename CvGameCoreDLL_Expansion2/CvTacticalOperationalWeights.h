@@ -49,6 +49,8 @@ enum eOperationalConstant
 	// Reinforce counts a share of potential stake, discounted for each further turn to contact.
 	OPERATIONAL_CONSTANT_POTENTIAL_WEIGHT,
 	OPERATIONAL_CONSTANT_POTENTIAL_TURN_DISCOUNT,
+	// Reinforce multiplies its swing by this, so that a rise from no strength to parity counts as 1.
+	OPERATIONAL_CONSTANT_SWING_SCALE,
 	NUM_OPERATIONAL_CONSTANTS
 };
 
