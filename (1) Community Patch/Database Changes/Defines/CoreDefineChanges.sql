@@ -283,7 +283,7 @@ VALUES
 	('AI_TACTICAL_MAP_DOMINANCE_PERCENTAGE', 70),
 	('COMBAT_AI_OFFENSE_DAMAGEWEIGHT', 100), -- This controls how much damage an attack needs to inflict to be considered worthwhile. Default value 100. Higher -> more aggressive
 	('COMBAT_AI_OFFENSE_DANGERWEIGHT', 100), -- This controls whether ending the turn on a certain plot is acceptable (defense and offense). Default value 100. Higher -> more timid
-	('VOX_OPERATIONAL_MAX_COMMANDS', 64), -- Vox Deorum: most commands the operational loop runs per player-turn
+	('VOX_OPERATIONAL_MAX_COMMANDS', 256), -- Vox Deorum: most commands the operational loop runs per player-turn
 	('VOX_OPERATIONAL_AGGRESSION_MEDIUM_RISK', 40), -- Vox Deorum: lowest blended RISK that searches at Medium aggression under the operational loop
 	('VOX_OPERATIONAL_AGGRESSION_HIGH_RISK', 60), -- Vox Deorum: lowest blended RISK for High aggression
 	('VOX_OPERATIONAL_AGGRESSION_BRAVEHEART_RISK', 90), -- Vox Deorum: lowest blended RISK for Braveheart aggression
