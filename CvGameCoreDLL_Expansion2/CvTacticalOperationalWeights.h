@@ -51,6 +51,8 @@ enum eOperationalConstant
 	OPERATIONAL_CONSTANT_POTENTIAL_TURN_DISCOUNT,
 	// Reinforce multiplies its swing by this, so that a rise from no strength to parity counts as 1.
 	OPERATIONAL_CONSTANT_SWING_SCALE,
+	// At our cities, Reinforce raises its strength ratio by this times the defense fall share.
+	OPERATIONAL_CONSTANT_FALL_URGENCY,
 	NUM_OPERATIONAL_CONSTANTS
 };
 

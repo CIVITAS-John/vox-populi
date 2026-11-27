@@ -488,6 +488,7 @@ void SelectReinforcement(const vector<SOperationalCandidate>& candidates, double
 	std::sort(sorted.begin(), sorted.end(), PrOperationalCandidateNearest());
 	out.fLocal = fLocal;
 	out.fEnemy = fEnemy;
+	out.fRatio = fRatio;
 	out.fNeed = std::max(0.0, fRatio * fEnemy - fLocal);
 	out.vSelected.clear();
 	out.fSelectedStrength = 0.0;
@@ -1255,10 +1256,10 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 					const SOperationalReinforce& reinforce = field.reinforce;
 					kTactical.LogTacticalMessage(CvString::format(
 						"Operational step %d check of Reinforce %d at plot %d, estimate %.6f: %s; theater %.6f, realized stake %.6f, L %.0f, T %.0f, "
-						"need %.0f, selected strength %.0f, help %.0f, share %.6f, share with help %.6f, swing %.6f, role unit %d, role help "
+						"ratio %.6f, need %.0f, selected strength %.0f, help %.0f, share %.6f, share with help %.6f, swing %.6f, role unit %d, role help "
 						"%.0f, missing role %d; total stake %.6f, potential stake %.6f, turns to contact %.6f, potential weight %.6f",
 						iCommands, iBest, field.iPlotIndex, field.fReinforceEstimate, aszResults[eResult], field.fTheater, field.stake.fRealized,
-						reinforce.fLocal, reinforce.fEnemy, reinforce.fNeed, reinforce.fSelectedStrength, reinforce.fHelp, reinforce.fShare,
+						reinforce.fLocal, reinforce.fEnemy, reinforce.fRatio, reinforce.fNeed, reinforce.fSelectedStrength, reinforce.fHelp, reinforce.fShare,
 						reinforce.fShareWithHelp, reinforce.fSwing, reinforce.iRoleUnit, reinforce.fRoleHelp, reinforce.bMissingRole ? 1 : 0,
 						field.stake.fStake, field.stake.fPotential, reinforce.fTurnsToContact, reinforce.fPotentialWeight));
 				}
@@ -1305,6 +1306,9 @@ void CvTacticalOperationalLoop::RunCommandLoop(CvTacticalAI& kTactical, SOperati
 				command.fSwing = field.reinforce.fSwing;
 				command.fTurnsToContact = field.reinforce.fTurnsToContact;
 				command.fPotentialWeight = field.reinforce.fPotentialWeight;
+				command.fRatio = field.reinforce.fRatio;
+				command.fNeed = field.reinforce.fNeed;
+				command.fSelectedStrength = field.reinforce.fSelectedStrength;
 			}
 			command.stake = field.stake;
 			// The field keeps the checked exposure, so a Withdraw records the inputs its reduced estimate used.
@@ -3697,7 +3701,10 @@ void CvTacticalOperationalLoop::EstimateReinforce(CvTacticalAI& kTactical, const
 	CvPlot* pTarget = GC.getMap().plotByIndex(field.iPlotIndex);
 	const bool bOurCity = field.eCenter == OPERATIONAL_CENTER_OUR_CITY;
 	const bool bOpen = pTarget && (bOurCity || ((field.bBorder || field.fCampValue >= 0.0) && !field.bWithdrawPosture));
-	const double fRatio = turn.weights.afConstant[OPERATIONAL_CONSTANT_STRENGTH_RATIO];
+	// A city closer to falling asks for more than parity; the Fight set its fall share earlier in the pass.
+	double fRatio = turn.weights.afConstant[OPERATIONAL_CONSTANT_STRENGTH_RATIO];
+	if (bOurCity)
+		fRatio *= 1.0 + turn.weights.afConstant[OPERATIONAL_CONSTANT_FALL_URGENCY] * field.stake.fFallShare;
 	vector<SOperationalCandidate> vCandidates;
 	if (bOpen)
 		GatherReinforceCandidates(kTactical, field, *pTarget, local.bLand, local.bSea, vCandidates);
@@ -7339,6 +7346,7 @@ bool OperationalSnapshotEqual(const SOperationalSnapshot& a, const SOperationalS
 	// Only Reinforce uses the added stake inputs, so their changes do not emit Fight or Withdraw rows.
 	const bool bReinforce = a.eSlot == OPERATIONAL_SLOT_REINFORCE;
 	if (bReinforce && (a.fTurnsToContact != b.fTurnsToContact || a.fPotentialWeight != b.fPotentialWeight ||
+		a.fRatio != b.fRatio || a.fNeed != b.fNeed || a.fSelectedStrength != b.fSelectedStrength ||
 		a.stake.fStake != b.stake.fStake || a.stake.fRealized != b.stake.fRealized || a.stake.fPotential != b.stake.fPotential)) return false;
 	for (int i = 0; i < NUM_OPERATIONAL_STAKE_TERMS; ++i)
 		if (a.stake.afValue[i] != b.stake.afValue[i]) return false;
@@ -7392,6 +7400,9 @@ void CvTacticalOperationalLoop::RecordStep(const SOperationalTurn& turn, SOperat
 			row.fSelectedSwing = bReinforce ? field.reinforce.fSwing : 1.0;
 			row.fTurnsToContact = bReinforce ? field.reinforce.fTurnsToContact : 0.0;
 			row.fPotentialWeight = bReinforce ? field.reinforce.fPotentialWeight : 0.0;
+			row.fRatio = bReinforce ? field.reinforce.fRatio : 0.0;
+			row.fNeed = bReinforce ? field.reinforce.fNeed : 0.0;
+			row.fSelectedStrength = bReinforce ? field.reinforce.fSelectedStrength : 0.0;
 			if (OperationalSlotKind(field.eCenter, eSlot) == OPERATIONAL_KIND_ARMY_MARCH)
 				row.armyMarch = field.armyMarch;
 			row.stake = field.stake;
@@ -7420,6 +7431,9 @@ void CvTacticalOperationalLoop::RecordStep(const SOperationalTurn& turn, SOperat
 							row.fSwing = row.fSelectedSwing = record.commands[c].fSwing;
 							row.fTurnsToContact = record.commands[c].fTurnsToContact;
 							row.fPotentialWeight = record.commands[c].fPotentialWeight;
+							row.fRatio = record.commands[c].fRatio;
+							row.fNeed = record.commands[c].fNeed;
+							row.fSelectedStrength = record.commands[c].fSelectedStrength;
 							row.iPlotIndex = record.commands[c].iPlotIndex;
 							row.stake = record.commands[c].stake;
 							row.armyMarch = record.commands[c].armyMarch;

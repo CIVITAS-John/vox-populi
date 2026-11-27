@@ -420,6 +420,7 @@ struct SOperationalReinforce
 {
 	double fLocal;               // L
 	double fEnemy;               // T
+	double fRatio;               // r used for need; scaled by fall urgency at our cities
 	double fNeed;                // H_need = max(0, rT - L)
 	vector<int> vSelected;       // selected unit IDs, nearest first, any capture-role unit last
 	double fSelectedStrength;    // full strength of the selection
@@ -439,7 +440,7 @@ struct SOperationalReinforce
 	bool bChecked;               // the selection passed its reach checks since the last command
 
 	// Creates an empty Reinforce.
-	SOperationalReinforce() : fLocal(0.0), fEnemy(0.0), fNeed(0.0), fSelectedStrength(0.0), fHelp(0.0), fRoleHelp(0.0), iRoleUnit(-1),
+	SOperationalReinforce() : fLocal(0.0), fEnemy(0.0), fRatio(0.0), fNeed(0.0), fSelectedStrength(0.0), fHelp(0.0), fRoleHelp(0.0), iRoleUnit(-1),
 		bMissingRole(false), fShare(0.0), fShareWithHelp(0.0), fSwing(0.0), fRealizedEstimate(0.0), fTurnsToContact(0.0),
 		fPotentialWeight(0.0), bChecked(false) {}
 };
@@ -895,6 +896,8 @@ struct SOperationalSnapshot
 	double fEstimate, fTheater, fSwing, fSelectedSwing;
 	// The turns to contact and discounted weight used to price Reinforce, or 0 when not scored.
 	double fTurnsToContact, fPotentialWeight;
+	// The Reinforce strength ratio, need and selected full strength, or 0 for other rows.
+	double fRatio, fNeed, fSelectedStrength;
 	// The battlefield's strength share and the Withdraw estimate's inputs.
 	double fExposureShare, fWithdrawExposure, fWithdrawShare;
 	// The Withdraw city plot per domain: index 0 land, 1 sea, -1 unset.
@@ -953,6 +956,8 @@ struct SOperationalCommandRecord
 	int iYieldPlot;
 	// Retains the chosen estimate components for later scalar closure snapshots.
 	double fTheater, fSwing, fTurnsToContact, fPotentialWeight;
+	// Reinforce: the checked ratio, need and selected full strength.
+	double fRatio, fNeed, fSelectedStrength;
 	SOperationalStake stake;
 	bool bCityFireAttempted;
 	double fEstimate;           // the estimated priority the offer ran at, after any reach checks
@@ -973,7 +978,7 @@ struct SOperationalCommandRecord
 	// Creates an empty record.
 	SOperationalCommandRecord() : iCommand(-1), iStep(-1), iBattlefield(-1), iPlotIndex(-1), eKind(OPERATIONAL_KIND_UNIT_FIGHT),
 		eOwner(NO_PLAYER), iOperation(-1), iArmy(-1), iYieldPlot(-1), fTheater(0.0), fSwing(1.0), fTurnsToContact(0.0), fPotentialWeight(0.0),
-		bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
+		fRatio(0.0), fNeed(0.0), fSelectedStrength(0.0), bCityFireAttempted(false), fEstimate(0.0), iFailuresBefore(0), bSearchRan(false), bMoved(false),
 		fWithdrawExposure(0.0), fWithdrawShare(0.0) {}
 };
 

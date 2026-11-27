@@ -54,6 +54,7 @@ const OperationalConstant OPERATIONAL_CONSTANT[] =
 	{ "potential.weight",       0.1 },
 	{ "potential.turnDiscount", 0.5 },
 	{ "reinforce.swingScale",   2.0 },
+	{ "reinforce.fallUrgency",  1.0 },
 };
 typedef char OperationalConstantRowsMatchConstants[(sizeof(OPERATIONAL_CONSTANT) / sizeof(OPERATIONAL_CONSTANT[0]) == NUM_OPERATIONAL_CONSTANTS) ? 1 : -1];
 
